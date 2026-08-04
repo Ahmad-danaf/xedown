@@ -1,0 +1,11 @@
+[Plugin]
+Loader=python3
+Module=xedown
+IAge=3
+Name=Xedown
+Description=Markdown preview for xed, with rendered and source modes inside the same tab.
+Icon=text-x-generic
+Authors=Ahmad Danaf
+Copyright=Copyright © 2026 Ahmad Danaf
+Website=https://github.com/Ahmad-danaf/xedown
+Version=0.1.0
