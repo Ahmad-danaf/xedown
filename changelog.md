@@ -29,3 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   automatically for right-to-left content such as Arabic or Hebrew, while
   code stays left-to-right regardless of surrounding text. This is
   per-block automatic direction detection, not a right-to-left interface.
+
+### Known issues
+
+- xedown supports selected GitHub-flavored Markdown features (tables, task
+  lists, strikethrough, fenced code, and footnotes), not full GFM
+  compatibility. A list does not currently interrupt a paragraph without an
+  intervening blank line, unlike GFM. See
+  [docs/known-issues.md](docs/known-issues.md). Targeted for v0.2.

@@ -87,6 +87,11 @@ and viewing never changes the file.
   Relative images in the same situation do get an explanatory placeholder.
   Save the file to give relative links and images a location to resolve
   against.
+- xedown supports selected GitHub-flavored Markdown features (tables, task
+  lists, strikethrough, fenced code, and footnotes), not full GFM
+  compatibility. In particular, a list does not currently interrupt a
+  paragraph without a blank line between them, the way GFM allows — see
+  [docs/known-issues.md](docs/known-issues.md). Targeted for v0.2.
 
 ## Documentation
 
