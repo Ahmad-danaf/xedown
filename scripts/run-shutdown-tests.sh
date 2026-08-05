@@ -109,8 +109,18 @@ cleanup() {
   # active-plugins still lists xedown (it is restored just above), so leaving
   # the directory missing would hand back an editor configured to load a
   # plugin that is no longer on disk.
+  #
+  # Restore whichever copy was being tested. Getting this wrong is worse than
+  # it looks: the release checklist has you install the archive, run this
+  # harness, and then work through 24 manual rows by hand. If cleanup put the
+  # working tree back, every one of those rows would silently be testing the
+  # working tree rather than the artifact you are about to ship.
   rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
-  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ] && [ -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
+    tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
+  else
+    cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  fi
   if [ -n "$XED_PID" ] && kill -0 "$XED_PID" 2>/dev/null; then
     echo "xed (pid $XED_PID) is still running at exit; killing it." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true

@@ -6,31 +6,39 @@ Run before tagging a release, on a clean install produced from the release archi
 scripts/build-release.sh
 mkdir -p ~/.local/share/xed/plugins
 rm -rf ~/.local/share/xed/plugins/xedown ~/.local/share/xed/plugins/xedown.plugin
-tar -xzf dist/xedown-0.1.0.tar.gz -C ~/.local/share/xed/plugins
+tar -xzf dist/xedown-*.tar.gz -C ~/.local/share/xed/plugins
 ```
 
 Testing the archive rather than the working tree is the whole point: the two are
-meant to be identical, and this is how you find out when they are not. The
-shutdown harness can be pointed at the same artifact —
-`XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.1.0.tar.gz scripts/run-shutdown-tests.sh`
-— which is worth doing once per release before working through the rows by hand.
+meant to be identical, and this is how you find out when they are not. Point the
+shutdown harness at the same artifact before starting the rows:
+
+```bash
+ARCHIVE="$(ls dist/xedown-*.tar.gz)"
+XEDOWN_INSTALL_FROM_ARCHIVE="$ARCHIVE" scripts/run-shutdown-tests.sh
+```
+
+Run it that way rather than plainly — a normal run installs the working tree and
+leaves it installed, which would quietly turn every row below into a test of the
+working tree instead of the artifact you are about to ship.
 
 Automated coverage stops at the GTK boundary, so these steps are the last gate.
 
-`scripts/run-integration-tests.sh` now drives a real xed instance and asserts on the live
-widget tree for everything that can be checked without a human: the save/revert host-state
-hazard, `show_all()` in both modes, search controls not floating over the preview, the
-scroll round trip through a mode switch, a save never resetting scroll or reloading the
-page, closing a tab quickly, **moving a tab to another window without destroying its
-preview**, disabling the plugin for real (via the same `active-plugins` gsettings key the
-Preferences dialog uses) and confirming the `_xedown_controller` attribute is fully
-removed, several independent Markdown tabs, and `Gtk.Action.is_sensitive()` on both a `.md`
-and a `.txt` tab. Run it first — it takes a couple of minutes and catches regressions in
-exactly those hazards. Rows below that overlap with the two harnesses (18, 20, 21, 22, 23,
-24) are still listed deliberately, reframed for what a human's eyes catch that a structural
-assertion cannot — a visual glitch, an unexpected flicker, a real click landing wrong — not
-because the harnesses leave those scenarios untested. **The rest of this checklist is for
-what they genuinely cannot see at all**: rendering quality, real mouse and keyboard
+`scripts/run-integration-tests.sh` drives a real xed instance and asserts on the live
+widget tree: the save/revert host-state hazard, `show_all()` in both modes, the scroll
+round trip through a mode switch, a save never resetting scroll or reloading the page,
+a real in-page anchor click routing to the preview instead of the desktop file opener,
+the buffer never being reloaded by the plugin on its own, closing a tab quickly,
+**moving a tab to another window without destroying its preview**, disabling the plugin
+for real (via the same `active-plugins` gsettings key the Preferences dialog uses) and
+confirming the `_xedown_controller` attribute is fully removed, several independent
+Markdown tabs, and `Gtk.Action.is_sensitive()` on both a `.md` and a `.txt` tab. Run it
+first — it takes a couple of minutes and catches regressions in exactly those hazards.
+
+Some rows below cover ground the harnesses also touch. They are kept deliberately, for
+what a human's eyes catch that a structural assertion cannot — a visual glitch, an
+unexpected flicker, a real click landing wrong. **The rest of this checklist is for what
+the harnesses genuinely cannot see at all**: rendering quality, real mouse and keyboard
 interaction, and theme switching.
 
 `scripts/run-shutdown-tests.sh` covers the other half of that gate: shutdown. The
@@ -70,7 +78,7 @@ row, but both are real content in that file and worth a look while it is on scre
 | 7 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Toggles the same way as the buttons |
 | 8 | Edit in Markdown mode, switch to Preview | Preview shows the edited content |
 | 9 | Type in Markdown mode | No rendering work happens until you switch (no lag, no flicker) |
-| 10 | Edit while Preview is visible via another means (e.g. an external tool saving the file) | Preview refreshes within roughly a quarter second |
+| 10 | With Preview showing, change the file outside xed and accept xed's reload prompt | The preview follows the new content by itself, about a quarter second after the buffer changes — you never have to switch modes to see it |
 | 11 | Save, then revert, while Preview is active, watching closely | No visible flicker to the source editor at any point — the harness asserts the end state; this is about the transition looking clean |
 | 12 | Modify the file outside the editor, then reload when xed offers | Preview refreshes; xed's own "reload?" prompt appears — the plugin does not silently reload on its own |
 | 13 | Click the external link in `tests/fixtures/showcase.md` | Opens in the default browser, not in the preview |
@@ -86,9 +94,8 @@ row, but both are real content in that file and worth a look while it is on scre
 | 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
 | 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
 
-A crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown means a
-controller left something connected, and is a release blocker, not a cosmetic
-issue — **with exactly one named exception**: the assertion
+Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
+blocker, not a cosmetic issue — **with exactly one named exception**: the assertion
 
 ```
 (xed:PID): Gtk-CRITICAL **: HH:MM:SS.mmm: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed

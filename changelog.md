@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-08-04
+## [0.1.0] - 2026-08-05
 
 ### Added
 
@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Relative links and images resolved from the document's directory.
 - Per-mode scroll memory, with text and cursor position preserved across switches.
 - Bundled Markdown and highlighting dependencies, so no `pip` step is required.
+- A downloadable release archive that unpacks straight into the xed plugins
+  directory, with no checkout, `apt` or `pip` step.
 - Basic bidirectional text correctness: paragraphs, headings, list items,
   table cells, and blockquote text pick up the correct base direction
   automatically for right-to-left content such as Arabic or Hebrew, while
