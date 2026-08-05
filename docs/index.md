@@ -1,6 +1,7 @@
 # xedown documentation
 
-- Installation — see [README.md](../README.md)
+- Installation — see [README.md](../README.md); build the release archive with
+  `scripts/build-release.sh`
 - Manual smoke test — [manual-smoke-test.md](manual-smoke-test.md), which also
   describes the two automated harnesses that run before it:
   `scripts/run-integration-tests.sh` (live widget-tree behaviour) and

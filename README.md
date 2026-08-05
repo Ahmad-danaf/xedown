@@ -59,12 +59,26 @@ nothing to install with `pip`.
 
 ## Installation
 
+From a release archive — nothing else required:
+
+```bash
+mkdir -p ~/.local/share/xed/plugins
+tar -xzf xedown-0.1.0.tar.gz -C ~/.local/share/xed/plugins
+```
+
+Or from a checkout:
+
 ```bash
 mkdir -p ~/.local/share/xed/plugins
 cp -r plugin/xedown plugin/xedown.plugin ~/.local/share/xed/plugins/
 ```
 
 Then enable **Xedown** in xed under *Preferences → Plugins*.
+
+To build the archive yourself, run `scripts/build-release.sh`. It refuses to
+build from a tree with uncommitted changes, produces the same bytes for the
+same commit, and unpacks the result into a scratch directory to check that it
+renders using only its own bundled dependencies.
 
 ## Usage
 

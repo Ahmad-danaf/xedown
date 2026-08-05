@@ -1,6 +1,20 @@
 # Manual smoke test
 
-Run before tagging a release, on a clean install produced from the release archive.
+Run before tagging a release, on a clean install produced from the release archive:
+
+```bash
+scripts/build-release.sh
+mkdir -p ~/.local/share/xed/plugins
+rm -rf ~/.local/share/xed/plugins/xedown ~/.local/share/xed/plugins/xedown.plugin
+tar -xzf dist/xedown-0.1.0.tar.gz -C ~/.local/share/xed/plugins
+```
+
+Testing the archive rather than the working tree is the whole point: the two are
+meant to be identical, and this is how you find out when they are not. The
+shutdown harness can be pointed at the same artifact —
+`XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.1.0.tar.gz scripts/run-shutdown-tests.sh`
+— which is worth doing once per release before working through the rows by hand.
+
 Automated coverage stops at the GTK boundary, so these steps are the last gate.
 
 `scripts/run-integration-tests.sh` now drives a real xed instance and asserts on the live
