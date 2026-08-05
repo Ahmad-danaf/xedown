@@ -1,0 +1,9 @@
+# Development and CI dependencies.
+# Markdown and the syntax highlighter are vendored under plugin/xedown/vendor/,
+# so they are deliberately NOT listed here — installing them would let an
+# accidental import of a system copy pass CI unnoticed.
+pytest>=8.0
+pytest-cov>=5.0
+
+ruff>=0.5
+black>=24.0

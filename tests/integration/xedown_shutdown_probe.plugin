@@ -1,0 +1,9 @@
+[Plugin]
+Loader=python3
+Module=xedown_shutdown_probe
+IAge=3
+Name=XedownShutdownProbe
+Description=Shutdown-scenario driver for xedown. Not for general use.
+Authors=xedown
+Copyright=xedown
+Version=0.1.0

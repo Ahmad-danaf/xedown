@@ -1,0 +1,5 @@
+[tool.ruff]
+extend-exclude = ["plugin/xedown/vendor"]
+
+[tool.black]
+extend-exclude = "plugin/xedown/vendor"

@@ -1,0 +1,85 @@
+# Xedown Showcase
+
+Everything on this page renders **correctly**: no missing images, no dead
+links, no unresolved references. If you need a screenshot of Preview mode,
+or a first impression of what a rendered document should look like, take it
+from this file. For the deliberately broken cases used in the manual smoke
+test, see [edge-cases.md](edge-cases.md) instead.
+
+## Text formatting
+
+A paragraph with **bold text**, *italic text*, ~~strikethrough text~~, and
+`inline code`, combined in one sentence to confirm they nest cleanly.
+
+## Lists
+
+An unordered list:
+
+- First item
+- Second item
+- Third item
+
+An ordered list:
+
+1. First step
+2. Second step
+3. Third step
+
+A task list:
+
+- [x] Completed task
+- [ ] Outstanding task
+
+## Blockquote
+
+> A short blockquote, to confirm indentation and the border render the way
+> they should.
+
+## Horizontal rule
+
+Above this line is one section; below it is another.
+
+---
+
+## Table
+
+| Feature | Bundled | Notes |
+| --- | --- | --- |
+| Tables | Yes | GFM table syntax |
+| Task lists | Yes | Rendered as disabled checkboxes |
+| Footnotes | Yes | In-page anchors, with a back-reference |
+
+## Code blocks
+
+A Python fenced block, one of the 31 bundled highlighting languages:
+
+```python
+def greet(name):
+    return f"Hello, {name}!"
+```
+
+A Bash fenced block, another of the 31:
+
+```bash
+echo "Rendering complete"
+```
+
+## Images
+
+A local image, resolved relative to this file:
+
+![A small generated gradient](pics/sample.png)
+
+## Links
+
+- [An external link](https://example.com) opens in the default browser.
+- [A relative link to another fixture](linked.md) opens the linked document.
+- [Jump back up to the table](#table) is an in-page anchor link — it should
+  scroll within the preview, not open anything else.
+
+## Footnote
+
+This sentence carries a footnote reference[^1], which should scroll to the
+note below and back again.
+
+[^1]: This is the footnote text, reached by clicking the reference above.
