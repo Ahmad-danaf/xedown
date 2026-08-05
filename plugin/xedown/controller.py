@@ -37,18 +37,25 @@ class TabController:
         self._handlers = []  # (gobject, handler_id)
         self._refresh_source_id = 0
         self._built = False
+        self._active = False
         self._dark = False
+        self._info_bar = None
 
     # --- lifecycle ---------------------------------------------------------
 
     def activate(self):
-        self._connect(self.document, "saved", self._on_document_reloaded)
-        self._connect(self.document, "loaded", self._on_document_reloaded)
+        self._active = True
+        self._connect(self.document, "saved", self._on_document_saved)
+        self._connect(self.document, "loaded", self._on_document_loaded)
         if self.tab is not None:
             self._connect(self.tab, "notify::state", self._on_tab_state_changed)
         GLib.idle_add(self._build_if_markdown)
 
     def deactivate(self):
+        # Flip this first: a `_build_if_markdown` already queued via
+        # GLib.idle_add (from activate(), or re-entrantly from a reload
+        # handler) must see this and refuse to build after teardown.
+        self._active = False
         self._cancel_refresh()
         for owner, handler_id in self._handlers:
             try:
@@ -61,12 +68,15 @@ class TabController:
             self.theme_watcher.disconnect()
             self.theme_watcher = None
 
+        self._dismiss_info_bar()
+
         # Always hand the source editor back, whatever mode we were in.
         if self.frame is not None:
             self.frame.set_no_show_all(False)
             self.frame.show()
 
         if self.preview is not None:
+            self.preview.widget.set_no_show_all(False)
             self.preview.destroy()
             self.preview = None
         if self.modebar is not None:
@@ -76,6 +86,18 @@ class TabController:
 
     def _connect(self, owner, signal, callback):
         self._handlers.append((owner, owner.connect(signal, callback)))
+
+    def _untrack(self, owner):
+        """Drop `owner`'s entries from `self._handlers`.
+
+        Used when something this controller connected to is destroyed
+        outside of `deactivate()` (the info bar, dismissed by its own Close
+        button): `destroy()` already invalidates the widget's signal
+        connections, so leaving the bookkeeping entry behind would make
+        `deactivate()`'s bulk disconnect try to disconnect an id that no
+        longer exists.
+        """
+        self._handlers = [(o, h) for o, h in self._handlers if o is not owner]
 
     # --- construction ------------------------------------------------------
 
@@ -93,7 +115,7 @@ class TabController:
 
     def _build_if_markdown(self):
         """Non-Markdown documents get no mode bar constructed at all."""
-        if self._built or not self.is_markdown or self.tab is None:
+        if not self._active or self._built or not self.is_markdown or self.tab is None:
             return False
 
         self.theme_watcher = ThemeWatcher()
@@ -131,17 +153,42 @@ class TabController:
 
         if mode is Mode.PREVIEW:
             if self.state.preview_stale:
-                self._reload_preview()
+                # A full reload is async; the scroll fraction is applied by
+                # PreviewView once the new page actually finishes loading.
+                self._reload_preview(restore_scroll=self.state.preview_scroll)
+            else:
+                self.preview.set_scroll(self.state.preview_scroll)
             self.frame.set_no_show_all(True)
             self.frame.hide()
+            # Mirror the frame: clear no-show-all before show_all(), since
+            # show_all() is itself blocked by the flag while it is set.
+            self.preview.widget.set_no_show_all(False)
             self.preview.widget.show_all()
-            self.preview.set_scroll(self.state.preview_scroll)
         else:
+            # Mirror the frame's mitigation on the other widget: without
+            # this, a bare show_all() on the tab while in source mode would
+            # re-reveal the WebView (packed expand=True) alongside the
+            # source editor.
+            self.preview.widget.set_no_show_all(True)
             self.preview.widget.hide()
             self.frame.set_no_show_all(False)
             self.frame.show()
             self._restore_source_scroll()
             self.view.grab_focus()
+
+    def _current_preview_scroll(self):
+        """The scroll fraction to preserve across a reload while previewing.
+
+        Distinct from `self.state.preview_scroll`, which is only updated on
+        a mode switch away from preview — a reload triggered *while already
+        in preview mode* (external reload, theme change, a render retry)
+        needs the live position instead.
+        """
+        return (
+            self.preview.last_scroll
+            if self.preview is not None
+            else self.state.preview_scroll
+        )
 
     def _remember_scroll(self, mode):
         if mode is Mode.PREVIEW and self.preview is not None:
@@ -210,18 +257,26 @@ class TabController:
         self._refresh_source_id = 0
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return False
+        self._refresh_body_now()
+        return False
+
+    def _refresh_body_now(self):
+        """Re-render the body in place. Shared by the debounce timer and an
+        immediate save-time refresh (see `_on_document_saved`) — neither
+        case wants a full page reload."""
         try:
             fragment = renderer.render_fragment(
                 self._buffer_text(), base_dir=self._base_dir()
             )
         except Exception as exc:  # noqa: BLE001 - never leave a blank pane
-            self._reload_preview(error=exc)
-            return False
+            self._reload_preview(
+                error=exc, restore_scroll=self._current_preview_scroll()
+            )
+            return
         self.preview.update_body(fragment)
         self.state.preview_stale = False
-        return False
 
-    def _reload_preview(self, error=None):
+    def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
             return
         if error is not None:
@@ -236,7 +291,9 @@ class TabController:
             )
         base_dir = self._base_dir()
         self.preview.load_document(
-            html, ("file://" + base_dir + "/") if base_dir else None
+            html,
+            ("file://" + base_dir + "/") if base_dir else None,
+            restore_scroll=restore_scroll,
         )
         self.state.preview_stale = False
 
@@ -244,19 +301,34 @@ class TabController:
         start, end = self.document.get_bounds()
         return self.document.get_text(start, end, False)
 
-    def _on_document_reloaded(self, *_args):
-        """Fires after xed saves or reloads — including after an external change."""
+    def _on_document_saved(self, *_args):
+        """A save does not change the buffer, so it never warrants a full
+        page reload — that would re-parse the whole bundle and jump the
+        preview back to the top for no reason. It can still be the moment a
+        never-built tab first becomes eligible (Save As to a .md name), and
+        it can still leave a change unrendered if the debounce window was
+        still pending, so cover both without reloading the page itself."""
+        if not self._built:
+            GLib.idle_add(self._build_if_markdown)
+            return
+        if self.state.preview_stale and self.state.mode is Mode.PREVIEW:
+            self._refresh_body_now()
+
+    def _on_document_loaded(self, *_args):
+        """Fires after xed reverts or reloads — including after an external
+        change — all of which genuinely replace the buffer contents, so
+        (unlike a save) this always warrants a full reload when visible."""
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
         self.state.preview_stale = True
         if self.state.mode is Mode.PREVIEW:
-            self._reload_preview()
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
 
     def _on_theme_changed(self, dark):
         self._dark = dark
         if self._built and self.state.mode is Mode.PREVIEW:
-            self._reload_preview()
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
 
     def _on_mode_selected(self, _bar, mode_value):
         self.set_mode(Mode(mode_value))
@@ -322,12 +394,34 @@ class TabController:
     def _show_error(self, message):
         if self.tab is None:
             return
+        self._dismiss_info_bar()
         bar = Gtk.InfoBar()
         bar.set_message_type(Gtk.MessageType.WARNING)
         bar.get_content_area().add(Gtk.Label(label=message))
         bar.add_button("Close", Gtk.ResponseType.CLOSE)
-        bar.connect("response", lambda widget, _r: self.tab.set_info_bar(None))
+        self._connect(bar, "response", self._on_info_bar_response)
+        self._info_bar = bar
         self.tab.set_info_bar(bar)
         bar.show_all()
         if self.modebar is not None:
             self.tab.reorder_child(self.modebar, 0)
+
+    def _on_info_bar_response(self, bar, _response):
+        # `Xed.Tab.set_info_bar` does not accept None (its `info_bar`
+        # argument is marshaled as non-nullable), so the bar is retired by
+        # destroying it directly rather than trying to clear the tab's
+        # info-bar slot.
+        if self._info_bar is bar:
+            self._info_bar = None
+        self._untrack(bar)
+        bar.destroy()
+
+    def _dismiss_info_bar(self):
+        """Remove the info bar this controller created, if any is showing.
+
+        Never touches an info bar this controller did not create.
+        """
+        if self._info_bar is not None:
+            bar, self._info_bar = self._info_bar, None
+            self._untrack(bar)
+            bar.destroy()

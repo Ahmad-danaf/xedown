@@ -20,6 +20,7 @@ class PreviewView:
         self.on_image_error = on_image_error
         self.last_scroll = 0.0
         self._loaded = False
+        self._pending_scroll = 0.0
 
         self._content_manager = WebKit2.UserContentManager()
         self._content_manager.register_script_message_handler(_MESSAGE_HANDLER)
@@ -48,13 +49,23 @@ class PreviewView:
         self._context_menu_handler_id = self.widget.connect(
             "context-menu", lambda *_args: True
         )
+        self._load_changed_handler_id = self.widget.connect(
+            "load-changed", self._on_load_changed
+        )
 
     # --- loading -----------------------------------------------------------
 
-    def load_document(self, html, base_uri=None):
-        """Load a complete page. Resets scroll reporting."""
+    def load_document(self, html, base_uri=None, restore_scroll=0.0):
+        """Load a complete page. Resets scroll reporting.
+
+        `load_html` is asynchronous, so a scroll fraction to apply once the
+        new page is actually in the DOM is remembered here rather than set
+        immediately — setting it right after this call would run against
+        the outgoing page, not the one being loaded.
+        """
         self.last_scroll = 0.0
         self._loaded = False
+        self._pending_scroll = restore_scroll
         self.widget.load_html(html, base_uri)
 
     def update_body(self, fragment_html):
@@ -113,18 +124,25 @@ class PreviewView:
             self.on_link(uri)
         return True
 
+    def _on_load_changed(self, _view, load_event):
+        if load_event == WebKit2.LoadEvent.FINISHED:
+            self.set_scroll(self._pending_scroll)
+            self._pending_scroll = 0.0
+
     # --- teardown ----------------------------------------------------------
 
     def destroy(self):
         for owner, handler_id in (
             (self.widget, self._policy_handler_id),
             (self.widget, self._context_menu_handler_id),
+            (self.widget, self._load_changed_handler_id),
             (self._content_manager, self._message_handler_id),
         ):
             if handler_id:
                 owner.disconnect(handler_id)
         self._policy_handler_id = None
         self._context_menu_handler_id = None
+        self._load_changed_handler_id = None
         self._message_handler_id = None
         self._content_manager.unregister_script_message_handler(_MESSAGE_HANDLER)
         self.on_link = None
