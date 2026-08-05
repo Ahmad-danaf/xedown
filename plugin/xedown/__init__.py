@@ -22,7 +22,7 @@ except (ImportError, ValueError) as exc:  # pragma: no cover - host-only path
     )
 
 if _HOST_AVAILABLE:
-    from gi.repository import GObject, Gtk, Xed
+    from gi.repository import GLib, GObject, Gtk, Xed
 
     from .controller import TabController
 
@@ -108,9 +108,26 @@ if _HOST_AVAILABLE:
             self._action_group = None
 
         def _on_tab_removed(self, _window, tab):
+            # "tab-removed" fires on the SOURCE window both for a real close
+            # and for Documents -> Move to New Window / dragging a tab out
+            # (xed_notebook_move_tab): in a move the same tab is re-added to
+            # the destination window's notebook, synchronously, and its view
+            # must keep its controller. Deciding "is this a close" one
+            # main-loop turn later, once the move (if any) has already
+            # completed, is reliable: a moved tab already has a new parent
+            # by then, while a closed tab's widgets are being torn down and
+            # it has none. Tearing down unconditionally here (the first cut
+            # of this fix) silently destroyed the preview on every tab move,
+            # trading the close-time leak for a worse, silent regression.
+            GLib.idle_add(self._maybe_deactivate_tab, tab)
+
+        def _maybe_deactivate_tab(self, tab):
+            if tab.get_parent() is not None:
+                return False  # moved to another notebook, not closed
             view = tab.get_view()
             if view is not None:
                 _deactivate_view(view)
+            return False
 
         def do_update_state(self):
             """No preview controls for non-Markdown files."""
@@ -131,21 +148,28 @@ if _HOST_AVAILABLE:
                 controller.toggle()
 
     class XedownViewActivatable(GObject.Object, Xed.ViewActivatable):
-        """One controller per view — this is the per-tab ownership boundary."""
+        """One controller per view — this is the per-tab ownership boundary.
+
+        Deliberately does not also cache the controller on `self`: the
+        view's `_CONTROLLER_ATTRIBUTE` is the single source of truth (it is
+        what `_deactivate_view` and the rest of the plugin read), and peas
+        does not dispose this object when a tab is merely closed (only when
+        the whole plugin is disabled -- see `_on_tab_removed` above), so a
+        second, separately-tracked reference on `self` would go stale
+        exactly then: cleared on the view's attribute but left dangling
+        here, keeping the torn-down controller (and the view/document/tab/
+        frame it references) alive for no reason for the life of the
+        window.
+        """
 
         __gtype_name__ = "XedownViewActivatable"
 
         view = GObject.Property(type=Xed.View)
 
-        def __init__(self):
-            GObject.Object.__init__(self)
-            self._controller = None
-
         def do_activate(self):
-            self._controller = TabController(self.view)
-            setattr(self.view, _CONTROLLER_ATTRIBUTE, self._controller)
-            self._controller.activate()
+            controller = TabController(self.view)
+            setattr(self.view, _CONTROLLER_ATTRIBUTE, controller)
+            controller.activate()
 
         def do_deactivate(self):
             _deactivate_view(self.view)
-            self._controller = None
