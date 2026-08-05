@@ -219,9 +219,11 @@ fi
 # different tab in the original window, then window close. Reproduced with
 # xedown completely uninstalled (not just disabled): the identical
 # assertion appears from a plugin that only calls Xed/Gtk/Gio APIs
-# directly and never references xedown. Full reproduction evidence,
-# including the diagnostic script and its log, is in the round-2 section of
-# .superpowers/sdd/2026-08-04-xedown-v0.1/task-14-report.md. The window
+# directly and never references xedown. That is reproducible on demand,
+# rather than being a claim you have to take on trust:
+#   XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh move-tab
+# runs the same scenario with xedown absent from the plugin directory
+# entirely, and still prints this assertion. The window
 # still closes cleanly either way -- this is a loud assertion, not a hang
 # or a crash. This allowlist is intentionally ONE exact string: it must
 # never grow into a general relaxation, and any other CRITICAL, WARNING,

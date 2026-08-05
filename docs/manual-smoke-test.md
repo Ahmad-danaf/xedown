@@ -12,11 +12,11 @@ preview**, disabling the plugin for real (via the same `active-plugins` gsetting
 Preferences dialog uses) and confirming the `_xedown_controller` attribute is fully
 removed, several independent Markdown tabs, and `Gtk.Action.is_sensitive()` on both a `.md`
 and a `.txt` tab. Run it first — it takes a couple of minutes and catches regressions in
-exactly those hazards. Rows below that overlap with the harness (18, 20, 22, 23) are still
-listed deliberately, reframed for what a human's eyes catch that a structural assertion
-cannot — a visual glitch, an unexpected flicker, a real click landing wrong — not because
-the harness leaves those scenarios untested. **The rest of this checklist is for what the
-harness genuinely cannot see at all**: rendering quality, real mouse and keyboard
+exactly those hazards. Rows below that overlap with the two harnesses (18, 20, 21, 22, 23,
+24) are still listed deliberately, reframed for what a human's eyes catch that a structural
+assertion cannot — a visual glitch, an unexpected flicker, a real click landing wrong — not
+because the harnesses leave those scenarios untested. **The rest of this checklist is for
+what they genuinely cannot see at all**: rendering quality, real mouse and keyboard
 interaction, and theme switching.
 
 `scripts/run-shutdown-tests.sh` covers the other half of that gate: shutdown. The
@@ -70,7 +70,7 @@ row, but both are real content in that file and worth a look while it is on scre
 | 21 | Open a second window with Markdown files | Both windows work independently |
 | 22 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
 | 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
-| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below |
+| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
 
 A crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown means a
 controller left something connected, and is a release blocker, not a cosmetic
