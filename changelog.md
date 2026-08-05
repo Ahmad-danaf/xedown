@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - In-tab Markdown preview for `.md` and `.markdown` files, with Preview and
   Markdown modes and no extra tab or window.
-- Rendering for headings, paragraphs, bold and italic text, ordered and unordered
-  lists, task lists, links, local images, blockquotes, horizontal rules, tables,
-  inline code and fenced code blocks.
+- Rendering for headings, paragraphs, bold and italic text, strikethrough,
+  ordered and unordered lists, task lists, links, local images, blockquotes,
+  horizontal rules, tables, inline code and fenced code blocks.
+- Footnotes and attribute lists, with in-page scrolling to footnote anchors.
 - Syntax highlighting from a bundled custom highlight.js build covering 31 languages.
 - Light and dark themes that follow the desktop.
 - Automatic preview refresh while the preview is visible.

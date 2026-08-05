@@ -260,7 +260,86 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_back_to_preview(self):
         self._main_controller().toggle()
-        self._schedule(500, self.step_search)
+        self._schedule(500, self.step_anchor_link_setup)
+        return False
+
+    # --- real link click: F1 regression guard -------------------------------
+    #
+    # WebKit never delivers a bare `#fragment` for an in-page anchor click --
+    # it resolves the href against the page's own URI first, which used to
+    # make every anchor link (including every footnote reference, since the
+    # footnotes extension is on by default) get misrouted to the desktop
+    # file opener instead of scrolling in place. `PreviewView.scroll_to_anchor`
+    # and `TabController._open_with_desktop` are instrumented rather than
+    # called directly, because the whole point is to prove a REAL click
+    # through the WebView's own `decide-policy` round-trips correctly --
+    # `run_javascript("...click();")` can script exactly that.
+
+    def step_anchor_link_setup(self):
+        controller = self._main_controller()
+        self._anchor_scroll_calls = []
+        self._anchor_desktop_calls = []
+        self._anchor_original_scroll_to_anchor = controller.preview.scroll_to_anchor
+        self._anchor_original_open_with_desktop = controller._open_with_desktop
+
+        def _record_scroll(name):
+            self._anchor_scroll_calls.append(name)
+            return self._anchor_original_scroll_to_anchor(name)
+
+        def _record_desktop(uri):
+            self._anchor_desktop_calls.append(uri)
+
+        controller.preview.scroll_to_anchor = _record_scroll
+        controller._open_with_desktop = _record_desktop
+
+        self.document.set_text(
+            "# Anchor Click Test\n\n"
+            "[Jump to section](#section)\n\n"
+            "See the note.[^1]\n\n"
+            + ("Filler paragraph to add page height. " * 20 + "\n\n") * 4
+            + "## Section\n\nLanded here.\n\n"
+            "[^1]: A footnote, auto-generating `#fn:1` / `#fnref:1` anchors.\n"
+        )
+        self._schedule(900, self.step_anchor_link_click)
+        return False
+
+    def step_anchor_link_click(self):
+        controller = self._main_controller()
+        controller.preview.widget.run_javascript(
+            "document.querySelector('a[href=\"#section\"]').click();",
+            None,
+            None,
+            None,
+        )
+        self._schedule(500, self.step_footnote_link_click)
+        return False
+
+    def step_footnote_link_click(self):
+        controller = self._main_controller()
+        controller.preview.widget.run_javascript(
+            "document.querySelector('a[href=\"#fn:1\"]').click();",
+            None,
+            None,
+            None,
+        )
+        self._schedule(500, self.step_anchor_link_check)
+        return False
+
+    def step_anchor_link_check(self):
+        controller = self._main_controller()
+        controller.preview.scroll_to_anchor = self._anchor_original_scroll_to_anchor
+        controller._open_with_desktop = self._anchor_original_open_with_desktop
+        record(
+            "real-anchor-click-scrolls-in-page",
+            self._anchor_scroll_calls == ["section", "fn:1"],
+            f"scroll_to_anchor calls: {self._anchor_scroll_calls!r}",
+        )
+        record(
+            "real-anchor-click-never-hits-desktop-handler",
+            not self._anchor_desktop_calls,
+            f"desktop handler calls: {self._anchor_desktop_calls!r}",
+        )
+        self._schedule(300, self.step_search)
         return False
 
     # --- host-state hazard: search / go-to-line while previewing -----------
@@ -303,10 +382,13 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_infobar(self):
         controller = self._main_controller()
-        # Drives the internal hook directly: there is no practical way to
-        # script a real WebView link click from here. This exercises the
-        # exact path _on_link_activated -> classify_link -> _show_error that
-        # a REFUSE decision takes in real use.
+        # Drives the internal hook directly rather than a real WebView click
+        # (see step_anchor_link_setup above for that): an actual
+        # `badscheme://` href would never survive the sanitizer's URI
+        # allowlist to reach the DOM, so there is no real link to click here.
+        # This exercises the exact path
+        # _on_link_activated -> classify_link -> _show_error that a REFUSE
+        # decision takes in real use.
         controller._on_link_activated("badscheme://example")
         self._info_bar = controller._info_bar
         record("infobar-created-on-refused-link", self._info_bar is not None)

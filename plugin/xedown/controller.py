@@ -327,6 +327,7 @@ class TabController:
 
     def _on_theme_changed(self, dark):
         self._dark = dark
+        self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
 

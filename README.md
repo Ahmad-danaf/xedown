@@ -6,9 +6,13 @@ Markdown modes inside the same tab.
 ## Features
 
 - Rendered preview for `.md` and `.markdown` files (matched case-insensitively),
-  covering headings, paragraphs, bold and italic text, ordered and unordered
-  lists, task lists, links, local images, blockquotes, horizontal rules, tables,
-  inline code and fenced code blocks.
+  covering headings, paragraphs, bold and italic text, strikethrough, ordered
+  and unordered lists, task lists, links, local images, blockquotes, horizontal
+  rules, tables, inline code and fenced code blocks.
+- Footnotes and attribute lists (for example attaching an `id` to a heading to
+  link to it). Footnote references and back-references are in-page anchor
+  links, and clicking one scrolls the preview to the matching note instead of
+  leaving the page.
 - Syntax highlighting for fenced code blocks, from a bundled highlight.js build
   covering 31 languages: bash, C, C++, C#, CSS, diff, Dockerfile, Go, INI, Java,
   JavaScript, JSON, Kotlin, Lua, Makefile, Markdown, Objective-C, Perl, PHP,
@@ -26,7 +30,11 @@ Markdown modes inside the same tab.
   are rendered the next time you switch to Preview.
 - External links open in your default browser. Local links to other Markdown
   files open in a new xed tab. Other local files are handed to your desktop's
-  file opener, which asks first for anything executable or a `.desktop` file.
+  file opener, which asks for confirmation first for anything that can run
+  code — not just a file with the executable bit set or a `.desktop` entry,
+  but any shell, Python, Perl or Ruby script, Windows/desktop executable or
+  installer, JAR, AppImage, or shared library, judged by its extension
+  whether or not it is marked executable.
 - Relative links and images resolve against the document's own directory. An
   unsaved document says so in place of a link or image, instead of guessing
   a path.
@@ -68,6 +76,11 @@ and viewing never changes the file.
   each mode keeps its own independent scroll position.
 - Remote images do not load. This is by design, not a bug: xedown never
   fetches anything from the network.
+- In a document that has never been saved, relative links cannot be resolved:
+  they render as inert text with no click target and no on-page message.
+  Relative images in the same situation do get an explanatory placeholder.
+  Save the file to give relative links and images a location to resolve
+  against.
 
 ## Documentation
 

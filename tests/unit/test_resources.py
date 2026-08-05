@@ -44,7 +44,13 @@ def test_resources_reference_nothing_remote(preview_css, preview_js):
 
 
 def test_script_exposes_the_host_interface(preview_js):
-    for symbol in ("replaceBody", "setScroll", "getScroll", "window.xedown"):
+    for symbol in (
+        "replaceBody",
+        "setScroll",
+        "getScroll",
+        "scrollToAnchor",
+        "window.xedown",
+    ):
         assert symbol in preview_js
 
 

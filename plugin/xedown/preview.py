@@ -1,6 +1,7 @@
 """WebKit-backed preview surface. Owns the WebView and its handlers."""
 
 import json
+import urllib.parse
 
 import gi
 
@@ -121,8 +122,31 @@ class PreviewView:
 
         decision.ignore()
         if self.on_link is not None:
-            self.on_link(uri)
+            self.on_link(self._as_link_target(uri))
         return True
+
+    def _as_link_target(self, uri):
+        """Recover a bare `#fragment` for an in-page anchor click.
+
+        WebKit never delivers `href="#section"` back verbatim: it resolves
+        the link against the page's own URI first, so `on_link` would
+        otherwise see something like `file:///…/docs/#section` (or, for an
+        unsaved document, `about:blank#section`) — indistinguishable from a
+        link to a different page at first glance, and in fact misclassified
+        as one by `classify_link`, which only recognises a leading `#`.
+
+        A same-document navigation is detected by comparing `uri` and the
+        WebView's current URI with any fragment stripped; when they match,
+        the bare fragment (possibly empty, for a link to the page itself or
+        a lone `#`) is handed back so the existing anchor-scrolling path can
+        take over instead.
+        """
+        base = self.widget.get_uri() or "about:blank"
+        stripped_uri, fragment = urllib.parse.urldefrag(uri)
+        stripped_base, _base_fragment = urllib.parse.urldefrag(base)
+        if stripped_uri == stripped_base:
+            return "#" + fragment
+        return uri
 
     def _on_load_changed(self, _view, load_event):
         if load_event == WebKit2.LoadEvent.FINISHED:
