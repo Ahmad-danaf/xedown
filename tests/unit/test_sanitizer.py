@@ -134,3 +134,95 @@ def test_svg_data_uris_are_rejected_even_though_declared_as_image():
     result = sanitize(f'<img src="{svg_script}" alt="a">')
     assert "svg+xml" not in result
     assert "base64" not in result
+
+
+def test_resolver_hook_rewrites_allowed_uris():
+    def resolve(name, value):
+        return "file:///base/" + value
+
+    result = sanitize('<img src="a.png">', resolve_uri=resolve)
+    assert 'src="file:///base/a.png"' in result
+
+
+def test_resolver_hook_can_drop_an_attribute():
+    result = sanitize('<img src="a.png" alt="x">', resolve_uri=lambda name, value: None)
+    assert "src=" not in result
+    assert 'alt="x"' in result
+
+
+def test_resolver_hook_never_sees_a_rejected_scheme():
+    seen = []
+
+    def resolve(name, value):
+        seen.append(value)
+        return value
+
+    sanitize('<a href="javascript:alert(1)">x</a>', resolve_uri=resolve)
+    assert seen == []
+
+
+def test_without_on_blocked_image_hook_remote_src_is_unchanged():
+    # Existing behavior must survive: with no `on_blocked_image` callback,
+    # `resolve_uri`'s return value (here left as-is) is emitted verbatim,
+    # even for a remote reference. The blocked-image behavior is opt-in.
+    result = sanitize('<img src="https://example.com/x.png">')
+    assert 'src="https://example.com/x.png"' in result
+    assert "xedown-image-error" not in result
+
+
+def test_on_blocked_image_hook_replaces_a_remote_image_with_a_placeholder():
+    result = sanitize(
+        '<img src="https://example.com/x.png" alt="x">',
+        resolve_uri=lambda name, value: value,  # remote passes through unchanged
+        on_blocked_image=lambda uri: "blocked: " + uri,
+    )
+    assert "<img" not in result
+    assert 'class="xedown-image-error"' in result
+    assert "blocked: https://example.com/x.png" in result
+
+
+def test_on_blocked_image_hook_replaces_an_unresolvable_image_with_a_placeholder():
+    result = sanitize(
+        '<img src="a.png">',
+        resolve_uri=lambda name, value: None,  # e.g. no base directory
+        on_blocked_image=lambda uri: "missing: " + uri,
+    )
+    assert "<img" not in result
+    assert "missing: a.png" in result
+
+
+def test_on_blocked_image_hook_leaves_a_resolved_local_image_alone():
+    result = sanitize(
+        '<img src="a.png">',
+        resolve_uri=lambda name, value: "file:///base/" + value,
+        on_blocked_image=lambda uri: "blocked",
+    )
+    assert 'src="file:///base/a.png"' in result
+    assert "xedown-image-error" not in result
+
+
+def test_on_blocked_image_hook_leaves_a_data_image_alone():
+    result = sanitize(
+        '<img src="data:image/png;base64,iVBORw0KGgo=">',
+        on_blocked_image=lambda uri: "blocked",
+    )
+    assert 'src="data:image/png;base64,iVBORw0KGgo="' in result
+    assert "xedown-image-error" not in result
+
+
+def test_on_blocked_image_hook_output_is_escaped():
+    result = sanitize(
+        '<img src="a.png">',
+        resolve_uri=lambda name, value: None,
+        on_blocked_image=lambda uri: "<script>alert(1)</script>",
+    )
+    assert "<script>" not in result
+    assert "&lt;script&gt;" in result
+
+
+def test_content_cannot_spoof_the_image_error_placeholder_class():
+    # xedown- must never join _ALLOWED_CLASS_PREFIXES: the placeholder span
+    # sanitize() writes for a blocked image is trusted only because ordinary
+    # content can never produce that class itself.
+    result = sanitize('<span class="xedown-image-error">fake</span>')
+    assert "xedown-image-error" not in result

@@ -72,3 +72,12 @@ def missing_vendor_detail(exc):
 def remote_image_blocked_text(uri):
     """Placeholder text shown in place of an image the plugin refuses to fetch."""
     return f"Remote image blocked: {uri}"
+
+
+def local_image_unresolved_text(uri):
+    """Placeholder text for a local image reference that could not be
+    resolved to a file, in the spirit of UNSAVED_DOCUMENT_HINT: this is
+    normally an unsaved document, so a relative path has nothing to resolve
+    against.
+    """
+    return f"Image not found: {uri}. {UNSAVED_DOCUMENT_HINT}"

@@ -132,6 +132,18 @@ pre code {
   white-space: pre;
 }
 
+/* The vendored highlight theme (emitted before this sheet) sets both
+   `code.hljs { padding: 3px 5px }` and `.hljs { background: #0d1117 }`, and
+   inside a code block also `pre code.hljs { padding: 1em }` — the last one
+   ties this override on specificity (0,1,2 vs 0,1,2), so source order
+   decides, which is exactly why this rule must come after the theme rather
+   than merely matching its specificity. Without it a highlighted block gets
+   double padding and a background that fights the <pre>'s own surface. */
+pre code.hljs {
+  padding: 0;
+  background: none;
+}
+
 .xedown-table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
 table { border-collapse: collapse; width: 100%; font-size: .95em; }
 th, td { padding: .5em .8em; border: 1px solid var(--xedown-border); text-align: left; }

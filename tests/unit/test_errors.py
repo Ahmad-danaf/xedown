@@ -57,3 +57,12 @@ def test_remote_image_blocked_text_contains_uri_and_blocked():
     assert "blocked" in text.lower()
     assert "<" not in text
     assert ">" not in text
+
+
+def test_local_image_unresolved_text_contains_uri_and_the_unsaved_hint():
+    uri = "pic.png"
+    text = errors.local_image_unresolved_text(uri)
+    assert uri in text
+    assert "save" in text.lower()
+    assert "<" not in text
+    assert ">" not in text

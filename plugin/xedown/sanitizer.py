@@ -126,10 +126,12 @@ def _filter_class(value):
 
 
 class _Sanitizer(HTMLParser):
-    def __init__(self):
+    def __init__(self, resolve_uri=None, on_blocked_image=None):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self._suppress_depth = 0
+        self._resolve_uri = resolve_uri
+        self._on_blocked_image = on_blocked_image
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -137,6 +139,9 @@ class _Sanitizer(HTMLParser):
             self._suppress_depth += 1
             return
         if self._suppress_depth or tag not in ALLOWED_ELEMENTS:
+            return
+        if tag == "img" and self._on_blocked_image is not None:
+            self._emit_img(attrs)
             return
         rendered = self._render_attributes(tag, attrs)
         if tag in _VOID_ELEMENTS:
@@ -149,6 +154,9 @@ class _Sanitizer(HTMLParser):
         if tag in _DROP_CONTENT_ELEMENTS or self._suppress_depth:
             return
         if tag not in ALLOWED_ELEMENTS:
+            return
+        if tag == "img" and self._on_blocked_image is not None:
+            self._emit_img(attrs)
             return
         self.parts.append(f"<{tag}{self._render_attributes(tag, attrs)} />")
 
@@ -186,6 +194,11 @@ class _Sanitizer(HTMLParser):
                 if not _is_safe_uri(value, allow_data_image=(name == "src")):
                     continue
                 value = _strip_control_characters(html_module.unescape(value))
+                if self._resolve_uri is not None:
+                    resolved = self._resolve_uri(name, value)
+                    if resolved is None:
+                        continue
+                    value = resolved
             elif name == "class":
                 value = _filter_class(value)
                 if not value:
@@ -197,10 +210,79 @@ class _Sanitizer(HTMLParser):
             rendered.append("disabled")
         return (" " + " ".join(rendered)) if rendered else ""
 
+    def _emit_img(self, attrs):
+        """Render `<img>`, or a placeholder when its src cannot become a
+        local `file:` or `data:` URI.
 
-def sanitize(html):
-    """Return `html` reduced to the allowlist."""
-    parser = _Sanitizer()
+        Only called when `_on_blocked_image` is set. A remote reference
+        (e.g. `https://`) will never load under the document's CSP, and a
+        relative reference that fails to resolve (typically an unsaved
+        document with no base directory) will never load either — both are
+        replaced here, server-side, with a visible placeholder rather than
+        an `<img>` left to fail silently or be caught only by a browser
+        error handler. The placeholder span is written by the sanitizer
+        itself from trusted callback text, not from document content, so it
+        deliberately bypasses `_filter_class`: `xedown-` is not, and must
+        not become, an allowed class prefix, or document content could spoof
+        this placeholder.
+        """
+        allowed = ALLOWED_ATTRIBUTES.get("img", frozenset()) | _GLOBAL_ATTRIBUTES
+        rendered = []
+        seen = set()
+        blocked_reference = None
+        for raw_name, raw_value in attrs:
+            name = (raw_name or "").lower()
+            if name in seen or name not in allowed:
+                continue
+            seen.add(name)
+            value = raw_value if raw_value is not None else ""
+            if name == "src":
+                if not _is_safe_uri(value, allow_data_image=True):
+                    continue
+                value = _strip_control_characters(html_module.unescape(value))
+                resolved = (
+                    self._resolve_uri("src", value)
+                    if self._resolve_uri is not None
+                    else value
+                )
+                lowered = (resolved or "").lower()
+                if resolved is None or not lowered.startswith(("file:", "data:")):
+                    blocked_reference = value
+                    continue
+                value = resolved
+            elif name == "class":
+                value = _filter_class(value)
+                if not value:
+                    continue
+            rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
+
+        if blocked_reference is not None:
+            text = self._on_blocked_image(blocked_reference) or ""
+            escaped = html_module.escape(text, quote=False)
+            self.parts.append(f'<span class="xedown-image-error">{escaped}</span>')
+            return
+
+        joined = (" " + " ".join(rendered)) if rendered else ""
+        self.parts.append(f"<img{joined} />")
+
+
+def sanitize(html, resolve_uri=None, on_blocked_image=None):
+    """Return `html` reduced to the allowlist.
+
+    `resolve_uri` is an optional callable taking (attribute_name, value) and
+    returning a replacement value, or None to drop the attribute. It runs
+    only after a value has already passed the scheme allowlist.
+
+    `on_blocked_image` is an optional callable taking the original (resolved
+    scheme aside) image reference and returning placeholder text. When set,
+    any `<img>` whose `src` cannot be turned into a local `file:` or `data:`
+    URI is replaced with `<span class="xedown-image-error">TEXT</span>`
+    instead of being emitted — this covers both a remote image and a
+    relative image that cannot be resolved (e.g. an unsaved document). When
+    not set, existing behavior is unchanged: `<img>` is emitted with
+    whatever `resolve_uri` (if any) returns for `src`.
+    """
+    parser = _Sanitizer(resolve_uri=resolve_uri, on_blocked_image=on_blocked_image)
     parser.feed(html or "")
     parser.close()
     return "".join(parser.parts)
