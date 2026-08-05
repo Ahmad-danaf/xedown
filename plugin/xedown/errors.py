@@ -47,9 +47,8 @@ def error_page(title, detail, dark=False, nonce="xedown-error"):
             "accent": "#cf222e",
         }
     )
-    # Escape HTML and also replace = to prevent "attr=value" patterns from appearing literally
-    escaped_title = html.escape(str(title)).replace("=", "&#61;")
-    escaped_detail = html.escape(str(detail)).replace("=", "&#61;")
+    escaped_title = html.escape(str(title))
+    escaped_detail = html.escape(str(detail))
     return _ERROR_PAGE.format(
         title=escaped_title,
         detail=escaped_detail,

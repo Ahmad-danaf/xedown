@@ -12,8 +12,10 @@ def test_error_page_is_a_complete_html_document():
 def test_error_page_escapes_its_inputs():
     page = errors.error_page("<script>alert(1)</script>", "<img onerror=x>")
     assert "<script>" not in page
-    assert "onerror=x" not in page
     assert "&lt;script&gt;" in page
+    # Markup is inert when tag delimiters are escaped
+    assert "<img" not in page
+    assert "&lt;img onerror=x&gt;" in page
 
 
 def test_error_page_has_no_external_references():
@@ -23,7 +25,13 @@ def test_error_page_has_no_external_references():
 
 
 def test_error_page_honours_dark_mode():
-    assert "dark" in errors.error_page("t", "d", dark=True)
+    light = errors.error_page("t", "d", dark=False)
+    dark = errors.error_page("t", "d", dark=True)
+    assert "dark" in dark
+    # Verify styling actually differs between modes
+    assert "#ffffff" in light  # Light mode background
+    assert "#1e1e1e" in dark  # Dark mode background
+    assert light != dark
 
 
 def test_render_failure_detail_names_the_exception_type():
