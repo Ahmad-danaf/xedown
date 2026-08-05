@@ -1,0 +1,158 @@
+/* One design expressed through custom properties, not two drifting stylesheets. */
+:root {
+  --xedown-bg: #ffffff;
+  --xedown-fg: #1f2328;
+  --xedown-muted: #59636e;
+  --xedown-border: #d1d9e0;
+  --xedown-code-bg: #f6f8fa;
+  --xedown-quote-border: #d1d9e0;
+  --xedown-link: #0969da;
+  --xedown-focus-ring: #0969da;
+  --xedown-error-bg: #fff1f0;
+  --xedown-error-fg: #b3261e;
+  --xedown-error-border: #f5c2c0;
+}
+
+body.dark {
+  --xedown-bg: #1e1e1e;
+  --xedown-fg: #e6e6e6;
+  --xedown-muted: #9aa0a6;
+  --xedown-border: #3a3a3a;
+  --xedown-code-bg: #262626;
+  --xedown-quote-border: #444444;
+  --xedown-link: #6cb6ff;
+  --xedown-focus-ring: #6cb6ff;
+  --xedown-error-bg: #3a2222;
+  --xedown-error-fg: #ff9d94;
+  --xedown-error-border: #5c3333;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--xedown-bg);
+  color: var(--xedown-fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xedown-document {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 3rem 2rem 6rem;
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 40rem) {
+  .xedown-document { padding: 2rem 1.1rem 4rem; }
+}
+
+/* More space above a heading than below it, so sections group visually. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 2em 0 .6em;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.xedown-document > :first-child { margin-top: 0; }
+h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--xedown-border); }
+h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--xedown-border); }
+h3 { font-size: 1.25em; }
+h4 { font-size: 1em; }
+h5 { font-size: .9em; }
+h6 { font-size: .85em; color: var(--xedown-muted); }
+
+p { margin: 0 0 1.1em; }
+
+a { color: var(--xedown-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Keyboard focus must always be visible; never suppress the outline. */
+a:focus-visible {
+  outline: 2px solid var(--xedown-focus-ring);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+ul, ol { margin: 0 0 1.1em; padding-left: 1.7em; }
+li { margin: .3em 0; }
+li > ul, li > ol { margin: .3em 0; }
+
+ul.task-list { list-style: none; padding-left: 1.2em; }
+li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
+li.task-list-item > input[type="checkbox"] {
+  margin: .45em 0 0;
+  width: .95em;
+  height: .95em;
+  flex: none;
+  accent-color: var(--xedown-link);
+}
+
+blockquote {
+  margin: 0 0 1.1em;
+  padding: .1em 0 .1em 1em;
+  border-left: .25em solid var(--xedown-quote-border);
+  color: var(--xedown-muted);
+}
+
+hr {
+  height: 1px;
+  margin: 2.2em 0;
+  border: 0;
+  background: var(--xedown-border);
+}
+
+code, pre, kbd {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Distinct without shouting. */
+code {
+  padding: .15em .35em;
+  font-size: .88em;
+  background: var(--xedown-code-bg);
+  border-radius: 5px;
+}
+
+pre {
+  margin: 0 0 1.2em;
+  padding: 1rem 1.1rem;
+  background: var(--xedown-code-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: 8px;
+  overflow-x: auto;          /* the block scrolls, never the page */
+  line-height: 1.55;
+}
+pre code {
+  padding: 0;
+  background: none;
+  font-size: .875em;
+  white-space: pre;
+}
+
+.xedown-table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
+table { border-collapse: collapse; width: 100%; font-size: .95em; }
+th, td { padding: .5em .8em; border: 1px solid var(--xedown-border); text-align: left; }
+thead th {
+  background: var(--xedown-code-bg);
+  font-weight: 600;
+  border-bottom: 2px solid var(--xedown-border);
+}
+
+img { max-width: 100%; height: auto; border-radius: 6px; }
+
+.xedown-image-error {
+  display: inline-block;
+  padding: .45em .7em;
+  font-size: .85em;
+  font-family: ui-monospace, monospace;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border: 1px solid var(--xedown-error-border);
+  border-radius: 6px;
+}
+
+.footnote { font-size: .9em; color: var(--xedown-muted); }
+.footnote hr { margin: 2.5em 0 1em; }
