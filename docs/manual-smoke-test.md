@@ -22,11 +22,23 @@ interaction, and theme switching.
 Start with a terminal visible: `xed` prints warnings and tracebacks there, and a silent
 terminal is itself one of the checks.
 
+Two ready-made documents in `tests/fixtures/` give the checklist below something
+concrete to open. Use `tests/fixtures/showcase.md` for everything that should render
+and behave correctly — every mode-switching, editing and window-management row, plus
+rows 13–15. Use `tests/fixtures/edge-cases.md` specifically for rows 16 and 17
+(missing and remote images): its broken references are deliberate test cases, not
+mistakes — see `tests/fixtures/README.md` before changing anything in it. While
+`edge-cases.md` is open, it is also worth glancing over its basic bidirectional-text
+cases (an Arabic paragraph, heading, list, table, blockquote, and a Python fence with
+Arabic comments that must stay left-to-right) and its demonstration of the known GFM
+paragraph/list gap tracked in `docs/known-issues.md` — neither has its own numbered
+row, but both are real content in that file and worth a look while it is on screen.
+
 | # | Step | Expected |
 | --- | --- | --- |
 | 1 | Enable **Xedown** in *Preferences → Plugins* | Enables with no error dialog and no terminal output |
-| 2 | Open a `.md` file | Opens in Preview mode with a mode bar at the top of the tab |
-| 3 | Open a `.markdown` file | Same behaviour |
+| 2 | Open a `.md` file, for example `tests/fixtures/showcase.md` | Opens in Preview mode with a mode bar at the top of the tab |
+| 3 | Open a `.markdown` file (a copy of `tests/fixtures/showcase.md` renamed) | Same behaviour |
 | 4 | Open a `.txt` file | No mode bar; *View → Toggle Markdown Preview* is visibly greyed out |
 | 5 | Click **Markdown** | Source appears with text and cursor position intact |
 | 6 | Click **Preview** | Rendered document returns at its previous scroll position |
@@ -36,11 +48,11 @@ terminal is itself one of the checks.
 | 10 | Edit while Preview is visible via another means (e.g. an external tool saving the file) | Preview refreshes within roughly a quarter second |
 | 11 | Save, then revert, while Preview is active, watching closely | No visible flicker to the source editor at any point — the harness asserts the end state; this is about the transition looking clean |
 | 12 | Modify the file outside the editor, then reload when xed offers | Preview refreshes; xed's own "reload?" prompt appears — the plugin does not silently reload on its own |
-| 13 | Click an external link | Opens in the default browser, not in the preview |
-| 14 | Click a relative link to another `.md` file | Opens in a new xed tab |
-| 15 | Click a heading anchor link | Scrolls within the preview |
-| 16 | Reference a missing image | Inline placeholder naming the path; no blank space |
-| 17 | Reference a remote image | Placeholder; nothing is fetched from the network (check with a network monitor if in doubt) |
+| 13 | Click the external link in `tests/fixtures/showcase.md` | Opens in the default browser, not in the preview |
+| 14 | Click the relative link to `linked.md` in `tests/fixtures/showcase.md` | Opens in a new xed tab |
+| 15 | Click the anchor link in `tests/fixtures/showcase.md` | Scrolls within the preview |
+| 16 | In `tests/fixtures/edge-cases.md`, reference a missing image | Inline placeholder naming the path; no blank space |
+| 17 | In `tests/fixtures/edge-cases.md`, reference a remote image | Placeholder; nothing is fetched from the network (check with a network monitor if in doubt) |
 | 18 | Open several Markdown files in tabs and click between them | Each keeps its own mode and scroll position, with no visible redraw glitches |
 | 19 | Switch the desktop between light and dark | Preview follows without a restart |
 | 20 | Close a tab (click its close button) while Preview is active | Closes cleanly, no warnings |
