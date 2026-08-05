@@ -29,6 +29,38 @@ body.dark {
 
 * { box-sizing: border-box; }
 
+/* Basic bidirectional text correctness: a document containing Arabic,
+   Hebrew, or similar needs each text-bearing block to pick its own base
+   direction from its own first strong character, and to align using
+   logical (start-relative) rather than hardcoded physical alignment.
+   Without this, right-to-left text still shapes correctly glyph-by-glyph,
+   but the block starts on the wrong side and reads in the wrong order.
+   `unicode-bidi` is NOT inherited, so this is declared on every
+   text-bearing block individually rather than once on a container — a
+   structural wrapper (ul, ol, table, the article root, ...) would get no
+   benefit from it and is deliberately left alone. This is automatic
+   per-block direction detection, not a right-to-left interface: full RTL
+   support (mirrored layout, an RTL-aware chrome) is tracked for a later
+   version. */
+p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
+/* Code must never follow the surrounding prose's detected direction. A
+   fenced block containing Arabic comments still has to read as code, left
+   to right, with every line starting on the left; an inline `code` span
+   sitting inside an Arabic sentence must neither reorder the Arabic around
+   it nor be reordered by it. `direction: ltr` fixes the base direction
+   outright — unlike `plaintext` above, it is not derived from content, so
+   code that happens to start with an Arabic identifier or string is still
+   protected — and `unicode-bidi: isolate` walls the element off from the
+   surrounding paragraph's own bidi resolution. */
+pre, code {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 body {
   margin: 0;
   background: var(--xedown-bg);
@@ -145,7 +177,7 @@ pre code.hljs {
 
 .xedown-table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
 table { border-collapse: collapse; width: 100%; font-size: .95em; }
-th, td { padding: .5em .8em; border: 1px solid var(--xedown-border); text-align: left; }
+th, td { padding: .5em .8em; border: 1px solid var(--xedown-border); }
 thead th {
   background: var(--xedown-code-bg);
   font-weight: 600;

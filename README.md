@@ -40,6 +40,12 @@ Markdown modes inside the same tab.
   a path.
 - Remote images are never fetched. A visible placeholder is shown in their
   place instead. Nothing xedown does ever reaches out to the network.
+- Basic bidirectional text correctness: paragraphs, headings, list items,
+  table cells, and blockquote text automatically pick up the correct base
+  direction for content such as Arabic or Hebrew, block by block, while
+  code stays left-to-right regardless of surrounding text. This is
+  automatic per-block direction detection, not a right-to-left interface —
+  full right-to-left support is planned for a later version.
 
 ## Requirements
 

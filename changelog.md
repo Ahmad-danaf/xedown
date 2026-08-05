@@ -24,3 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Relative links and images resolved from the document's directory.
 - Per-mode scroll memory, with text and cursor position preserved across switches.
 - Bundled Markdown and highlighting dependencies, so no `pip` step is required.
+- Basic bidirectional text correctness: paragraphs, headings, list items,
+  table cells, and blockquote text pick up the correct base direction
+  automatically for right-to-left content such as Arabic or Hebrew, while
+  code stays left-to-right regardless of surrounding text. This is
+  per-block automatic direction detection, not a right-to-left interface.
