@@ -50,3 +50,23 @@ and asserts on this same split: `showcase.md` must never contain an error
 placeholder, and `edge-cases.md` must always contain one for both the
 missing image and the remote image. If either assertion starts failing,
 something in the renderer changed, not the fixtures.
+
+The two placeholder cases are **not** covered symmetrically, and it matters:
+
+- The **remote** image is refused in Python, so the primary render — the one
+  with `base_dir` set, as a saved document — produces its placeholder and the
+  test asserts on exactly that.
+- The **missing local** image is not. Nothing in the Python pipeline checks
+  whether a local file exists, so with `base_dir` set it resolves to an
+  ordinary-looking `file:` URI and only becomes a placeholder in a real
+  browser, when the load fails and `preview.js` swaps it out. To reach a
+  server-side placeholder at all, that assertion re-renders the same
+  reference with `base_dir=None` — which exercises the *unsaved document*
+  path, a genuinely different scenario that happens to share the outcome.
+
+So the everyday missing-image case has **no automated coverage** at any
+level: there is no JavaScript test infrastructure in this repository either.
+It is covered only by row 16 of [manual-smoke-test.md](../../docs/manual-smoke-test.md),
+which is why that row stays manual. Do not read the assertions above as
+proof that a broken local image still degrades gracefully — open
+`edge-cases.md` and look.

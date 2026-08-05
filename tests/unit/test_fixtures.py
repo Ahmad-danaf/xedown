@@ -93,8 +93,9 @@ def test_edge_cases_missing_local_image_becomes_a_placeholder_when_unresolvable(
     # mechanism: this exact reference becomes a placeholder naming its path
     # the moment there is no base_dir to resolve against at all -- the
     # unresolvable-reference case the renderer does handle server-side
-    # (docstring: "an unresolvable image src ... must not be left to fail
-    # silently in the browser").
+    # (see the comment on test_relative_image_without_a_base_becomes_a
+    # _placeholder in test_renderer.py: an unresolvable image src must not be
+    # left to fail silently in the browser).
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=None)
     assert "xedown-image-error" in body
     assert "pics/does-not-exist.png" in body
