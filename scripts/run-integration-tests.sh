@@ -250,7 +250,8 @@ if [ -n "$UNEXPECTED" ]; then
 elif printf '%s\n' "$ALL_MATCHES" | grep -qE "$KNOWN_XED_CORE_ASSERTION"; then
   echo "NOTE: xed's log contains the known xed-core gtk_action_group_get_action" >&2
   echo "      assertion at shutdown, confirmed unrelated to xedown (reproduced with" >&2
-  echo "      xedown completely uninstalled -- see the Task 14 report's round-2" >&2
+  echo "      xedown completely uninstalled -- see docs/known-issues.md, and" >&2
+  echo "      XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh move-tab to see it" >&2
   echo "      section). Not treated as a failure." >&2
 fi
 

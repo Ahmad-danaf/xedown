@@ -26,8 +26,9 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "scripts"
 SHUTDOWN_SCRIPT = SCRIPTS_DIR / "run-shutdown-tests.sh"
 INTEGRATION_SCRIPT = SCRIPTS_DIR / "run-integration-tests.sh"
 
-# The real thing, copied verbatim from a captured run (see the round-2
-# section of the Task 14 report, and reconfirmed by the control run above).
+# The real thing, copied verbatim from a captured run (see
+# docs/known-issues.md, which also carries the stack it shares with the
+# segfault the same xed bug produces).
 KNOWN_LINE = (
     "(xed:76920): Gtk-CRITICAL **: 18:38:01.931: gtk_action_group_get_action: "
     "assertion 'GTK_IS_ACTION_GROUP (action_group)' failed"
