@@ -7,13 +7,17 @@ Automated coverage stops at the GTK boundary, so these steps are the last gate.
 widget tree for everything that can be checked without a human: the save/revert host-state
 hazard, `show_all()` in both modes, search controls not floating over the preview, the
 scroll round trip through a mode switch, a save never resetting scroll or reloading the
-page, closing a tab quickly, disabling the plugin for real (via the same
-`active-plugins` gsettings key the Preferences dialog uses) and confirming the
-`_xedown_controller` attribute is fully removed, several independent Markdown tabs, and
-`Gtk.Action.is_sensitive()` on both a `.md` and a `.txt` tab. Run it first — it takes under
-two minutes and catches regressions in exactly those hazards. **This checklist is for what
-that harness cannot see**: rendering quality, real mouse and keyboard interaction, theme
-switching, and multiple windows.
+page, closing a tab quickly, **moving a tab to another window without destroying its
+preview**, disabling the plugin for real (via the same `active-plugins` gsettings key the
+Preferences dialog uses) and confirming the `_xedown_controller` attribute is fully
+removed, several independent Markdown tabs, and `Gtk.Action.is_sensitive()` on both a `.md`
+and a `.txt` tab. Run it first — it takes a couple of minutes and catches regressions in
+exactly those hazards. Rows below that overlap with the harness (18, 20, 22, 23) are still
+listed deliberately, reframed for what a human's eyes catch that a structural assertion
+cannot — a visual glitch, an unexpected flicker, a real click landing wrong — not because
+the harness leaves those scenarios untested. **The rest of this checklist is for what the
+harness genuinely cannot see at all**: rendering quality, real mouse and keyboard
+interaction, and theme switching.
 
 Start with a terminal visible: `xed` prints warnings and tracebacks there, and a silent
 terminal is itself one of the checks.
@@ -42,7 +46,8 @@ terminal is itself one of the checks.
 | 20 | Close a tab (click its close button) while Preview is active | Closes cleanly, no warnings |
 | 21 | Open a second window with Markdown files | Both windows work independently |
 | 22 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
-| 23 | Review the terminal | No warnings, criticals, tracebacks or segfaults |
+| 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
+| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults |
 
 A crash or `Gtk-CRITICAL` at shutdown means a controller left something connected.
 Teardown correctness is a release blocker, not a cosmetic issue.

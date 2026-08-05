@@ -4,8 +4,10 @@ This is a scripted `Xed.WindowActivatable`: each step runs on a
 `GLib.timeout_add` callback, asserts something about the live widget tree,
 writes the running report to disk (so a crash still leaves a partial
 record), and schedules the next step. Nothing here ever calls
-`window.destroy()` — that segfaults xed; `timeout(1)` in the runner ends the
-process instead.
+`window.destroy()` — that segfaults xed. Once the sequence reaches
+"PASS done", the *runner* ends the process, gracefully (a real window close,
+so shutdown/plugin-unload output gets captured too) if `wmctrl` is
+available, and by signal otherwise -- never from inside a callback here.
 
 Every step is wrapped by `_guard`, which turns an uncaught exception into a
 FAIL line rather than silently ending the sequence.
@@ -25,7 +27,19 @@ gi.require_version("WebKit2", "4.1")
 from gi.repository import Gio, GLib, GObject, Gtk, WebKit2, Xed
 
 REPORT = os.environ.get("XEDOWN_PROBE_REPORT", "/tmp/xedown-probe-report.txt")
+# Nested under the runner's own mktemp workdir when run through
+# scripts/run-integration-tests.sh, so a single `rm -rf` of that workdir
+# cleans up the probe's fixture files too, instead of leaving a fresh
+# `xedown-probe-*` directory under /tmp behind on every run.
+PROBE_TMPDIR = os.environ.get("XEDOWN_PROBE_TMPDIR")
 results = []
+# The move-tab assertion (see step_move_tab_open) creates a second Xed.Window
+# to move a tab into. Plugins activate per-window, so this probe's own
+# do_activate() fires again for that second window too; without this guard
+# the whole scripted sequence would start a second, concurrent time against
+# the wrong window (this is exactly what happened in early throwaway
+# diagnostics for this fix, before the guard was added).
+_sequence_started = False
 
 # `TabController`, `Mode` and `ModeBar` are resolved lazily by `_lazy_imports`,
 # not imported here at module load time. libpeas's python3 loader treats an
@@ -89,6 +103,10 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     window = GObject.Property(type=Xed.Window)
 
     def do_activate(self):
+        global _sequence_started
+        if _sequence_started:
+            return
+        _sequence_started = True
         GLib.timeout_add(2500, self._guard(self.step_setup))
 
     def do_deactivate(self):
@@ -158,7 +176,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         self.tab = self.window.get_active_tab()
         self.view = self.tab.get_view()
         self.document = self.tab.get_document()
-        self._tmpdir = tempfile.mkdtemp(prefix="xedown-probe-")
+        self._tmpdir = tempfile.mkdtemp(dir=PROBE_TMPDIR, prefix="xedown-probe-")
 
         controller = self._main_controller()
         record("controller-created", controller is not None)
@@ -248,9 +266,28 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     # --- host-state hazard: search / go-to-line while previewing -----------
 
     def step_search(self):
+        # NOTE: in xed 3.8.9, none of the three checks below can currently
+        # fail. Activating SearchFind does not force the source frame
+        # visible the way save/revert do (there is no notify::state hazard
+        # here to catch), and search-children-unchanged inspects the *tab's*
+        # children while xed's search bar lives inside XedViewFrame, so it
+        # would not see a floating search bar even if one appeared. Left in
+        # as structural placeholders in case a future xed version changes
+        # this, but nobody should read a green run here as live coverage of
+        # "the revealer doesn't float over the preview".
+        #
+        # Deliberately does NOT also activate SearchGoToLine: confirmed by
+        # isolated testing (SearchFind alone vs. SearchGoToLine alone, no
+        # xedown installed at all) that invoking SearchGoToLine outside of a
+        # real button-press event leaves xed's window in a state that
+        # produces a cascade of unrelated Gtk-CRITICAL/Gdk-CRITICAL
+        # assertion failures (gtk_widget_has_default, gdk_device_manager_*)
+        # when the window is later closed -- a real xed-core bug, entirely
+        # independent of this plugin, that would otherwise poison every
+        # run's shutdown-log check with noise unrelated to what is being
+        # tested here.
         children_before = self._children_types()
         self._activate_named_action("SearchFind")
-        self._activate_named_action("SearchGoToLine")
         controller = self._main_controller()
         record("search-frame-hidden", not controller.frame.get_visible())
         record("search-preview-visible", controller.preview.widget.get_visible())
@@ -296,9 +333,22 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     # --- external modification must not trigger a silent reload -----------
 
     def step_external_change(self):
+        # The assertion deliberately does NOT run in this same callback.
+        # Any reload path is necessarily async (a file monitor callback, at
+        # minimum a main-loop turn), so a same-callback check is structurally
+        # incapable of ever observing one and would pass even if the plugin
+        # silently reloaded on its own. Confirmed by mutation: with a real
+        # GFileMonitor-based auto-reload temporarily added to TabController,
+        # asserting here still printed PASS while a diagnostic 400ms later
+        # showed the buffer had, in fact, been reloaded. step_external_change_check
+        # runs a full second later instead, giving a real reload time to land.
         location = self.document.get_location()
         with open(location.get_path(), "a") as handle:
             handle.write("\nAppended outside the editor.\n")
+        self._schedule(1200, self.step_external_change_check)
+        return False
+
+    def step_external_change_check(self):
         record(
             "no-independent-reload",
             "Appended outside" not in self._buffer_text(),
@@ -412,7 +462,89 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "quick-tab-controller-cleaned-up",
             not hasattr(self._quick_view, "_xedown_controller"),
         )
-        self._schedule(300, self.step_multi_tab_open)
+        self._schedule(300, self.step_move_tab_open)
+        return False
+
+    # --- moving a tab to another window must NOT tear the controller down --
+    #
+    # xed emits "tab-removed" on the SOURCE window both for a real close and
+    # for Documents -> Move to New Window / dragging a tab out
+    # (xed_notebook_move_tab): the tab is re-added to the destination
+    # window's notebook, synchronously, and the view survives. An earlier
+    # version of the tab-removed fix above did not distinguish the two and
+    # silently destroyed the preview on every move -- trading the close-time
+    # leak it fixed for an equally silent regression. This is the assertion
+    # that would have caught it (and does, against that earlier version: it
+    # prints FAIL controller-survives-tab-move / widgets after move:
+    # ['XedViewFrame'] instead of the three widgets below).
+
+    def step_move_tab_open(self):
+        path = os.path.join(self._tmpdir, "movable.md")
+        with open(path, "w") as handle:
+            handle.write("# Movable\n\nMoved to another window mid-sequence.\n")
+        self._move_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._move_view = self._move_tab.get_view()
+        self._schedule(1000, self.step_move_tab_prepare_destination)
+        return False
+
+    def step_move_tab_prepare_destination(self):
+        record(
+            "move-tab-controller-present-before-move",
+            hasattr(self._move_view, "_xedown_controller"),
+        )
+        # A second real window is the only way to exercise a genuine
+        # Notebook.move_tab(); nothing here calls window.destroy() on either
+        # window, so this stays inside the "never destroy from a callback"
+        # rule. XedownProbe.do_activate() also fires for this new window,
+        # guarded off by the module-level _sequence_started flag above.
+        app = Xed.App.get_default()
+        self._move_dest_window = app.create_window(None)
+        self._move_dest_window.show_all()
+        seed_path = os.path.join(self._tmpdir, "move-dest-seed.md")
+        with open(seed_path, "w") as handle:
+            handle.write("# Destination window seed\n")
+        self._move_dest_seed_tab = self._move_dest_window.create_tab_from_location(
+            Gio.File.new_for_path(seed_path), None, 0, False, True
+        )
+        self._schedule(1000, self.step_move_tab_execute)
+        return False
+
+    def step_move_tab_execute(self):
+        source_notebook = self._move_tab.get_parent()
+        dest_notebook = self._move_dest_seed_tab.get_parent()
+        record(
+            "move-tab-notebooks-found",
+            source_notebook is not None and dest_notebook is not None,
+        )
+        if source_notebook is not None and dest_notebook is not None:
+            source_notebook.move_tab(dest_notebook, self._move_tab, -1)
+        self._schedule(1500, self.step_move_tab_verify)
+        return False
+
+    def step_move_tab_verify(self):
+        has_attr = hasattr(self._move_view, "_xedown_controller")
+        record(
+            "controller-survives-tab-move",
+            has_attr,
+            "a moved tab's controller must survive the source window's "
+            "tab-removed signal, exactly like a real close must not leak it",
+        )
+        if has_attr:
+            controller = self._move_view._xedown_controller
+            widgets = [type(c).__name__ for c in self._move_tab.get_children()]
+            record(
+                "move-tab-widgets-intact",
+                {"ModeBar", "WebView", "XedViewFrame"} <= set(widgets),
+                f"widgets after move: {widgets!r}",
+            )
+            record(
+                "move-tab-still-in-preview-mode",
+                self._preview_visible_for(controller),
+                "the mode, not just the controller object, must survive too",
+            )
+        self._schedule(400, self.step_multi_tab_open)
         return False
 
     # --- multiple independent Markdown tabs -----------------------------
@@ -481,10 +613,29 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         action = self._find_action("XedownToggleAction")
         if action is not None:
             record("menu-sensitive-on-md", action.is_sensitive())
-        self._schedule(400, self.step_disable_plugin)
+        self._schedule(400, self.step_disable_prep_infobar)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
+
+    def step_disable_prep_infobar(self):
+        # By the time step_disable_check used to run, the probe's earlier
+        # info bar (step_infobar, ~20s and many steps back) had long since
+        # been closed, so "no leftover info bar" only ever checked an
+        # already-empty state -- it could not fail even with
+        # _dismiss_info_bar() deleted from TabController.deactivate()
+        # (confirmed by mutation: that deletion still printed
+        # PASS disable-no-info-bar). Raise a genuinely live bar right before
+        # disabling so the check has something real to fail on.
+        controller = self._main_controller()
+        controller._on_link_activated("badscheme://before-disable")
+        self._pre_disable_info_bar = controller._info_bar
+        record(
+            "infobar-live-immediately-before-disable",
+            self._pre_disable_info_bar is not None,
+        )
+        self._schedule(300, self.step_disable_plugin)
+        return False
 
     def step_disable_plugin(self):
         settings = Gio.Settings.new("org.x.editor.plugins")
@@ -512,9 +663,52 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "disable-no-xedown-widget",
             not any(isinstance(c, (WebKit2.WebView, ModeBar)) for c in children),
         )
+        # Checks the SPECIFIC bar the probe raised in
+        # step_disable_prep_infobar by identity (destroyed widgets report no
+        # parent), not "is any Gtk.InfoBar present" -- xed shows its own
+        # info bars too (e.g. "file changed on disk"), so a type-only check
+        # would both miss a real leftover xedown bar sitting behind one of
+        # those, and false-positive on a legitimate xed prompt that has
+        # nothing to do with this plugin.
+        bar = getattr(self, "_pre_disable_info_bar", None)
         record(
             "disable-no-info-bar",
-            not any(isinstance(c, Gtk.InfoBar) for c in children),
+            bar is not None and bar.get_parent() is None,
         )
+        self._schedule(300, self.step_settle_before_exit)
+        return False
+
+    def step_settle_before_exit(self):
+        # The scroll-round-trip step (step_scroll_edit) deliberately left
+        # `self.document` modified, and it is never saved again afterwards.
+        # The runner asks xed to close for real once this sequence finishes,
+        # so it can capture window-close/plugin-unload output too -- but
+        # closing a window with unsaved documents pops up xed's own "save
+        # changes?" dialog, which nothing here can dismiss, hanging the
+        # close indefinitely until the runner's SIGTERM fallback kills it.
+        # Save everything, in both windows the move-tab check created, so
+        # the close the runner requests next can actually complete.
+        Xed.commands_save_all_documents(self.window)
+        if getattr(self, "_move_dest_window", None) is not None:
+            Xed.commands_save_all_documents(self._move_dest_window)
+        self._schedule(500, self.step_close_secondary_window)
+        return False
+
+    def step_close_secondary_window(self):
+        # `.close()` (a graceful "please close" request through xed's normal
+        # delete-event path -- the same thing a click on the window's own
+        # close button sends, and NOT `.destroy()`, which segfaults xed from
+        # inside a callback) rather than leaving the move-tab check's second
+        # window open for the runner to deal with. Tidies up this test's own
+        # footprint before the runner asks the (one, now) remaining window
+        # to close for real, rather than leaving multiple windows for it to
+        # juggle for no reason relevant to any assertion above.
+        dest = getattr(self, "_move_dest_window", None)
+        if dest is not None:
+            dest.close()
+        self._schedule(500, self.step_done)
+        return False
+
+    def step_done(self):
         record("done", True)
         return False
