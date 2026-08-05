@@ -97,6 +97,24 @@ def test_resolve_to_uri_passes_absolute_uris_through(base):
     )
 
 
+def test_resolve_to_uri_percent_encodes_a_file_uri_containing_a_space(base):
+    target = os.path.join(base, "my notes.md")
+    with open(target, "w") as f:
+        f.write("# hi")
+    uri = resolve_to_uri("file://" + target, base)
+    assert uri.startswith("file://")
+    assert " " not in uri
+    assert "%20" in uri
+
+
+def test_resolve_to_uri_and_classify_link_agree_on_a_file_uri(base):
+    target = os.path.join(base, "my notes.md")
+    with open(target, "w") as f:
+        f.write("# hi")
+    reference = "file://" + target
+    assert resolve_to_uri(reference, base) == classify_link(reference, base).target
+
+
 @pytest.mark.parametrize(
     "name", ["a.png", "b.JPG", "c.jpeg", "d.gif", "e.webp", "f.svg", "g.bmp"]
 )

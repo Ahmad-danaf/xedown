@@ -76,7 +76,7 @@ def _normalized_local_path(reference, base_dir):
     """
     try:
         candidate = urllib.parse.unquote(reference)
-        if candidate.startswith("file://"):
+        if candidate[:7].lower() == "file://":
             candidate = urllib.parse.unquote(urllib.parse.urlparse(candidate).path)
         if not os.path.isabs(candidate):
             if base_dir is None:
@@ -88,13 +88,17 @@ def _normalized_local_path(reference, base_dir):
 
 
 def resolve_to_uri(reference, base_dir):
-    """Return an absolute URI for `reference`, or None when it cannot resolve."""
+    """Return an absolute URI for `reference`, or None when it cannot resolve.
+
+    `file:` references are resolved through the same local-path machinery
+    as bare paths (rather than being handed back verbatim), so the result
+    is always a properly percent-encoded `file://` URI — consistent with
+    what `classify_link` returns for the same reference.
+    """
     if not reference:
         return None
     scheme = urllib.parse.urlparse(reference).scheme.lower()
     if scheme in REMOTE_SCHEMES or scheme == "data":
-        return reference
-    if scheme == "file":
         return reference
     path = _normalized_local_path(reference, base_dir)
     if path is None:
