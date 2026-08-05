@@ -163,6 +163,20 @@ SAVED_PLUGINS="$(gsettings get org.x.editor.plugins active-plugins)"
 STATUS=0
 declare -a SUMMARY=()
 
+# `kill -0` alone is not "is it still running": a child that has crashed stays
+# a zombie until it is reaped, and kill -0 keeps succeeding for it. That made
+# a real SIGSEGV present itself as "the window never closed", which is a very
+# different bug report from "xed died". Check the process state too.
+xed_alive() {
+  [ -n "${XED_PID:-}" ] || return 1
+  kill -0 "$XED_PID" 2>/dev/null || return 1
+  local state
+  # Strip through the last ')' first: /proc/PID/stat's comm field is
+  # parenthesised and may itself contain spaces.
+  state="$(sed 's/.*) //' "/proc/$XED_PID/stat" 2>/dev/null | awk '{print $1}')"
+  [ "$state" != "Z" ]
+}
+
 run_scenario() {
   local scenario="$1"
   local dir="$WORKDIR/$scenario"
@@ -197,7 +211,7 @@ run_scenario() {
       ready=1
       break
     fi
-    if ! kill -0 "$XED_PID" 2>/dev/null; then
+    if ! xed_alive; then
       echo "xed exited on its own before the scenario was set up." >&2
       break
     fi
@@ -217,7 +231,7 @@ run_scenario() {
   # the way a user closes windows, and the only way xed's own shutdown and
   # plugin-unload output gets produced at all.
   local shutdown_captured=0
-  if kill -0 "$XED_PID" 2>/dev/null; then
+  if xed_alive; then
     echo "--> closing window(s) gracefully"
     while :; do
       local ids win remaining closed
@@ -242,7 +256,7 @@ run_scenario() {
           wmctrl -ic "$win" || true
         fi
         remaining="$(wmctrl -lp 2>/dev/null | awk -v pid="$XED_PID" -v w="$win" '$1 == w && $3 == pid')"
-        if [ -z "$remaining" ] || ! kill -0 "$XED_PID" 2>/dev/null; then
+        if [ -z "$remaining" ] || ! xed_alive; then
           closed=1
           break
         fi
@@ -259,7 +273,7 @@ run_scenario() {
       fi
     done
     for ((i = 0; i < SHUTDOWN_GRACE_SECONDS * 2; i++)); do
-      if ! kill -0 "$XED_PID" 2>/dev/null; then
+      if ! xed_alive; then
         shutdown_captured=1
         break
       fi
@@ -269,16 +283,66 @@ run_scenario() {
     shutdown_captured=1
   fi
 
-  if kill -0 "$XED_PID" 2>/dev/null; then
+  local we_killed=0
+  local dead_pid="$XED_PID"
+  if xed_alive; then
     echo "FAIL [$scenario]: xed did not exit after every window was closed; killing." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
+    we_killed=1
     STATUS=1
   fi
-  wait "$XED_PID" 2>/dev/null || true
+
+  # Reap it and keep the status. A crash reports as 128+signal, and it must
+  # be named as a crash: the segfault notice bash prints goes to this
+  # script's stderr, never into xed's own log, so BAD_PATTERN below cannot
+  # see it. Without this, xed dying on SIGSEGV was only caught indirectly,
+  # by the shutdown-not-captured check, and reported as if the window had
+  # merely refused to close.
+  set +e
+  wait "$XED_PID" 2>/dev/null
+  local wait_status=$?
+  set -e
   XED_PID=""
 
   # --- the actual check -------------------------------------------------
   local scenario_status="clean"
+
+  # Two ways to learn xed crashed, and both are needed. The exit status is
+  # the direct one -- except when the crash is slow: dumping a 10 MB core
+  # keeps the process running and un-reaped for long enough that the close
+  # wait times out first, this script kills it, and the crash then hides
+  # behind our own SIGKILL. That case looked exactly like a hang until the
+  # core dumps were checked, so ask for them explicitly rather than
+  # inferring. A missing coredumpctl just means the second route is
+  # unavailable; it never turns a failure into a pass.
+  local signal_number=0
+  if [ "$we_killed" -eq 0 ] && [ "$wait_status" -gt 128 ]; then
+    signal_number=$((wait_status - 128))
+  elif [ "$we_killed" -eq 1 ] && command -v coredumpctl >/dev/null 2>&1; then
+    # Poll rather than ask once. systemd-coredump compresses the image
+    # before registering it, which for a 10 MB xed core takes long enough
+    # that an immediate lookup reliably misses and the crash gets filed as
+    # a hang -- the exact misdiagnosis this block exists to prevent.
+    for ((i = 0; i < 15; i++)); do
+      if coredumpctl list "$dead_pid" >/dev/null 2>&1; then
+        signal_number=11
+        echo "    (a core dump exists for pid $dead_pid: this was a crash, not a hang)" >&2
+        break
+      fi
+      sleep 1
+    done
+  fi
+
+  if [ "$signal_number" -ne 0 ]; then
+    echo "FAIL [$scenario]: xed died on signal $signal_number." >&2
+    echo "    Before assuming either way, get the stack:" >&2
+    echo "      coredumpctl info $dead_pid" >&2
+    echo "    A stack with no xedown, Python or libpeas frames is xed's own bug;" >&2
+    echo "    confirm with XEDOWN_CONTROL=1 $0 $scenario, which runs the same" >&2
+    echo "    scenario with xedown not installed at all." >&2
+    STATUS=1
+    scenario_status="CRASHED (signal $signal_number)"
+  fi
 
   # Order matters: a scenario whose shutdown was never observed has NOT been
   # shown to shut down cleanly, and must not be summarised as if it had. An
@@ -287,13 +351,19 @@ run_scenario() {
   if [ "$shutdown_captured" -eq 0 ]; then
     echo "FAIL [$scenario]: shutdown output was not captured; nothing below is trustworthy." >&2
     STATUS=1
-    scenario_status="NOT OBSERVED"
+    # "it crashed" is the more specific diagnosis and outranks "we could not
+    # watch it finish", which is merely the consequence.
+    if [ "$scenario_status" = "clean" ]; then
+      scenario_status="NOT OBSERVED"
+    fi
   fi
 
   if [ ! -f "$report" ] || ! grep -q '^READY' "$report"; then
     echo "FAIL [$scenario]: the probe did not report READY." >&2
     STATUS=1
-    scenario_status="setup-failed"
+    if [ "$scenario_status" = "clean" ] || [ "$scenario_status" = "NOT OBSERVED" ]; then
+      scenario_status="setup-failed"
+    fi
   fi
 
   local matches unexpected

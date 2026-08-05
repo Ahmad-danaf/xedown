@@ -107,6 +107,11 @@ and viewing never changes the file.
   compatibility. In particular, a list does not currently interrupt a
   paragraph without a blank line between them, the way GFM allows — see
   [docs/known-issues.md](docs/known-issues.md). Targeted for v0.2.
+- xed 3.8.9 itself can crash when you close a window after moving a tab
+  between windows. This happens with xedown uninstalled and is not something
+  the plugin can fix or avoid; save before dragging tabs between windows.
+  Details and the stack trace are in
+  [docs/known-issues.md](docs/known-issues.md).
 
 ## Documentation
 

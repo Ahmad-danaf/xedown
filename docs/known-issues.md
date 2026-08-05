@@ -1,39 +1,66 @@
 # Known issues
 
-## `Gtk-CRITICAL` in the terminal after moving a tab between windows (xed bug)
+## xed can crash when closing a window after moving a tab between windows (xed bug)
 
-**What you see:** if you run xed from a terminal, move a tab to another window,
-switch tabs in the original window, and then close it, xed prints:
+**What you see:** move a tab into another window, switch tabs, then close the
+window. Usually it closes normally. Sometimes xed prints this to the terminal:
 
 ```
 (xed:PID): Gtk-CRITICAL **: HH:MM:SS.mmm: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed
 ```
 
-**What it means for you:** nothing. The window closes normally, no work is lost,
-and nothing is left running. It is noise on stderr, not a failure — and it is
-invisible unless you launched xed from a terminal.
+and sometimes it does not print anything and simply dies with `SIGSEGV`.
 
-**Whose bug it is:** xed 3.8.9's, not xedown's. It reproduces with xedown absent
-from the plugin directory entirely, from a plugin that only calls Xed/Gtk/Gio
-APIs and never references xedown. This is checkable rather than asserted:
+**These are the same bug, not two.** The stack is identical in both cases:
+
+```
+#0  gtk_action_group_get_action   (libgtk-3.so.0)
+#1  received_clipboard_contents   (libxed.so)
+#2  ... GTK signal emission, main loop, g_application_run
+```
+
+xed's own clipboard callback reaches an action group that is already gone. When
+the freed memory still happens to be readable, GTK's type check catches it and
+you get the assertion above. When it does not, the same read is a segfault. The
+assertion is therefore a *warning shot from a memory-safety bug*, not cosmetic
+noise — which is why the description here changed: an earlier version of this
+file called it harmless, and that was wrong.
+
+**Whose bug it is:** xed 3.8.9's. Every frame in that stack is xed or GTK —
+there are no xedown, Python or libpeas frames in it at all — and it reproduces
+with xedown absent from the plugin directory entirely. That is checkable rather
+than asserted:
 
 ```
 XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh move-tab
 ```
 
-runs that scenario with xedown uninstalled and still prints the assertion.
+runs the scenario with xedown uninstalled and still reproduces it.
 
-**Why it is recorded here anyway:** it is the single exception in xedown's
+**How often:** roughly a quarter to a third of the time under the harness's
+scripted sequence (10 failures in 35 runs with xedown installed; 2 in 8 with it
+uninstalled — same rate within these sample sizes, no sign that xedown affects
+it). That sequence moves a tab, switches tabs and closes a window within a few
+seconds, which is far faster than anyone works by hand, and the bug is
+timing-dependent, so ordinary use should hit it much less often. It is not
+something xedown can fix or work around: nothing in this plugin touches xed's
+clipboard handling.
+
+**What to do about it:** nothing is lost that was saved. Save before dragging
+tabs between windows if you have unsaved work, which is good practice anyway.
+
+**Why the allowlist exists:** the assertion is the single exception in xedown's
 release gate, which otherwise treats *any* warning, critical, traceback or
-segfault at shutdown as a blocker. Both harnesses allowlist exactly this one
+segfault at shutdown as a blocker. Both harnesses allowlist exactly that one
 line, anchored end to end so it cannot excuse anything else on the same line,
-and `tests/unit/test_shutdown_allowlist.py` fails if that exception ever widens
-— including to a different assertion inside the same call, the same assertion at
-a different log level, or the same text from another process.
+and `tests/unit/test_shutdown_allowlist.py` fails if the exception ever widens.
+The **crash** is not allowlisted and never should be: `run-shutdown-tests.sh`
+reports it as `CRASHED`, checks `coredumpctl` when a slow core dump would
+otherwise make it look like a hang, and fails the run.
 
-**Status:** upstream. Nothing to fix in xedown; revisit if a future xed release
-stops producing it, at which point the allowlist should be deleted rather than
-kept "just in case".
+**Status:** upstream. Revisit if a future xed release fixes
+`received_clipboard_contents`, at which point both the allowlist and this entry
+should be deleted rather than kept "just in case".
 
 ## A list does not interrupt a paragraph (GFM compatibility gap)
 

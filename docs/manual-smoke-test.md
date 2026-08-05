@@ -109,6 +109,15 @@ move-tab` re-runs the identical scenario with xedown absent from the plugin
 directory entirely, and it is worth re-running whenever the exception is
 questioned.
 
+Expect to meet its other face while working through row 23: the same xed bug
+sometimes segfaults instead of printing the assertion (identical stack, in
+xed's own `received_clipboard_contents` — see
+[known-issues.md](known-issues.md)). A crash there is **not** covered by this
+exception and is not something to wave through; confirm it is the same stack
+with `coredumpctl info <pid>` and that it still happens under
+`XEDOWN_CONTROL=1`. Anything that needs xedown installed to reproduce is a
+blocker.
+
 Both harnesses carry the same allowlist, **anchored to a whole log line**
 (`^...$`) rather than matched as a substring, so it cannot excuse a second
 message printed on the same line. `tests/unit/test_shutdown_allowlist.py`
