@@ -35,9 +35,10 @@ Markdown modes inside the same tab.
   but any shell, Python, Perl or Ruby script, Windows/desktop executable or
   installer, JAR, AppImage, or shared library, judged by its extension
   whether or not it is marked executable.
-- Relative links and images resolve against the document's own directory. An
-  unsaved document says so in place of a link or image, instead of guessing
-  a path.
+- Relative links and images resolve against the document's own directory,
+  rather than guessing a path. In a document that has never been saved there
+  is no directory to resolve against: a relative image says so in place of the
+  image, while a relative link is rendered inert — see the limitations below.
 - Remote images are never fetched. A visible placeholder is shown in their
   place instead. Nothing xedown does ever reaches out to the network.
 - Basic bidirectional text correctness: paragraphs, headings, list items,
