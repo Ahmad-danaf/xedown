@@ -1,4 +1,5 @@
 import os
+import re
 
 import pytest
 from xedown import renderer
@@ -56,6 +57,7 @@ def test_relative_image_without_a_base_becomes_a_placeholder():
     # sanitizer replaces it with a visible placeholder at render time.
     html = renderer.render_fragment("![pic](pic.png)")
     assert "<img" not in html
+    assert "src=" not in html
     assert "xedown-image-error" in html
 
 
@@ -105,17 +107,29 @@ def test_document_is_complete_and_self_contained():
     page = renderer.render_document("# Hi", nonce="test-nonce")
     assert page.startswith("<!DOCTYPE html>")
     assert f'id="{renderer.CONTENT_ELEMENT_ID}"' in page
-    # No element references a network resource. This does not assert that no
-    # "http://"/"https://" substring appears anywhere in the page: the
+
+
+def test_document_never_emits_a_remote_image_reference():
+    # This must actually exercise the property: a document with no image or
+    # link at all ("# Hi") can't tell a correct render from a broken one, so
+    # this renders content that contains a real remote image and a real
+    # remote link. A remote <img src> must never reach the page (Amendment 1
+    # turns it into a placeholder before the sanitizer ever emits the tag —
+    # see test_remote_image_becomes_a_placeholder_naming_the_address for the
+    # fragment-level version of this same guarantee), while a remote <a
+    # href> is meant to survive untouched; this does not assert a blanket
+    # absence of "http://"/"https://" anywhere in the page, because the
     # vendored highlight.min.js legitimately carries such strings inside its
     # own warning-message text and license header (see
     # tests/unit/test_resources.py, which scopes the same check to
     # preview.css/preview.js for the identical reason and deliberately
-    # excludes the highlight bundle). The CSP (default-src 'none', img-src
-    # file: data:, style-src/script-src pinned to the nonce) is what actually
-    # guarantees nothing is fetched over the network.
-    assert 'src="http:' not in page and 'src="https:' not in page
-    assert 'href="http:' not in page and 'href="https:' not in page
+    # excludes the highlight bundle).
+    page = renderer.render_document(
+        "![pic](https://example.com/pic.png) and [site](https://example.com)",
+        nonce="n",
+    )
+    assert 'src="http' not in page
+    assert 'href="https://example.com"' in page
 
 
 def test_document_carries_a_strict_csp_with_the_nonce():
@@ -162,6 +176,11 @@ def test_highlight_theme_code_padding_wins_over_preview_css():
     style_start = page.index("<style")
     style_end = page.index("</style>")
     style_block = page[style_start:style_end]
+    # Strip CSS comments before searching, so this pins the actual rule
+    # rather than any prose that happens to mention its selector — deleting
+    # the real rule while leaving an explanatory comment behind must fail
+    # this test, not pass it.
+    style_block = re.sub(r"/\*.*?\*/", "", style_block, flags=re.DOTALL)
     # The theme itself already contains one "pre code.hljs" occurrence
     # (`pre code.hljs{display:block;overflow-x:auto;padding:1em}`), so the
     # override in preview.css must be the *last* occurrence, not merely any
@@ -172,6 +191,9 @@ def test_highlight_theme_code_padding_wins_over_preview_css():
     assert (
         style_block.count("pre code.hljs") >= 2
     ), "expected both the theme's own rule and preview.css's override"
+    override_rule = style_block[override_index:]
+    assert "padding: 0" in override_rule
+    assert "background: none" in override_rule
 
 
 def test_each_render_uses_a_fresh_nonce():
@@ -188,3 +210,45 @@ def test_render_failure_returns_an_error_page_not_an_exception(monkeypatch):
     page = renderer.render_document("# Hi")
     assert "boom" in page
     assert page.startswith("<!DOCTYPE html>")
+
+
+def test_render_failure_page_still_carries_the_fresh_nonce(monkeypatch):
+    # The error page is a document `render_document` emits too, so it must
+    # not fall back to `errors.error_page`'s static default nonce — that
+    # would make "every render gets a fresh nonce" false for exactly the
+    # renders most likely to happen on bad input.
+    def explode(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(renderer, "render_fragment", explode)
+    page = renderer.render_document("# Hi", nonce="a-specific-nonce")
+    assert 'nonce="a-specific-nonce"' in page
+    assert "xedown-error" not in page
+
+
+def test_malformed_link_does_not_crash_the_render(base):
+    # `urllib.parse.urlparse` raises ValueError on an unbalanced IPv6-literal
+    # bracket. render_fragment is a public interface called directly on
+    # every refresh (no try/except upstream), so this must not raise, and
+    # the rest of the document must render normally around the bad link.
+    html = renderer.render_fragment("before [x](http://[bad) after", base_dir=base)
+    assert "before" in html and "after" in html
+    assert "http://[bad" not in html
+
+
+def test_malformed_image_reference_does_not_crash_the_render(base):
+    html = renderer.render_fragment("before ![x](http://[bad) after", base_dir=base)
+    assert "before" in html and "after" in html
+    assert "<img" not in html
+    assert "xedown-image-error" in html
+
+
+def test_render_fragment_does_not_raise_on_a_malformed_url(base):
+    # A regression pin distinct from the two tests above: this asserts only
+    # that no exception propagates, independent of what the output looks
+    # like, since render_fragment's "never raise" property is the thing a
+    # future refactor is most likely to accidentally break.
+    renderer.render_fragment("[x](http://[bad)", base_dir=base)
+    renderer.render_fragment("![x](http://[bad)", base_dir=base)
+    renderer.render_fragment("[x](http://[bad)")  # no base_dir either
+    renderer.render_fragment("![x](http://[bad)")

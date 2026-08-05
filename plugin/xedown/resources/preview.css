@@ -132,13 +132,12 @@ pre code {
   white-space: pre;
 }
 
-/* The vendored highlight theme (emitted before this sheet) sets both
-   `code.hljs { padding: 3px 5px }` and `.hljs { background: #0d1117 }`, and
-   inside a code block also `pre code.hljs { padding: 1em }` — the last one
-   ties this override on specificity (0,1,2 vs 0,1,2), so source order
-   decides, which is exactly why this rule must come after the theme rather
-   than merely matching its specificity. Without it a highlighted block gets
-   double padding and a background that fights the <pre>'s own surface. */
+/* The vendored highlight theme, emitted before this sheet, sets its own
+   padding and background on the same selector this rule targets, at the
+   identical specificity — so which one wins is decided by source order
+   alone, which is exactly why this rule lives after the theme rather than
+   merely matching its specificity. Without it a highlighted block gets
+   double padding and a background that fights the block's own surface. */
 pre code.hljs {
   padding: 0;
   background: none;

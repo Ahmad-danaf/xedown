@@ -196,3 +196,15 @@ def test_symlink_loop_is_refused_not_a_crash(tmp_path):
     os.symlink(a, b)
     decision = classify_link("a", str(tmp_path))
     assert decision.action is LinkAction.REFUSE
+
+
+def test_malformed_scheme_does_not_crash(base):
+    # An unbalanced IPv6-literal bracket in the authority makes
+    # `urllib.parse.urlparse` raise ValueError. Both entry points parse a
+    # scheme from unvalidated document content and must fail closed rather
+    # than propagate, the same way malformed percent-encoding already does
+    # above.
+    decision = classify_link("http://[bad", base)
+    assert decision.action is LinkAction.REFUSE
+
+    assert resolve_to_uri("http://[bad", base) is None

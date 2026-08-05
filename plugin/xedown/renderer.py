@@ -67,7 +67,13 @@ def _on_blocked_image(uri):
     local file at all. Which wording applies is decided here, from the
     reference itself, so the sanitizer stays free of user-facing copy.
     """
-    scheme = urllib.parse.urlparse(uri).scheme.lower()
+    try:
+        scheme = urllib.parse.urlparse(uri).scheme.lower()
+    except ValueError:
+        # e.g. an unbalanced IPv6-literal bracket. Unparseable is certainly
+        # not a remote reference we could have fetched, so it gets the
+        # "unresolved local" wording rather than crashing the render.
+        scheme = ""
     if scheme in REMOTE_SCHEMES:
         return errors.remote_image_blocked_text(uri)
     return errors.local_image_unresolved_text(uri)
@@ -107,11 +113,17 @@ def render_document(text, base_dir=None, dark=False, nonce=None):
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
         return errors.error_page(
-            "Installation incomplete", errors.missing_vendor_detail(exc), dark=dark
+            "Installation incomplete",
+            errors.missing_vendor_detail(exc),
+            dark=dark,
+            nonce=token,
         )
     except Exception as exc:  # noqa: BLE001 - a blank pane is never acceptable
         return errors.error_page(
-            "Cannot render this document", errors.render_failure_detail(exc), dark=dark
+            "Cannot render this document",
+            errors.render_failure_detail(exc),
+            dark=dark,
+            nonce=token,
         )
 
     return _DOCUMENT.format(

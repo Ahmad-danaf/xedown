@@ -97,7 +97,14 @@ def resolve_to_uri(reference, base_dir):
     """
     if not reference:
         return None
-    scheme = urllib.parse.urlparse(reference).scheme.lower()
+    try:
+        scheme = urllib.parse.urlparse(reference).scheme.lower()
+    except ValueError:
+        # e.g. an unbalanced IPv6-literal bracket in the authority.
+        # Malformed input fails closed instead of propagating, the same way
+        # `_normalized_local_path` already does for other malformed input
+        # (bad percent escapes, embedded NUL bytes) below.
+        return None
     if scheme in REMOTE_SCHEMES or scheme == "data":
         return reference
     path = _normalized_local_path(reference, base_dir)
@@ -114,7 +121,12 @@ def classify_link(uri, base_dir):
     if uri.startswith("#"):
         return LinkDecision(LinkAction.IN_PAGE_ANCHOR, target=uri[1:])
 
-    scheme = urllib.parse.urlparse(uri).scheme.lower()
+    try:
+        scheme = urllib.parse.urlparse(uri).scheme.lower()
+    except ValueError:
+        return LinkDecision(
+            LinkAction.REFUSE, reason=f"cannot resolve “{uri}”: malformed link"
+        )
     if scheme in REMOTE_SCHEMES:
         return LinkDecision(LinkAction.EXTERNAL_BROWSER, target=uri)
     if scheme and scheme != "file":
