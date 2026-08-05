@@ -104,16 +104,13 @@ if kill -0 "$XED_PID" 2>/dev/null; then
   if command -v wmctrl >/dev/null 2>&1; then
     echo "==> Closing xed's window(s) gracefully (pid $XED_PID)"
     # One at a time, waiting for each to actually go away before asking for
-    # the next -- the way a real user closes windows, and safer than firing
-    # every close request in the same instant: doing the latter against two
-    # windows (the move-tab check leaves a second one open) reproduced a
-    # real "Gtk-CRITICAL **: gtk_action_group_get_action: assertion
-    # 'GTK_IS_ACTION_GROUP (action_group)' failed" during this exact
-    # multi-window-close race, from xed's own core UI-manager bookkeeping
-    # (xedown's action group is long gone by this point in the sequence --
-    # the plugin was disabled several steps earlier). Not a xedown bug, but
-    # a real one this harness's own operation could trigger, so it is
-    # avoided here rather than reported as a false failure every run.
+    # the next -- the way a real user closes windows. This does NOT avoid
+    # the gtk_action_group_get_action Gtk-CRITICAL handled by the allowlist
+    # below (confirmed: it still occurs closing one window at a time, and
+    # even with only one window open) -- that turned out to be a xed-core
+    # bug triggered by the move-tab-then-switch-tabs sequence itself, not a
+    # simultaneous-close race. Sequential closing is kept anyway because
+    # it is the more realistic thing to test and the safer default.
     while :; do
       WINDOW_IDS="$(wmctrl -lp 2>/dev/null | awk -v pid="$XED_PID" '$3 == pid {print $1}')"
       [ -n "$WINDOW_IDS" ] || break
@@ -215,10 +212,35 @@ fi
 # interpreter. Since the window is now closed gracefully above rather than
 # hard-killed, this also covers window-close and plugin-unload output when
 # SHUTDOWN_CAPTURED=1, not just the scripted sequence itself.
-if grep -Eq '(CRITICAL \*\*|WARNING \*\*|Traceback \(most recent|Segmentation fault)' "$XED_LOG"; then
+#
+# One single, precisely-named exception: a confirmed xed 3.8.9 core bug
+# (not xedown's) that fires after this exact sequence -- a tab moved to
+# another window, then an active-tab switch away from and back to a
+# different tab in the original window, then window close. Reproduced with
+# xedown completely uninstalled (not just disabled): the identical
+# assertion appears from a plugin that only calls Xed/Gtk/Gio APIs
+# directly and never references xedown. Full reproduction evidence,
+# including the diagnostic script and its log, is in the round-2 section of
+# .superpowers/sdd/2026-08-04-xedown-v0.1/task-14-report.md. The window
+# still closes cleanly either way -- this is a loud assertion, not a hang
+# or a crash. This allowlist is intentionally ONE exact string: it must
+# never grow into a general relaxation, and any other CRITICAL, WARNING,
+# Traceback or segfault -- including a *different* assertion inside the
+# same gtk_action_group_get_action call -- still fails the run below.
+KNOWN_XED_CORE_ASSERTION="gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP \(action_group\)' failed"
+
+ALL_MATCHES="$(grep -E '(CRITICAL \*\*|WARNING \*\*|Traceback \(most recent|Segmentation fault)' "$XED_LOG" || true)"
+UNEXPECTED="$(printf '%s\n' "$ALL_MATCHES" | grep -Ev "$KNOWN_XED_CORE_ASSERTION" | grep -Ev '^$' || true)"
+
+if [ -n "$UNEXPECTED" ]; then
   echo "Integration tests FAILED: xed's log contains a warning, critical or traceback:" >&2
-  grep -En '(CRITICAL \*\*|WARNING \*\*|Traceback \(most recent|Segmentation fault)' "$XED_LOG" >&2
+  printf '%s\n' "$UNEXPECTED" >&2
   STATUS=1
+elif printf '%s\n' "$ALL_MATCHES" | grep -qE "$KNOWN_XED_CORE_ASSERTION"; then
+  echo "NOTE: xed's log contains the known xed-core gtk_action_group_get_action" >&2
+  echo "      assertion at shutdown, confirmed unrelated to xedown (reproduced with" >&2
+  echo "      xedown completely uninstalled -- see the Task 14 report's round-2" >&2
+  echo "      section). Not treated as a failure." >&2
 fi
 
 if [ "$STATUS" -ne 0 ]; then
