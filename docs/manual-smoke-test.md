@@ -19,6 +19,17 @@ the harness leaves those scenarios untested. **The rest of this checklist is for
 harness genuinely cannot see at all**: rendering quality, real mouse and keyboard
 interaction, and theme switching.
 
+`scripts/run-shutdown-tests.sh` covers the other half of that gate: shutdown. The
+integration harness above runs one long sequence, so it can only ever observe a single
+shutdown — and because that sequence disables the plugin near the end, the shutdown it
+sees is one where xedown is no longer active. The shutdown harness gives each scenario
+its own xed launch and closes the window(s) the way a user does (a real window-manager
+close request, never a signal, so xed runs its normal shutdown and plugin-unload path),
+then checks that launch's stderr on its own. Six scenarios: closing a Markdown tab,
+closing several Markdown tabs, closing several xed windows, moving a tab between
+windows, disabling the plugin before closing, and closing xed with previews live.
+Run it before tagging; it takes a few minutes.
+
 Start with a terminal visible: `xed` prints warnings and tracebacks there, and a silent
 terminal is itself one of the checks.
 
@@ -61,20 +72,31 @@ row, but both are real content in that file and worth a look while it is on scre
 | 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
 | 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below |
 
-A crash or `Gtk-CRITICAL` at shutdown means a controller left something connected,
-and is a release blocker, not a cosmetic issue — **with exactly one named
-exception**: the assertion
+A crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown means a
+controller left something connected, and is a release blocker, not a cosmetic
+issue — **with exactly one named exception**: the assertion
 
 ```
-Gtk-CRITICAL **: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed
+(xed:PID): Gtk-CRITICAL **: HH:MM:SS.mmm: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed
 ```
 
 printed at window close after the "move a tab to another window" step (row 23).
 This is a confirmed **xed 3.8.9 core bug**, not a xedown defect — it reproduces
-byte-identically with xedown completely uninstalled (see the round-2 section of
-`.superpowers/sdd/2026-08-04-xedown-v0.1/task-14-report.md`), and
-`scripts/run-integration-tests.sh` carries the same narrow, single-string
-allowlist for exactly this assertion text. It is known and benign: do not treat
-it as a release blocker. This exception does not generalize — any other
-warning, critical, traceback or segfault, including a *different* assertion
-inside the same `gtk_action_group_get_action` call, still blocks the release.
+byte-identically with xedown completely uninstalled. That is not taken on
+trust from an old report: `XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh
+move-tab` re-runs the identical scenario with xedown absent from the plugin
+directory entirely, and it is worth re-running whenever the exception is
+questioned.
+
+Both harnesses carry the same allowlist, **anchored to a whole log line**
+(`^...$`) rather than matched as a substring, so it cannot excuse a second
+message printed on the same line. `tests/unit/test_shutdown_allowlist.py`
+enforces that: it reads the pattern out of both scripts, fails if they drift
+apart, and fails if the pattern starts admitting a different assertion in the
+same function, the same assertion at a different log level, the same text from
+another process, or the known line with anything else attached to it.
+
+It is known and benign: do not treat it as a release blocker. This exception
+does not generalize — any other warning, critical, traceback or segfault,
+including a *different* assertion inside the same `gtk_action_group_get_action`
+call, still blocks the release.

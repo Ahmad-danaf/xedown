@@ -227,9 +227,18 @@ fi
 # never grow into a general relaxation, and any other CRITICAL, WARNING,
 # Traceback or segfault -- including a *different* assertion inside the
 # same gtk_action_group_get_action call -- still fails the run below.
-KNOWN_XED_CORE_ASSERTION="gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP \(action_group\)' failed"
+#
+# Anchored end to end (^...$) so it matches a whole log line and nothing
+# else: an unanchored substring would also have swallowed a second warning
+# printed on the same line, or the same assertion raised at a different log
+# level. scripts/run-shutdown-tests.sh carries this pattern verbatim, and
+# tests/unit/test_shutdown_allowlist.py fails if the two ever drift apart
+# or if the pattern starts admitting anything beyond this one line.
+KNOWN_XED_CORE_ASSERTION="^\(xed:[0-9]+\): Gtk-CRITICAL \*\*: [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP \(action_group\)' failed$"
 
-ALL_MATCHES="$(grep -E '(CRITICAL \*\*|WARNING \*\*|Traceback \(most recent|Segmentation fault)' "$XED_LOG" || true)"
+BAD_PATTERN='(CRITICAL \*\*|WARNING \*\*|ERROR \*\*|Traceback \(most recent|Segmentation fault|\*\*\* stack smashing|core dumped)'
+
+ALL_MATCHES="$(grep -E "$BAD_PATTERN" "$XED_LOG" || true)"
 UNEXPECTED="$(printf '%s\n' "$ALL_MATCHES" | grep -Ev "$KNOWN_XED_CORE_ASSERTION" | grep -Ev '^$' || true)"
 
 if [ -n "$UNEXPECTED" ]; then
