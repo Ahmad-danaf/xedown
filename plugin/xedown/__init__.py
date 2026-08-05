@@ -29,8 +29,30 @@ if _HOST_AVAILABLE:
     MENU_PATH = "/MenuBar/ViewMenu/ViewOps_1"
     _CONTROLLER_ATTRIBUTE = "_xedown_controller"
 
+    def _deactivate_view(view):
+        """Tear down `view`'s controller, if it still has one.
+
+        Shared by two paths that both need to end up in the same state:
+        `XedownViewActivatable.do_deactivate()` (peas calling this when the
+        whole plugin is disabled) and `XedownWindowActivatable`'s
+        `tab-removed` handler below (a closed tab). xed does not deactivate
+        a `ViewActivatable` when its tab is simply closed — only when the
+        plugin itself is unloaded — so without the second path every closed
+        Markdown tab would leak its `TabController`, WebView and signal
+        handlers for the life of the window. Safe to call twice on the same
+        view (double-close, or a tab-removed cleanup followed later by a
+        plugin-disable sweep): the attribute is gone after the first call,
+        so the second is a no-op.
+        """
+        controller = getattr(view, _CONTROLLER_ATTRIBUTE, None)
+        if controller is not None:
+            controller.deactivate()
+        if hasattr(view, _CONTROLLER_ATTRIBUTE):
+            delattr(view, _CONTROLLER_ATTRIBUTE)
+
     class XedownWindowActivatable(GObject.Object, Xed.WindowActivatable):
-        """Owns the View-menu entry and the toggle accelerator."""
+        """Owns the View-menu entry, the toggle accelerator, and the
+        per-tab-close cleanup safety net (see `_deactivate_view`)."""
 
         __gtype_name__ = "XedownWindowActivatable"
 
@@ -40,6 +62,7 @@ if _HOST_AVAILABLE:
             GObject.Object.__init__(self)
             self._action_group = None
             self._ui_id = None
+            self._tab_removed_handler_id = None
 
         def do_activate(self):
             manager = self.window.get_ui_manager()
@@ -66,8 +89,14 @@ if _HOST_AVAILABLE:
                 Gtk.UIManagerItemType.MENUITEM,
                 False,
             )
+            self._tab_removed_handler_id = self.window.connect(
+                "tab-removed", self._on_tab_removed
+            )
 
         def do_deactivate(self):
+            if self._tab_removed_handler_id is not None:
+                self.window.disconnect(self._tab_removed_handler_id)
+                self._tab_removed_handler_id = None
             manager = self.window.get_ui_manager()
             # The manager can already be gone during window teardown.
             if manager is None or self._ui_id is None:
@@ -77,6 +106,11 @@ if _HOST_AVAILABLE:
             manager.ensure_update()
             self._ui_id = None
             self._action_group = None
+
+        def _on_tab_removed(self, _window, tab):
+            view = tab.get_view()
+            if view is not None:
+                _deactivate_view(view)
 
         def do_update_state(self):
             """No preview controls for non-Markdown files."""
@@ -113,8 +147,5 @@ if _HOST_AVAILABLE:
             self._controller.activate()
 
         def do_deactivate(self):
-            if self._controller is not None:
-                self._controller.deactivate()
-                self._controller = None
-            if hasattr(self.view, _CONTROLLER_ATTRIBUTE):
-                delattr(self.view, _CONTROLLER_ATTRIBUTE)
+            _deactivate_view(self.view)
+            self._controller = None
