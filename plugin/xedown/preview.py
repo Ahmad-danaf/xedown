@@ -85,9 +85,14 @@ class PreviewView:
             payload = json.loads(message.get_js_value().to_string())
         except (ValueError, AttributeError):
             return
+        if not isinstance(payload, dict):
+            return
         kind = payload.get("type")
         if kind == "scroll":
-            self.last_scroll = float(payload.get("value") or 0.0)
+            try:
+                self.last_scroll = float(payload.get("value") or 0.0)
+            except (TypeError, ValueError):
+                pass
         elif kind == "imageError" and self.on_image_error is not None:
             self.on_image_error(payload.get("src") or "")
 
