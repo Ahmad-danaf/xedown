@@ -47,7 +47,22 @@ terminal is itself one of the checks.
 | 21 | Open a second window with Markdown files | Both windows work independently |
 | 22 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
 | 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
-| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults |
+| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below |
 
-A crash or `Gtk-CRITICAL` at shutdown means a controller left something connected.
-Teardown correctness is a release blocker, not a cosmetic issue.
+A crash or `Gtk-CRITICAL` at shutdown means a controller left something connected,
+and is a release blocker, not a cosmetic issue — **with exactly one named
+exception**: the assertion
+
+```
+Gtk-CRITICAL **: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed
+```
+
+printed at window close after the "move a tab to another window" step (row 23).
+This is a confirmed **xed 3.8.9 core bug**, not a xedown defect — it reproduces
+byte-identically with xedown completely uninstalled (see the round-2 section of
+`.superpowers/sdd/2026-08-04-xedown-v0.1/task-14-report.md`), and
+`scripts/run-integration-tests.sh` carries the same narrow, single-string
+allowlist for exactly this assertion text. It is known and benign: do not treat
+it as a release blocker. This exception does not generalize — any other
+warning, critical, traceback or segfault, including a *different* assertion
+inside the same `gtk_action_group_get_action` call, still blocks the release.
