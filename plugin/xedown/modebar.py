@@ -4,9 +4,10 @@ from typing import ClassVar
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 
-from gi.repository import GObject, Gtk
+from gi.repository import Gdk, GObject, Gtk
 
 from .document_state import Mode
 
@@ -20,6 +21,29 @@ _STYLE = b"""
   font-size: 0.9em;
 }
 """
+
+_provider_installed = False
+
+
+def _ensure_provider():
+    """Install the CSS provider once, globally."""
+    global _provider_installed
+    if _provider_installed:
+        return
+
+    # Attempt to get a screen to install the provider on.
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        # No display; CSS styling will not apply, but widget construction continues.
+        _provider_installed = True
+        return
+
+    provider = Gtk.CssProvider()
+    provider.load_from_data(_STYLE)
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    _provider_installed = True
 
 
 class ModeBar(Gtk.Box):
@@ -35,11 +59,7 @@ class ModeBar(Gtk.Box):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.get_style_context().add_class("xedown-modebar")
 
-        provider = Gtk.CssProvider()
-        provider.load_from_data(_STYLE)
-        Gtk.StyleContext.add_provider_for_screen(
-            self.get_screen(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
+        _ensure_provider()
 
         segments = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         segments.get_style_context().add_class("linked")
