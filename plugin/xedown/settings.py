@@ -159,7 +159,10 @@ class Settings:
 
     def __init__(self, path):
         self.path = pathlib.Path(path)
+        self.write_error = None
         self._values = defaults()
+        # The names this instance has itself set. See `_write`.
+        self._dirty = set()
         self._load()
 
     # --- loading -----------------------------------------------------------
@@ -233,3 +236,87 @@ class Settings:
             f"xedown: {self.path} {reason}; using defaults. "
             f"Your copy was kept at {target}\n"
         )
+
+    # --- writing -----------------------------------------------------------
+
+    def set(self, name, value):
+        """Store `value` under `name`. True when it changed anything."""
+        return bool(self.set_many({name: value}))
+
+    def set_many(self, values):
+        """Apply several settings at once. Returns the names that moved.
+
+        Everything is validated before anything is applied, so a bad value
+        cannot leave a half-applied change behind.
+        """
+        coerced = {}
+        for name, value in values.items():
+            new_value, ok = by_name(name).coerce(value)
+            if not ok:
+                raise ValueError(f"{value!r} is not a usable value for {name!r}")
+            coerced[name] = new_value
+
+        changed = frozenset(
+            name for name, value in coerced.items() if value != self._values[name]
+        )
+        if not changed:
+            return changed
+
+        self._values.update(coerced)
+        self._dirty.update(changed)
+        self._write()
+        return changed
+
+    def reset(self):
+        """Restore every default. Keys this version does not know are left alone."""
+        return self.set_many(defaults())
+
+    def _write(self):
+        """Merge this instance's own changes over whatever is on disk.
+
+        Only the keys this instance has actually set are written. Writing the
+        whole in-memory dict would look equivalent and is not: an untouched
+        key's in-memory value is only ever its default, so a second xed
+        process saving one setting would silently reset every other setting
+        the first process had changed. Re-reading also preserves keys this
+        version does not know.
+
+        A failure here is never fatal. The new value stays live for the
+        session, `write_error` records why it did not persist, and the
+        preferences window can tell the user rather than leaving a mystery.
+        """
+        merged = self._stored_on_disk()
+        merged.update({name: self._values[name] for name in self._dirty})
+        temp = self.path.with_name(self.path.name + ".tmp")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_text(
+                json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            # Atomic within one filesystem, so a crash mid-write cannot
+            # leave a half-written store behind.
+            os.replace(temp, self.path)
+        except OSError as exc:
+            self.write_error = str(exc)
+            sys.stderr.write(f"xedown: cannot save settings to {self.path}: {exc}\n")
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+            return
+        self.write_error = None
+
+    def _stored_on_disk(self):
+        """The file's current contents, or `{}` when it cannot be used.
+
+        A store that could not be parsed was already quarantined at load
+        time, and another process may have replaced the file with anything at
+        all since. A write must not become the thing that fails because of
+        it, so this reads untrusted content behind a broad handler for the
+        same reason `_load` does.
+        """
+        try:
+            stored = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - untrusted content, as in _load
+            return {}
+        return stored if isinstance(stored, dict) else {}

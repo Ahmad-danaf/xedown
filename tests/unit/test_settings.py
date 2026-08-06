@@ -335,3 +335,155 @@ def test_a_hand_edited_disaster_still_loads(tmp_path):
     assert store.get("text_size_px") == 28.0
     assert store.get("refresh_delay_ms") == 250
     assert store.get("custom_stylesheet") is None
+
+
+def test_a_value_survives_a_restart(tmp_path):
+    path = tmp_path / "settings.json"
+    settings.Settings(path).set("preview_theme", "cursor")
+    assert settings.Settings(path).get("preview_theme") == "cursor"
+
+
+def test_set_reports_whether_anything_changed(tmp_path):
+    store = _store(tmp_path)
+    assert store.set("preview_theme", "cursor") is True
+    assert store.set("preview_theme", "cursor") is False
+
+
+def test_a_no_op_set_does_not_write(tmp_path):
+    store = _store(tmp_path)
+    path = tmp_path / "settings.json"
+    path.write_text("SENTINEL: not valid JSON", encoding="utf-8")
+    assert store.set("preview_theme", "github") is False
+    assert path.read_text(encoding="utf-8") == "SENTINEL: not valid JSON"
+
+
+def test_an_out_of_range_value_is_clamped_on_the_way_in(tmp_path):
+    store = _store(tmp_path)
+    assert store.set("content_width_rem", 9999) is True
+    assert store.get("content_width_rem") == 100.0
+
+
+def test_an_unusable_value_from_our_own_code_raises(tmp_path):
+    # Bad data from the user's file is forgiven; bad data from a caller is a
+    # bug, and swallowing it would let a broken preferences window look like
+    # a working save.
+    with pytest.raises(ValueError):
+        _store(tmp_path).set("auto_refresh", "yes")
+
+
+def test_an_unknown_name_raises_on_write_too(tmp_path):
+    with pytest.raises(KeyError):
+        _store(tmp_path).set("prevew_theme", "cursor")
+
+
+def test_a_rejected_set_many_changes_nothing_at_all(tmp_path):
+    # Everything is validated before anything is applied, so a bad value
+    # late in the mapping cannot leave a half-applied change behind.
+    store = _store(tmp_path)
+    with pytest.raises(ValueError):
+        store.set_many({"preview_theme": "cursor", "auto_refresh": "yes"})
+    assert store.get("preview_theme") == "github"
+    assert not (tmp_path / "settings.json").exists()
+
+
+def test_set_many_reports_only_what_moved(tmp_path):
+    store = _store(tmp_path)
+    changed = store.set_many({"preview_theme": "cursor", "auto_refresh": True})
+    assert changed == frozenset({"preview_theme"})
+
+
+def test_reset_restores_every_default(tmp_path):
+    store = _store(tmp_path)
+    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    assert store.reset() == frozenset({"preview_theme", "text_size_px"})
+    assert store.get("preview_theme") == "github"
+    assert store.get("text_size_px") == 16.0
+
+
+def test_reset_survives_a_restart(tmp_path):
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+    store.set("preview_theme", "cursor")
+    store.reset()
+    assert settings.Settings(path).get("preview_theme") == "github"
+
+
+def test_the_file_is_readable_json(tmp_path):
+    store = _store(tmp_path)
+    store.set("preview_theme", "cursor")
+    text = (tmp_path / "settings.json").read_text(encoding="utf-8")
+    assert json.loads(text)["preview_theme"] == "cursor"
+    assert text.endswith("\n")
+
+
+def test_a_key_this_version_does_not_know_survives_a_write(tmp_path):
+    # A newer xedown's setting after a downgrade, or a note the user added.
+    path = tmp_path / "settings.json"
+    path.write_text('{"who_knows": "keep me"}', encoding="utf-8")
+    settings.Settings(path).set("preview_theme", "cursor")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["who_knows"] == "keep me"
+    assert stored["preview_theme"] == "cursor"
+
+
+def test_a_second_process_does_not_clobber_the_first(tmp_path):
+    # Two xed processes, which `xed --standalone` allows. Neither may undo
+    # the other's saved settings.
+    path = tmp_path / "settings.json"
+    first = settings.Settings(path)
+    second = settings.Settings(path)
+    first.set("preview_theme", "cursor")
+    second.set("text_size_px", 22)
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored["preview_theme"] == "cursor"
+    assert stored["text_size_px"] == 22
+
+
+def test_a_write_survives_the_file_being_replaced_underneath(tmp_path):
+    # Another process, or the user, replaced the store between load and save.
+    # Re-reading it for the merge must not become the thing that fails --
+    # the same untrusted-content problem `_load` has, in the write path.
+    store = _store(tmp_path)
+    path = tmp_path / "settings.json"
+    path.write_text("[" * 20_000 + "]" * 20_000, encoding="utf-8")
+    assert store.set("preview_theme", "cursor") is True
+    assert store.get("preview_theme") == "cursor"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "cursor"}
+
+
+def test_a_failed_write_keeps_the_value_and_records_why(tmp_path):
+    # A directory sitting exactly where the temp file must go. Chosen over
+    # chmod because it fails for root too. This deliberately couples the
+    # test to the temp file's name: that name is part of how the atomic
+    # write works, and pinning it is cheaper than an unreliable test.
+    (tmp_path / "settings.json.tmp").mkdir()
+    store = _store(tmp_path)
+    assert store.set("preview_theme", "cursor") is True
+    assert store.get("preview_theme") == "cursor"
+    assert store.write_error is not None
+
+
+def test_a_later_successful_write_clears_the_error(tmp_path):
+    blocker = tmp_path / "settings.json.tmp"
+    blocker.mkdir()
+    store = _store(tmp_path)
+    store.set("preview_theme", "cursor")
+    assert store.write_error is not None
+    blocker.rmdir()
+    store.set("preview_theme", "minimal")
+    assert store.write_error is None
+
+
+def test_the_config_directory_is_created_on_first_write(tmp_path):
+    path = tmp_path / "nested" / "deeper" / "settings.json"
+    settings.Settings(path).set("preview_theme", "cursor")
+    assert path.exists()
+
+
+def test_a_write_after_a_quarantine_starts_clean(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{broken", encoding="utf-8")
+    store = settings.Settings(path)
+    store.set("preview_theme", "cursor")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert stored == {"preview_theme": "cursor"}
