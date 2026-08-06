@@ -141,6 +141,38 @@ def test_the_stylesheet_is_assembled_in_emission_order(theme):
     )
 
 
+def test_base_and_theme_never_declare_the_same_property_twice(theme):
+    # test_v01_parity.py checks this disjointness for `repository` alone,
+    # because there it is what turns a v0.1 comparison into an equality. But
+    # the base sheet's own invariants -- overflow containment, bidi
+    # correctness, the focus ring -- are only guaranteed for the *other*
+    # three themes too if nothing in a theme's stylesheet can silently
+    # redeclare a selector/property the base sheet already owns and win by
+    # source order. Without this test, a future theme adding e.g.
+    # `pre { overflow-x: visible }` would quietly defeat a guarantee the
+    # base sheet exists to provide, and every other test would still be
+    # green.
+    #
+    # Each stylesheet is parsed on its own rather than reusing the
+    # concatenate-then-look-at-`duplicates` trick test_v01_parity.py uses:
+    # `document` legitimately restates h5/h6 font-weight and colour over the
+    # shared `h1..h6` rule (ordinary same-specificity CSS cascade, later in
+    # source order, touching properties the base sheet never declares for
+    # headings), and that self-contained pattern would otherwise register as
+    # a false "duplicate". What must never happen is the *base* and the
+    # *theme* both claiming the same selector/property -- so this compares
+    # each file's own effective declarations instead.
+    base, _ = declarations(vendoring.read_resource(themes.BASE_STYLESHEET))
+    theme_rules, _ = declarations(vendoring.read_resource(theme.stylesheet))
+    collisions = [
+        (selector, prop)
+        for selector, props in theme_rules.items()
+        for prop in props
+        if prop in base.get(selector, {})
+    ]
+    assert collisions == []
+
+
 def test_every_theme_declares_the_required_colour_tokens_in_both_appearances(theme):
     light, dark = _palette_blocks(theme)
     for token in REQUIRED_COLOUR_TOKENS:
