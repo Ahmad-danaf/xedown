@@ -54,6 +54,13 @@ THEMES = (
         "highlight-light.css",
         "highlight-dark.css",
     ),
+    Theme(
+        "minimal",
+        "Minimal",
+        "Quiet borders, generous space, and one typeface doing the work.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
 )
 
 _BY_IDENTIFIER = {theme.identifier: theme for theme in THEMES}

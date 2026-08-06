@@ -1,0 +1,147 @@
+/* Minimal: decoration removed.
+
+   One typeface does all the work — headings and body in the same family and
+   the same colour, separated by size alone. No corner radii, no heading
+   rules, no filled code panels, no table grid. What is left is space, and
+   there is a lot of it. Syntax highlighting is near-monochrome for the same
+   reason: two hues, and everything else the colour of the prose. */
+
+:root {
+  --xedown-bg: #ffffff;
+  --xedown-fg: #1c1c1c;
+  --xedown-muted: #5e5e5e;
+  --xedown-border: #e0e0e0;
+  --xedown-quote-border: #d0d0d0;
+  --xedown-code-bg: #f5f5f5;
+  --xedown-link: #14548c;
+  --xedown-focus-ring: #14548c;
+  --xedown-error-bg: #fbf0ef;
+  --xedown-error-fg: #9c2f21;
+  --xedown-error-border: #eccac5;
+  --xedown-syn-comment: #6a6a6a;
+  --xedown-syn-keyword: #14548c;
+  --xedown-syn-string: #2f6b45;
+  --xedown-syn-number: #1c1c1c;
+  --xedown-syn-function: #1c1c1c;
+  --xedown-syn-type: #1c1c1c;
+  --xedown-syn-variable: #1c1c1c;
+  --xedown-syn-meta: #6a6a6a;
+  --xedown-syn-addition-fg: #2f6b45;
+  --xedown-syn-addition-bg: #f0f6f1;
+  --xedown-syn-deletion-fg: #9c2f21;
+  --xedown-syn-deletion-bg: #fbf0ef;
+  --xedown-measure-scale: 1;
+  --xedown-text-scale: 1;
+}
+
+body.dark {
+  --xedown-bg: #17181a;
+  --xedown-fg: #e8e8e8;
+  --xedown-muted: #a0a0a0;
+  --xedown-border: #333438;
+  --xedown-quote-border: #3d3e42;
+  --xedown-code-bg: #202124;
+  --xedown-link: #8ec5f0;
+  --xedown-focus-ring: #8ec5f0;
+  --xedown-error-bg: #2f1e1c;
+  --xedown-error-fg: #f2a99f;
+  --xedown-error-border: #4c322e;
+  --xedown-syn-comment: #9a9a9a;
+  --xedown-syn-keyword: #8ec5f0;
+  --xedown-syn-string: #9ccfa9;
+  --xedown-syn-number: #e8e8e8;
+  --xedown-syn-function: #e8e8e8;
+  --xedown-syn-type: #e8e8e8;
+  --xedown-syn-variable: #e8e8e8;
+  --xedown-syn-meta: #9a9a9a;
+  --xedown-syn-addition-fg: #9ccfa9;
+  --xedown-syn-addition-bg: #1b2a1f;
+  --xedown-syn-deletion-fg: #f2a99f;
+  --xedown-syn-deletion-bg: #2f1e1c;
+}
+
+body {
+  margin: 0;
+  background: var(--xedown-bg);
+  color: var(--xedown-fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+  line-height: 1.8;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xedown-document { margin: 0 auto; padding: 4rem 2.25rem 7rem; }
+
+@media (max-width: 40rem) {
+  .xedown-document { padding: 2.5rem 1.25rem 4.5rem; }
+}
+
+/* Size alone. Same family, same colour, no rules — including h6, whose
+   muted grey in other themes is decoration by another name. */
+h1, h2, h3, h4, h5, h6 { margin: 3em 0 .8em; line-height: 1.35; font-weight: 600; }
+h1 { font-size: 1.85em; }
+h2 { font-size: 1.45em; }
+h3 { font-size: 1.2em; }
+h4 { font-size: 1.05em; }
+h5 { font-size: 1em; }
+h6 { font-size: .95em; letter-spacing: .04em; }
+
+p { margin: 0 0 1.5em; }
+
+a { color: var(--xedown-link); text-decoration: underline; }
+a:hover { text-decoration: none; }
+
+ul, ol { margin: 0 0 1.5em; padding-left: 1.5em; }
+li { margin: .45em 0; }
+li > ul, li > ol { margin: .45em 0; }
+li::marker { color: var(--xedown-muted); }
+
+/* The quietest thing that still reads as a quote. */
+blockquote {
+  margin: 0 0 1.5em;
+  padding: .1em 0 .1em 1.2em;
+  border-left: 1px solid var(--xedown-quote-border);
+  color: var(--xedown-muted);
+}
+
+hr { height: 1px; margin: 3em 0; border: 0; background: var(--xedown-border); }
+
+code, pre, kbd {
+  font-family: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+}
+
+/* A tint rather than a pill: no radius, no border, just enough to read as
+   code inside a sentence. */
+code { padding: .1em .25em; font-size: .9em; background: var(--xedown-code-bg); }
+
+/* On the page background, inside a single hairline. No fill. */
+pre {
+  margin: 0 0 1.5em;
+  padding: 1.1rem 1.2rem;
+  background: none;
+  border: 1px solid var(--xedown-border);
+  border-radius: 0;
+  line-height: 1.65;
+}
+pre code { font-size: .875em; }
+
+/* Horizontal rules only, and no header fill. */
+.xedown-table-scroll { margin: 0 0 1.5em; }
+table { font-size: .95em; }
+th, td { padding: .6em .9em; border: 0; border-bottom: 1px solid var(--xedown-border); }
+thead th { font-weight: 600; }
+
+img { border-radius: 0; }
+
+.xedown-image-error {
+  display: inline-block;
+  padding: .45em .7em;
+  font-size: .85em;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border: 1px solid var(--xedown-error-border);
+  border-radius: 0;
+}
+
+.footnote { font-size: .9em; color: var(--xedown-muted); }
+.footnote hr { margin: 3em 0 1.2em; }
