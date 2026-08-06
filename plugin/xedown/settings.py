@@ -368,7 +368,7 @@ class Settings:
     def connect(self, callback):
         """Call `callback(changed)` whenever values change. Returns a token.
 
-        Mirrors `ThemeWatcher`'s shape deliberately, so the two long-lived
+        Mirrors `AppearanceWatcher`'s shape deliberately, so the two long-lived
         subscriptions a controller holds are managed the same way. The token
         must be handed back to `disconnect`: this store outlives every
         controller, and a missed disconnect keeps a torn-down one — and the

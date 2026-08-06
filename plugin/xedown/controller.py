@@ -10,11 +10,11 @@ gi.require_version("Xed", "1.0")
 from gi.repository import GLib, Gtk, Xed
 
 from . import errors, renderer, settings
+from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
-from .theme import ThemeWatcher
 
 REFRESH_DELAY_MS = 250
 
@@ -32,7 +32,7 @@ class TabController:
         self.state = DocumentState()
         self.modebar = None
         self.preview = None
-        self.theme_watcher = None
+        self.appearance_watcher = None
         self._settings_token = None
 
         self._handlers = []  # (gobject, handler_id)
@@ -69,9 +69,9 @@ class TabController:
             settings.get_settings().disconnect(self._settings_token)
             self._settings_token = None
 
-        if self.theme_watcher is not None:
-            self.theme_watcher.disconnect()
-            self.theme_watcher = None
+        if self.appearance_watcher is not None:
+            self.appearance_watcher.disconnect()
+            self.appearance_watcher = None
 
         self._dismiss_info_bar()
 
@@ -123,9 +123,9 @@ class TabController:
         if not self._active or self._built or not self.is_markdown or self.tab is None:
             return False
 
-        self.theme_watcher = ThemeWatcher()
-        self._dark = self.theme_watcher.current_dark()
-        self.theme_watcher.connect(self._on_theme_changed)
+        self.appearance_watcher = AppearanceWatcher()
+        self._dark = self.appearance_watcher.current_dark()
+        self.appearance_watcher.connect(self._on_appearance_changed)
 
         self._settings_token = settings.get_settings().connect(
             self._on_settings_changed
@@ -334,7 +334,7 @@ class TabController:
         if self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
 
-    def _on_theme_changed(self, dark):
+    def _on_appearance_changed(self, dark):
         self._dark = dark
         self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
