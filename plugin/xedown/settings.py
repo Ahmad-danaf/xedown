@@ -53,8 +53,8 @@ class ChoiceSetting(_Setting):
         if not isinstance(value, str):
             return self.default, False
         # Forgiving about case and surrounding space, so a hand-typed
-        # "GitHub" is honoured rather than silently reverting to a default
-        # the user cannot tell apart from their own choice.
+        # "Repository" is honoured rather than silently reverting to a
+        # default the user cannot tell apart from their own choice.
         normalized = value.strip().lower()
         if normalized in self.choices:
             return normalized, True
@@ -124,8 +124,8 @@ SETTINGS = (
     BoolSetting(REMEMBER_MODE_PER_FILE, True),
     ChoiceSetting(
         PREVIEW_THEME,
-        ("cursor", "github", "minimal", "document"),
-        "github",
+        ("focused", "repository", "minimal", "document"),
+        "repository",
     ),
     PathSetting(CUSTOM_STYLESHEET),
     NumberSetting(CONTENT_WIDTH_REM, 46.0, 30.0, 100.0),

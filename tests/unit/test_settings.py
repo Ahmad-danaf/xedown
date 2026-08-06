@@ -13,7 +13,7 @@ def test_every_setting_has_the_documented_default():
     assert settings.defaults() == {
         "default_mode": "preview",
         "remember_mode_per_file": True,
-        "preview_theme": "github",
+        "preview_theme": "repository",
         "custom_stylesheet": None,
         "content_width_rem": 46.0,
         "text_size_px": 16.0,
@@ -28,8 +28,8 @@ def test_every_setting_has_the_documented_default():
 
 def test_defaults_are_a_fresh_copy_each_time():
     first = settings.defaults()
-    first["preview_theme"] = "cursor"
-    assert settings.defaults()["preview_theme"] == "github"
+    first["preview_theme"] = "focused"
+    assert settings.defaults()["preview_theme"] == "repository"
 
 
 def test_an_unknown_setting_name_is_a_programming_error():
@@ -61,7 +61,7 @@ def test_refresh_delay_default_still_matches_the_live_constant():
 @pytest.mark.parametrize(
     "name,given,expected",
     [
-        ("preview_theme", "GitHub", "github"),
+        ("preview_theme", "Repository", "repository"),
         ("preview_theme", "  minimal  ", "minimal"),
         ("default_mode", "MARKDOWN", "markdown"),
         ("text_direction", "RTL", "rtl"),
@@ -73,10 +73,11 @@ def test_choices_are_matched_ignoring_case_and_space(name, given, expected):
 
 
 @pytest.mark.parametrize(
-    "given", ["cursorish", "", "   ", 3, None, True, ["github"], {"t": "github"}]
+    "given",
+    ["focusedish", "", "   ", 3, None, True, ["repository"], {"t": "repository"}],
 )
 def test_an_unusable_choice_falls_back_to_the_default(given):
-    assert settings.by_name("preview_theme").coerce(given) == ("github", False)
+    assert settings.by_name("preview_theme").coerce(given) == ("repository", False)
 
 
 @pytest.mark.parametrize("given", [True, False])
@@ -193,21 +194,21 @@ def _store(tmp_path, text=None):
 
 def test_a_missing_file_gives_defaults_and_creates_nothing(tmp_path):
     store = _store(tmp_path)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert not (tmp_path / "settings.json").exists()
 
 
 def test_a_stored_value_is_used(tmp_path):
-    store = _store(tmp_path, '{"preview_theme": "cursor"}')
-    assert store.get("preview_theme") == "cursor"
+    store = _store(tmp_path, '{"preview_theme": "focused"}')
+    assert store.get("preview_theme") == "focused"
 
 
 def test_the_store_reads_the_file_only_once(tmp_path):
-    store = _store(tmp_path, '{"preview_theme": "cursor"}')
+    store = _store(tmp_path, '{"preview_theme": "focused"}')
     (tmp_path / "settings.json").write_text(
         '{"preview_theme": "minimal"}', encoding="utf-8"
     )
-    assert store.get("preview_theme") == "cursor"
+    assert store.get("preview_theme") == "focused"
 
 
 def test_getting_an_unknown_setting_raises(tmp_path):
@@ -220,24 +221,24 @@ def test_a_blank_file_is_not_treated_as_corruption(tmp_path, text):
     # Nothing in it to preserve, and this is exactly what a truncated write
     # or a `: > settings.json` leaves behind.
     store = _store(tmp_path, text)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert not (tmp_path / "settings.json.corrupt").exists()
 
 
 @pytest.mark.parametrize(
-    "text", ['{"preview_theme": "cursor"', "not json at all", '{"a": }', "{"]
+    "text", ['{"preview_theme": "focused"', "not json at all", '{"a": }', "{"]
 )
 def test_unparseable_json_is_quarantined(tmp_path, text):
     store = _store(tmp_path, text)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert (tmp_path / "settings.json.corrupt").read_text(encoding="utf-8") == text
     assert not (tmp_path / "settings.json").exists()
 
 
-@pytest.mark.parametrize("text", ["[]", '"github"', "42", "null", "true"])
+@pytest.mark.parametrize("text", ["[]", '"repository"', "42", "null", "true"])
 def test_json_that_is_not_an_object_is_quarantined(tmp_path, text):
     store = _store(tmp_path, text)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert (tmp_path / "settings.json.corrupt").read_text(encoding="utf-8") == text
 
 
@@ -247,7 +248,7 @@ def test_an_unreadable_store_falls_back_to_defaults(tmp_path):
     # happens to be root.
     path = tmp_path / "settings.json"
     path.mkdir()
-    assert settings.Settings(path).get("preview_theme") == "github"
+    assert settings.Settings(path).get("preview_theme") == "repository"
 
 
 def test_a_file_of_invalid_utf8_bytes_is_quarantined(tmp_path):
@@ -256,9 +257,9 @@ def test_a_file_of_invalid_utf8_bytes_is_quarantined(tmp_path):
     # names only OSError lets it escape. Worse, the escape happens before the
     # quarantine, so the same file would break every later launch too.
     path = tmp_path / "settings.json"
-    path.write_bytes(b'{"preview_theme": "curs\xff\xfe')
+    path.write_bytes(b'{"preview_theme": "focu\xff\xfe')
     store = settings.Settings(path)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert (tmp_path / "settings.json.corrupt").exists()
 
 
@@ -267,7 +268,7 @@ def test_deeply_nested_json_is_quarantined(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text("[" * 20_000 + "]" * 20_000, encoding="utf-8")
     store = settings.Settings(path)
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert (tmp_path / "settings.json.corrupt").exists()
 
 
@@ -295,8 +296,8 @@ def test_a_second_corruption_replaces_the_first_preserved_copy(tmp_path):
 
 
 def test_unknown_keys_are_ignored_without_quarantine(tmp_path):
-    store = _store(tmp_path, '{"preview_theme": "cursor", "who_knows": 1}')
-    assert store.get("preview_theme") == "cursor"
+    store = _store(tmp_path, '{"preview_theme": "focused", "who_knows": 1}')
+    assert store.get("preview_theme") == "focused"
     assert not (tmp_path / "settings.json.corrupt").exists()
 
 
@@ -313,8 +314,8 @@ def test_an_out_of_range_value_is_clamped_on_load(tmp_path):
 
 
 def test_a_mis_cased_choice_is_accepted_on_load(tmp_path):
-    store = _store(tmp_path, '{"preview_theme": "GitHub"}')
-    assert store.get("preview_theme") == "github"
+    store = _store(tmp_path, '{"preview_theme": "Repository"}')
+    assert store.get("preview_theme") == "repository"
 
 
 def test_a_hand_edited_disaster_still_loads(tmp_path):
@@ -339,21 +340,21 @@ def test_a_hand_edited_disaster_still_loads(tmp_path):
 
 def test_a_value_survives_a_restart(tmp_path):
     path = tmp_path / "settings.json"
-    settings.Settings(path).set("preview_theme", "cursor")
-    assert settings.Settings(path).get("preview_theme") == "cursor"
+    settings.Settings(path).set("preview_theme", "focused")
+    assert settings.Settings(path).get("preview_theme") == "focused"
 
 
 def test_set_reports_whether_anything_changed(tmp_path):
     store = _store(tmp_path)
-    assert store.set("preview_theme", "cursor") is True
-    assert store.set("preview_theme", "cursor") is False
+    assert store.set("preview_theme", "focused") is True
+    assert store.set("preview_theme", "focused") is False
 
 
 def test_a_no_op_set_does_not_write(tmp_path):
     store = _store(tmp_path)
     path = tmp_path / "settings.json"
     path.write_text("SENTINEL: not valid JSON", encoding="utf-8")
-    assert store.set("preview_theme", "github") is False
+    assert store.set("preview_theme", "repository") is False
     assert path.read_text(encoding="utf-8") == "SENTINEL: not valid JSON"
 
 
@@ -373,7 +374,7 @@ def test_an_unusable_value_from_our_own_code_raises(tmp_path):
 
 def test_an_unknown_name_raises_on_write_too(tmp_path):
     with pytest.raises(KeyError):
-        _store(tmp_path).set("prevew_theme", "cursor")
+        _store(tmp_path).set("prevew_theme", "focused")
 
 
 def test_a_rejected_set_many_changes_nothing_at_all(tmp_path):
@@ -381,38 +382,38 @@ def test_a_rejected_set_many_changes_nothing_at_all(tmp_path):
     # late in the mapping cannot leave a half-applied change behind.
     store = _store(tmp_path)
     with pytest.raises(ValueError):
-        store.set_many({"preview_theme": "cursor", "auto_refresh": "yes"})
-    assert store.get("preview_theme") == "github"
+        store.set_many({"preview_theme": "focused", "auto_refresh": "yes"})
+    assert store.get("preview_theme") == "repository"
     assert not (tmp_path / "settings.json").exists()
 
 
 def test_set_many_reports_only_what_moved(tmp_path):
     store = _store(tmp_path)
-    changed = store.set_many({"preview_theme": "cursor", "auto_refresh": True})
+    changed = store.set_many({"preview_theme": "focused", "auto_refresh": True})
     assert changed == frozenset({"preview_theme"})
 
 
 def test_reset_restores_every_default(tmp_path):
     store = _store(tmp_path)
-    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    store.set_many({"preview_theme": "focused", "text_size_px": 22})
     assert store.reset() == frozenset({"preview_theme", "text_size_px"})
-    assert store.get("preview_theme") == "github"
+    assert store.get("preview_theme") == "repository"
     assert store.get("text_size_px") == 16.0
 
 
 def test_reset_survives_a_restart(tmp_path):
     path = tmp_path / "settings.json"
     store = settings.Settings(path)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     store.reset()
-    assert settings.Settings(path).get("preview_theme") == "github"
+    assert settings.Settings(path).get("preview_theme") == "repository"
 
 
 def test_the_file_is_readable_json(tmp_path):
     store = _store(tmp_path)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     text = (tmp_path / "settings.json").read_text(encoding="utf-8")
-    assert json.loads(text)["preview_theme"] == "cursor"
+    assert json.loads(text)["preview_theme"] == "focused"
     assert text.endswith("\n")
 
 
@@ -420,10 +421,10 @@ def test_a_key_this_version_does_not_know_survives_a_write(tmp_path):
     # A newer xedown's setting after a downgrade, or a note the user added.
     path = tmp_path / "settings.json"
     path.write_text('{"who_knows": "keep me"}', encoding="utf-8")
-    settings.Settings(path).set("preview_theme", "cursor")
+    settings.Settings(path).set("preview_theme", "focused")
     stored = json.loads(path.read_text(encoding="utf-8"))
     assert stored["who_knows"] == "keep me"
-    assert stored["preview_theme"] == "cursor"
+    assert stored["preview_theme"] == "focused"
 
 
 def test_a_second_process_does_not_clobber_the_first(tmp_path):
@@ -432,10 +433,10 @@ def test_a_second_process_does_not_clobber_the_first(tmp_path):
     path = tmp_path / "settings.json"
     first = settings.Settings(path)
     second = settings.Settings(path)
-    first.set("preview_theme", "cursor")
+    first.set("preview_theme", "focused")
     second.set("text_size_px", 22)
     stored = json.loads(path.read_text(encoding="utf-8"))
-    assert stored["preview_theme"] == "cursor"
+    assert stored["preview_theme"] == "focused"
     assert stored["text_size_px"] == 22
 
 
@@ -446,9 +447,9 @@ def test_a_write_survives_the_file_being_replaced_underneath(tmp_path):
     store = _store(tmp_path)
     path = tmp_path / "settings.json"
     path.write_text("[" * 20_000 + "]" * 20_000, encoding="utf-8")
-    assert store.set("preview_theme", "cursor") is True
-    assert store.get("preview_theme") == "cursor"
-    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "cursor"}
+    assert store.set("preview_theme", "focused") is True
+    assert store.get("preview_theme") == "focused"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "focused"}
 
 
 def test_a_write_survives_json_too_deep_to_re_serialise(tmp_path):
@@ -461,8 +462,8 @@ def test_a_write_survives_json_too_deep_to_re_serialise(tmp_path):
     store = _store(tmp_path)
     path = tmp_path / "settings.json"
     path.write_text('{"note": ' + "[" * 1200 + "1" + "]" * 1200 + "}", encoding="utf-8")
-    assert store.set("preview_theme", "cursor") is True
-    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "cursor"}
+    assert store.set("preview_theme", "focused") is True
+    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "focused"}
 
 
 def test_a_key_returned_to_its_default_is_written_as_absent(tmp_path):
@@ -472,15 +473,15 @@ def test_a_key_returned_to_its_default_is_written_as_absent(tmp_path):
     # default for users who have reset.
     path = tmp_path / "settings.json"
     store = settings.Settings(path)
-    store.set("preview_theme", "cursor")
-    store.set("preview_theme", "github")
+    store.set("preview_theme", "focused")
+    store.set("preview_theme", "repository")
     assert json.loads(path.read_text(encoding="utf-8")) == {}
 
 
 def test_reset_leaves_no_settings_behind_in_the_file(tmp_path):
     path = tmp_path / "settings.json"
     store = settings.Settings(path)
-    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    store.set_many({"preview_theme": "focused", "text_size_px": 22})
     store.reset()
     assert json.loads(path.read_text(encoding="utf-8")) == {}
 
@@ -489,7 +490,7 @@ def test_reset_does_not_disturb_keys_this_version_does_not_know(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text('{"who_knows": "keep me"}', encoding="utf-8")
     store = settings.Settings(path)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     store.reset()
     assert json.loads(path.read_text(encoding="utf-8")) == {"who_knows": "keep me"}
 
@@ -501,8 +502,8 @@ def test_a_failed_write_keeps_the_value_and_records_why(tmp_path):
     # write works, and pinning it is cheaper than an unreliable test.
     (tmp_path / "settings.json.tmp").mkdir()
     store = _store(tmp_path)
-    assert store.set("preview_theme", "cursor") is True
-    assert store.get("preview_theme") == "cursor"
+    assert store.set("preview_theme", "focused") is True
+    assert store.get("preview_theme") == "focused"
     assert store.write_error is not None
 
 
@@ -510,7 +511,7 @@ def test_a_later_successful_write_clears_the_error(tmp_path):
     blocker = tmp_path / "settings.json.tmp"
     blocker.mkdir()
     store = _store(tmp_path)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert store.write_error is not None
     blocker.rmdir()
     store.set("preview_theme", "minimal")
@@ -519,7 +520,7 @@ def test_a_later_successful_write_clears_the_error(tmp_path):
 
 def test_the_config_directory_is_created_on_first_write(tmp_path):
     path = tmp_path / "nested" / "deeper" / "settings.json"
-    settings.Settings(path).set("preview_theme", "cursor")
+    settings.Settings(path).set("preview_theme", "focused")
     assert path.exists()
 
 
@@ -527,16 +528,16 @@ def test_a_write_after_a_quarantine_starts_clean(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text("{broken", encoding="utf-8")
     store = settings.Settings(path)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     stored = json.loads(path.read_text(encoding="utf-8"))
-    assert stored == {"preview_theme": "cursor"}
+    assert stored == {"preview_theme": "focused"}
 
 
 def test_a_listener_is_told_what_changed(tmp_path):
     store = _store(tmp_path)
     seen = []
     store.connect(seen.append)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert seen == [frozenset({"preview_theme"})]
 
 
@@ -544,7 +545,7 @@ def test_set_many_notifies_once(tmp_path):
     store = _store(tmp_path)
     seen = []
     store.connect(seen.append)
-    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    store.set_many({"preview_theme": "focused", "text_size_px": 22})
     assert seen == [frozenset({"preview_theme", "text_size_px"})]
 
 
@@ -552,7 +553,7 @@ def test_a_no_op_set_notifies_nobody(tmp_path):
     store = _store(tmp_path)
     seen = []
     store.connect(seen.append)
-    store.set("preview_theme", "github")
+    store.set("preview_theme", "repository")
     assert seen == []
 
 
@@ -561,7 +562,7 @@ def test_every_listener_hears_about_a_change(tmp_path):
     first, second = [], []
     store.connect(first.append)
     store.connect(second.append)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert first == second == [frozenset({"preview_theme"})]
 
 
@@ -570,7 +571,7 @@ def test_disconnect_stops_delivery(tmp_path):
     seen = []
     token = store.connect(seen.append)
     store.disconnect(token)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert seen == []
 
 
@@ -580,7 +581,7 @@ def test_disconnecting_twice_is_harmless(tmp_path):
     token = store.connect(seen.append)
     store.disconnect(token)
     store.disconnect(token)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert seen == []
 
 
@@ -588,8 +589,8 @@ def test_a_listener_sees_the_new_value(tmp_path):
     store = _store(tmp_path)
     seen = []
     store.connect(lambda changed: seen.append(store.get("preview_theme")))
-    store.set("preview_theme", "cursor")
-    assert seen == ["cursor"]
+    store.set("preview_theme", "focused")
+    assert seen == ["focused"]
 
 
 def test_a_listener_that_raises_does_not_stop_the_others(tmp_path):
@@ -601,7 +602,7 @@ def test_a_listener_that_raises_does_not_stop_the_others(tmp_path):
 
     store.connect(explode)
     store.connect(seen.append)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert seen == [frozenset({"preview_theme"})]
 
 
@@ -613,8 +614,8 @@ def test_a_listener_that_raises_does_not_fail_the_write(tmp_path):
         raise RuntimeError("this listener is broken")
 
     store.connect(explode)
-    store.set("preview_theme", "cursor")
-    assert settings.Settings(path).get("preview_theme") == "cursor"
+    store.set("preview_theme", "focused")
+    assert settings.Settings(path).get("preview_theme") == "focused"
 
 
 def test_a_listener_may_disconnect_another_mid_broadcast(tmp_path):
@@ -630,7 +631,7 @@ def test_a_listener_may_disconnect_another_mid_broadcast(tmp_path):
 
     tokens["first"] = store.connect(first)
     tokens["second"] = store.connect(lambda changed: calls.append("second"))
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert calls == ["first"]
 
 
@@ -642,7 +643,7 @@ def test_a_listener_still_runs_when_the_write_failed(tmp_path):
     store = _store(tmp_path)
     seen = []
     store.connect(seen.append)
-    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "focused")
     assert seen == [frozenset({"preview_theme"})]
 
 
