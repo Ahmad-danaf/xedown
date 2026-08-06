@@ -195,11 +195,14 @@ def test_every_fixture_renders_in_every_theme(name, dark, theme):
     assert "Installation incomplete" not in page
 
 
+def test_the_registry_holds_exactly_the_four_built_in_themes():
+    assert sorted(theme_ids()) == ["document", "focused", "minimal", "repository"]
+
+
 def test_the_settings_choices_are_exactly_the_registered_themes():
     # Two lists that must never drift: a setting offering a theme that does
     # not exist would silently fall back, and a theme missing from the
-    # setting would be unreachable. This starts as a subset check and
-    # becomes an equality in Task 10, when the fourth theme lands.
+    # setting would be unreachable.
     choices = settings.by_name(settings.PREVIEW_THEME).choices
-    assert set(theme_ids()) <= set(choices)
+    assert sorted(choices) == sorted(theme_ids())
     assert settings.by_name(settings.PREVIEW_THEME).default == themes.DEFAULT_THEME

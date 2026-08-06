@@ -61,6 +61,13 @@ THEMES = (
         SHARED_SYNTAX_STYLESHEET,
         SHARED_SYNTAX_STYLESHEET,
     ),
+    Theme(
+        "document",
+        "Document",
+        "Serif type and a narrower measure, for long-form reading.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
 )
 
 _BY_IDENTIFIER = {theme.identifier: theme for theme in THEMES}
