@@ -9,7 +9,8 @@
 
 .hljs-comment,
 .hljs-quote,
-.hljs-formula { color: var(--xedown-syn-comment); }
+.hljs-formula,
+.hljs-code { color: var(--xedown-syn-comment); }
 
 .hljs-keyword,
 .hljs-doctag,
@@ -20,7 +21,6 @@
 
 .hljs-string,
 .hljs-regexp,
-.hljs-meta .hljs-string,
 .hljs-char.escape_ { color: var(--xedown-syn-string); }
 
 .hljs-number,
@@ -29,8 +29,6 @@
 .hljs-symbol { color: var(--xedown-syn-number); }
 
 .hljs-title,
-.hljs-title.class_,
-.hljs-title.class_.inherited__,
 .hljs-title.function_,
 .hljs-name { color: var(--xedown-syn-function); }
 
