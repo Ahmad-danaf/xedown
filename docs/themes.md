@@ -64,10 +64,11 @@ information, and 0.1.0's 1px rules sit well below any text threshold.
 
 ## When a theme cannot be loaded
 
-An unknown identifier, or a theme whose stylesheet is missing or unreadable,
-falls back to `repository` and notes it on standard error. The preview is never
-unstyled. If `repository` itself cannot be read the installation is broken, and
-xedown says so on the page instead of rendering anything.
+An unknown identifier falls back to `repository` silently. A theme whose
+stylesheet is missing or unreadable also falls back to `repository`, and that
+case is noted on standard error. The preview is never unstyled. If `repository`
+itself cannot be read the installation is broken, and xedown says so on the
+page instead of rendering anything.
 
 **Stylesheet validity is not checked at run time.** xedown does not parse CSS,
 and a syntactically broken stylesheet would be partly applied rather than

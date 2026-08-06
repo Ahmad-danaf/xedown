@@ -184,7 +184,7 @@ if [ "$SHUTDOWN_CAPTURED" -eq 0 ]; then
   echo "NOTE: shutdown output was not reliably captured this run (see the warning(s) above)." >&2
   echo "      xed.log covers the scripted sequence but may be missing window-close /" >&2
   echo "      plugin-unload output. Re-run with wmctrl installed for full coverage, or" >&2
-  echo "      check docs/manual-smoke-test.md row 24 (terminal review) by hand." >&2
+  echo "      check docs/manual-smoke-test.md row 32 (terminal review) by hand." >&2
 fi
 
 if [ ! -f "$REPORT" ]; then
