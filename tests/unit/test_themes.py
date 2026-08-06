@@ -121,11 +121,24 @@ def test_assemble_raises_when_the_default_itself_cannot_be_read(monkeypatch):
         themes.assemble_css(themes.DEFAULT_THEME)
 
 
-def test_the_syntax_sheet_comes_before_the_base_sheet(theme):
-    # preview.css's `pre code.hljs` override beats the highlight stylesheet
-    # by source order, not by specificity, so this ordering is load-bearing.
+def test_the_stylesheet_is_assembled_in_emission_order(theme):
+    # Order is load-bearing, not cosmetic: preview.css's `pre code.hljs`
+    # override beats the highlight stylesheet by SOURCE ORDER, not by
+    # specificity, so a reversed assembly silently breaks every highlighted
+    # code block while leaving the page otherwise intact.
+    #
+    # Asserted as an exact composition on purpose. An earlier version of
+    # this test compared substring positions and passed under either order,
+    # because the base sheet's own comment mentions `hljs` before the
+    # override rule appears -- a test that cannot fail for the bug it names.
     css, _ = themes.assemble_css(theme.identifier)
-    assert css.index("hljs") < css.rindex("pre code.hljs")
+    assert css == "\n".join(
+        (
+            vendoring.read_resource(theme.syntax_stylesheet(False)),
+            vendoring.read_resource(themes.BASE_STYLESHEET),
+            vendoring.read_resource(theme.stylesheet),
+        )
+    )
 
 
 def test_every_theme_declares_the_required_colour_tokens_in_both_appearances(theme):
