@@ -153,8 +153,16 @@ def test_authored_syntax_tokens_meet_aa(theme, appearance):
 def test_vendored_syntax_palettes_clear_the_readability_floor(theme, appearance):
     if theme.syntax_stylesheet(appearance == "dark") == themes.SHARED_SYNTAX_STYLESHEET:
         pytest.skip(f"{theme.identifier} authors its own syntax palette")
+    sheet = theme.syntax_stylesheet(appearance == "dark")
+    tokens = vendored_token_colours(theme, appearance)
+    # This is the only check covering the vendored palette's 3:1 floor, and
+    # `vendored_token_colours` parses a minified third-party stylesheet with a
+    # regex. update-vendor.sh regenerates that file from upstream, so a future
+    # refresh could reshape it into something the regex cannot read -- at which
+    # point this test would pass having measured nothing. Fail loudly instead.
+    assert tokens, f"no .hljs- colours parsed out of {sheet}"
     code_background = palette(theme, appearance)["--xedown-code-bg"]
-    for selector, colour in vendored_token_colours(theme, appearance).items():
+    for selector, colour in tokens.items():
         ratio = wcag.contrast_ratio(colour, code_background)
         assert ratio >= VENDORED_SYNTAX_FLOOR, (
             f"{theme.identifier}/{appearance}: {selector} ({colour}) is "
