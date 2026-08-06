@@ -29,7 +29,7 @@
   --xedown-syn-function: #2f4f7a;
   --xedown-syn-type: #5a4a7a;
   --xedown-syn-variable: #23201c;
-  --xedown-syn-meta: #6a6259;
+  --xedown-syn-meta: #23201c;
   --xedown-syn-addition-fg: #2f5c33;
   --xedown-syn-addition-bg: #eef4ec;
   --xedown-syn-deletion-fg: #96301c;
@@ -58,7 +58,7 @@ body.dark {
   --xedown-syn-function: #9ab8dd;
   --xedown-syn-type: #c2a8d8;
   --xedown-syn-variable: #e6e0d6;
-  --xedown-syn-meta: #a49b8f;
+  --xedown-syn-meta: #e6e0d6;
   --xedown-syn-addition-fg: #a8c9a0;
   --xedown-syn-addition-bg: #1e2a1c;
   --xedown-syn-deletion-fg: #f0aa96;
