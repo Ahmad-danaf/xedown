@@ -601,3 +601,50 @@ def test_a_listener_still_runs_when_the_write_failed(tmp_path):
     store.connect(seen.append)
     store.set("preview_theme", "cursor")
     assert seen == [frozenset({"preview_theme"})]
+
+
+def test_the_environment_override_wins(monkeypatch, tmp_path):
+    # The live harnesses set this so a test run cannot rewrite -- or
+    # quarantine -- the developer's own settings file.
+    monkeypatch.setenv("XEDOWN_CONFIG_DIR", str(tmp_path / "scratch"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert settings.default_config_dir() == tmp_path / "scratch"
+
+
+def test_xdg_config_home_is_honoured(monkeypatch, tmp_path):
+    monkeypatch.delenv("XEDOWN_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert settings.default_config_dir() == tmp_path / "xdg" / "xedown"
+
+
+def test_the_fallback_is_dot_config(monkeypatch):
+    monkeypatch.delenv("XEDOWN_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", "/home/somebody")
+    expected = pathlib.Path("/home/somebody/.config/xedown")
+    assert settings.default_config_dir() == expected
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_a_blank_override_is_ignored(monkeypatch, blank):
+    # The XDG spec says an unset *or empty* value falls back to $HOME/.config.
+    monkeypatch.setenv("XEDOWN_CONFIG_DIR", blank)
+    monkeypatch.setenv("XDG_CONFIG_HOME", blank)
+    monkeypatch.setenv("HOME", "/home/somebody")
+    expected = pathlib.Path("/home/somebody/.config/xedown")
+    assert settings.default_config_dir() == expected
+
+
+def test_the_store_file_is_named_settings_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("XEDOWN_CONFIG_DIR", str(tmp_path))
+    assert settings.default_path() == tmp_path / "settings.json"
+
+
+def test_every_caller_shares_one_store(monkeypatch, tmp_path):
+    # monkeypatch.setattr restores the singleton afterwards, so this test
+    # cannot leak a store built against tmp_path into another test.
+    monkeypatch.setenv("XEDOWN_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "_INSTANCE", None)
+    store = settings.get_settings()
+    assert settings.get_settings() is store
+    assert store.path == tmp_path / "settings.json"

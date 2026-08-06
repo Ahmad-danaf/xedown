@@ -13,6 +13,9 @@ import os
 import pathlib
 import sys
 
+CONFIG_DIR_ENV = "XEDOWN_CONFIG_DIR"
+STORE_NAME = "settings.json"
+
 DEFAULT_MODE = "default_mode"
 REMEMBER_MODE_PER_FILE = "remember_mode_per_file"
 PREVIEW_THEME = "preview_theme"
@@ -356,3 +359,49 @@ class Settings:
                 callback(changed)
             except Exception as exc:  # noqa: BLE001 - one must not stop the rest
                 sys.stderr.write(f"xedown: a settings listener failed: {exc}\n")
+
+
+def _from_environment(name):
+    """`name`'s value, or None when it is unset or blank."""
+    value = (os.environ.get(name) or "").strip()
+    return value or None
+
+
+def default_config_dir():
+    """Where the settings file lives, honouring the usual overrides.
+
+    `XEDOWN_CONFIG_DIR` comes first so the live test harnesses can point a
+    real xed at a scratch directory instead of rewriting — or quarantining —
+    the developer's own settings. Read from `os.environ` rather than
+    `GLib.get_user_config_dir()`, because a `gi` import here would put this
+    whole module out of reach of the unit tests.
+    """
+    override = _from_environment(CONFIG_DIR_ENV)
+    if override is not None:
+        return pathlib.Path(override)
+    xdg = _from_environment("XDG_CONFIG_HOME")
+    if xdg is not None:
+        return pathlib.Path(xdg) / "xedown"
+    return pathlib.Path(os.path.expanduser("~")) / ".config" / "xedown"
+
+
+def default_path():
+    """The settings file this user's xedown reads and writes."""
+    return default_config_dir() / STORE_NAME
+
+
+_INSTANCE = None
+
+
+def get_settings():
+    """The one store this process shares between every window and every tab.
+
+    All of xed's windows normally live in one process, so this singleton is
+    what makes a change apply everywhere at once. `xed --standalone` starts a
+    second process, which will not see another's change until it restarts —
+    a documented limitation, not an oversight.
+    """
+    global _INSTANCE
+    if _INSTANCE is None:
+        _INSTANCE = Settings(default_path())
+    return _INSTANCE
