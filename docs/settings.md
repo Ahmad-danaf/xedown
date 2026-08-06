@@ -25,8 +25,14 @@ has no file at all. Anything absent uses its default.
 | `text_direction` | `auto`, `ltr`, `rtl` | `auto` |
 | `watch_external_changes` | `true`, `false` | `true` |
 
-Every default reproduces xedown 0.1.0's behaviour exactly. Leaving the file
-alone leaves the plugin exactly as it was.
+Most of these defaults reproduce xedown 0.1.0 exactly: the preview keeps the
+same look, width, text size, refresh timing and starting mode.
+
+Three have no v0.1 equivalent, because the capability did not exist in v0.1 —
+`code_copy_buttons`, `remember_mode_per_file` and `watch_external_changes`.
+Each ships **On**, so when the features that read them arrive later in v0.2
+they will be active without you doing anything. Set any of them to `false`
+here to opt out.
 
 ## Editing the file by hand
 
@@ -39,14 +45,16 @@ You can, and xedown tries hard to make sense of what it finds:
   be real JSON booleans: `"auto_refresh": "yes"` is not recognised, and reads
   as the default.
 - A misspelled key is ignored, and is kept in the file rather than deleted.
-- `custom_stylesheet` is stored exactly as you write it. `~` is not expanded.
+- `custom_stylesheet` is stored as you write it, apart from surrounding
+  whitespace. `~` is not expanded.
 
 If the file cannot be used at all — truncated, not a JSON object, not readable,
 or not valid UTF-8 — xedown starts from defaults and **keeps your copy** at
 `~/.config/xedown/settings.json.corrupt`, naming both paths on standard error.
-A second corruption replaces that preserved copy. An empty file is treated as
-"no settings yet" rather than as damage, since that is what a write interrupted
-part-way leaves behind.
+If even that move fails, your file is left exactly where it is and the message
+says so. A second corruption replaces the preserved copy. An empty file is
+treated as "no settings yet" rather than as damage, since that is what a write
+interrupted part-way leaves behind.
 
 If the file cannot be written — a read-only home, a full disk — your change
 still applies for the rest of the session; it just will not survive a restart.

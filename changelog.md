@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A settings file at `~/.config/xedown/settings.json`, shared by every window
   and applied everywhere the moment it changes. Nothing reads it yet — the
-  settings window and the features that use these values come later in v0.2.
-  Every default reproduces v0.1 behaviour, so an upgrade changes nothing. See
+  settings window and the features that use these values come later in v0.2 —
+  so this release looks and behaves exactly like v0.1. See
   [docs/settings.md](docs/settings.md).
 
 ## [0.1.0] - 2026-08-05
