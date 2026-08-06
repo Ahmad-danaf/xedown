@@ -53,7 +53,11 @@ def declarations(css, prefix=""):
         if prelude.startswith("@"):
             nested, nested_duplicates = declarations(block, f"{prefix}{prelude} ")
             for key, value in nested.items():
-                out.setdefault(key, {}).update(value)
+                target = out.setdefault(key, {})
+                for name, declared in value.items():
+                    if name in target:
+                        duplicates.append((key, name))
+                    target[name] = declared
             duplicates.extend(nested_duplicates)
             continue
 
