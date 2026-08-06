@@ -92,7 +92,7 @@ row, but both are real content in that file and worth a look while it is on scre
 | 21 | Repeat for `minimal` | Square corners throughout, no code-block fill, no table grid, noticeably more space |
 | 22 | Repeat for `document` | Serif prose in a visibly narrower column; uppercase letterspaced `h6`; a short centred horizontal rule |
 | 23 | Repeat for `repository` | Indistinguishable from xedown 0.1.0 |
-| 24 | Set `"preview_theme": "nonsense"` and reopen the file | Repository renders; the preview is never unstyled |
+| 24 | Set `"preview_theme": "nonsense"` in `~/.config/xedown/settings.json`, restart xed, open `tests/fixtures/showcase.md` | Repository renders; the preview is never unstyled |
 | 25 | In each of the four themes, open `tests/fixtures/edge-cases.md` | The missing-image and remote-image placeholders are obviously placeholders in every theme, not blank gaps |
 | 26 | With `tests/fixtures/showcase.md` open, narrow the window until the table no longer fits the column | The table scrolls horizontally inside its own area; the page itself never scrolls sideways, in any theme |
 | 27 | Switch the desktop between light and dark in each of the four themes | Every theme follows live, and stays readable in both |
@@ -101,6 +101,7 @@ row, but both are real content in that file and worth a look while it is on scre
 | 30 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
 | 31 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
 | 32 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
+| 33 | Clean up: remove `preview_theme` from `~/.config/xedown/settings.json` (or set it back to `"repository"`) | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

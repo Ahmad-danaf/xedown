@@ -25,11 +25,13 @@ Set `preview_theme` in `~/.config/xedown/settings.json`:
 }
 ```
 
-xedown reads the file when a Markdown tab opens, so restart xed — or close and
-reopen the file — after editing it by hand. Once a settings **window** arrives
-later in v0.2, changing the theme there will apply to every open preview in
-every window immediately, with no restart. [docs/settings.md](settings.md)
-covers how the file is read and what happens when it is malformed.
+xedown reads the file once per xed session — the first Markdown tab you open
+creates the shared settings store, and every tab after that reuses it — so a
+hand edit takes effect only after you restart xed; closing and reopening the
+file is not enough. Once a settings **window** arrives later in v0.2, changing
+the theme there will apply to every open preview in every window immediately,
+with no restart. [docs/settings.md](settings.md) covers how the file is read
+and what happens when it is malformed.
 
 ## Contrast
 
@@ -57,9 +59,9 @@ information, and 0.1.0's 1px rules sit well below any text threshold.
 
 - **Reach the network.** No theme loads a font, image, stylesheet or script
   from anywhere. Nothing xedown does ever touches the network.
-- **Use a font you do not have.** Themes name only families that ship with
-  Linux Mint, and every stack ends in a generic family, so an unusual system
-  still gets something sensible.
+- **Use a font you do not have.** No theme ever downloads a font — each stack
+  only names families and always ends in a generic one, so a system with none
+  of the named fonts still gets something sensible.
 - **Touch xed itself.** Theme CSS applies inside the preview and nowhere else.
 
 ## When a theme cannot be loaded

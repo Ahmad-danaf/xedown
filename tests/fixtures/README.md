@@ -43,6 +43,17 @@ Supporting files. `linked.md` is the target of the working relative link in
 `showcase.md` — a small generated gradient, reused as a placeholder-free
 control case (contrast with the missing image in `edge-cases.md`).
 
+## `v0.1-preview.css`
+
+Not a Markdown fixture, and not something to regenerate casually. It is a
+frozen copy of the stylesheet xedown 0.1.0 shipped.
+`tests/unit/test_v01_parity.py` compares it, declaration for declaration,
+against the base sheet plus `themes/repository.css` — which is what lets this
+project claim `repository` renders identically to 0.1.0. If 0.1.0's
+stylesheet genuinely needs revisiting, that belongs in that test's
+`SUBSTITUTIONS` table, with a reason; replacing this file would just make the
+comparison stop meaning anything.
+
 ## Regression test
 
 `tests/unit/test_fixtures.py` renders both files through the real renderer

@@ -21,8 +21,9 @@ Markdown modes inside the same tab.
   as a plain styled block.
 - Four preview themes — Focused, Repository, Minimal and Document — each with a
   full light and dark palette that follows the desktop theme live, with no
-  restart required. Every theme is checked against WCAG AA contrast in both
-  appearances. See [docs/themes.md](docs/themes.md).
+  restart required. Every theme's text is held to WCAG AA contrast in both
+  appearances, with one documented exception — see
+  [docs/themes.md](docs/themes.md).
 - Preview and Markdown modes switch in place, in the same tab. Preview is the
   default for a Markdown file. Each mode remembers its own scroll position,
   and the underlying text buffer is never touched, so switching modes never
@@ -115,7 +116,7 @@ and viewing never changes the file.
   Details and the stack trace are in
   [docs/known-issues.md](docs/known-issues.md).
 - Preview themes are chosen by editing `~/.config/xedown/settings.json`, and
-  the change takes effect when a Markdown tab next opens. The settings window
+  the change takes effect the next time xed starts. The settings window
   that will edit them, and apply a change to open previews immediately, is not
   in this release.
 
