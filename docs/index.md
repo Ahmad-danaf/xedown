@@ -10,5 +10,7 @@
 - Test fixtures — [../tests/fixtures/README.md](../tests/fixtures/README.md), the
   documents the manual smoke test and `tests/unit/test_fixtures.py` are both run
   against
+- Settings — [settings.md](settings.md), the settings file's location, keys,
+  defaults and recovery behaviour
 - Architecture — planned
 - Troubleshooting — planned
