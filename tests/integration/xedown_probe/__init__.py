@@ -56,15 +56,18 @@ _sequence_started = False
 TabController = None
 Mode = None
 ModeBar = None
+xedown_settings = None
 
 
 def _lazy_imports():
-    global TabController, Mode, ModeBar
+    global TabController, Mode, ModeBar, xedown_settings
+    from xedown import settings as _settings
     from xedown.controller import TabController as _TabController
     from xedown.document_state import Mode as _Mode
     from xedown.modebar import ModeBar as _ModeBar
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
+    xedown_settings = _settings
 
 
 def _format_line(name, passed, detail):
@@ -657,7 +660,75 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             and controller_b.state.mode is Mode.SOURCE,
             f"a={controller_a.state.mode!r} b={controller_b.state.mode!r}",
         )
-        self._schedule(400, self.step_txt_tab_open)
+        self._schedule(400, self.step_settings_broadcast)
+        return False
+
+    # --- settings reach every open tab, in every window --------------------
+    #
+    # The claim unit tests structurally cannot make: that every controller
+    # alive in this process is actually subscribed to the one shared store.
+    # Subscription is checked by the identity of each listener's bound-method
+    # owner rather than by counting, because the destination window the
+    # move-tab check created has controllers of its own -- a count would pass
+    # while the wrong controllers were subscribed.
+    #
+    # The handler itself has no body yet (brief 2 fills it in), so there is
+    # nothing observable to assert about a controller *receiving* a change.
+    # A probe-owned listener therefore proves the broadcast runs, and the
+    # identity check proves who is on it. Together that is the real claim;
+    # neither half is worth reading on its own.
+
+    def step_settings_broadcast(self):
+        store = xedown_settings.get_settings()
+        self._settings_store = store
+
+        controllers = [
+            self._main_controller(),
+            self._controller_for(self._tab_b.get_view()),
+            self._controller_for(self._move_view),
+        ]
+        controllers = [c for c in controllers if c is not None]
+        record(
+            "settings-three-controllers-alive",
+            len(controllers) == 3,
+            f"{len(controllers)} of 3 controllers found",
+        )
+        subscribed = [
+            controller
+            for controller in controllers
+            if any(
+                getattr(callback, "__self__", None) is controller
+                for callback in store._listeners.values()
+            )
+        ]
+        record(
+            "settings-every-open-tab-subscribed",
+            len(subscribed) == len(controllers),
+            f"{len(subscribed)} of {len(controllers)} controllers subscribed",
+        )
+
+        deliveries = []
+        token = store.connect(deliveries.append)
+        changed = store.set(xedown_settings.CONTENT_WIDTH_REM, 61)
+        store.disconnect(token)
+
+        record("settings-set-reports-a-change", changed is True, f"set -> {changed!r}")
+        record(
+            "settings-broadcast-delivered",
+            deliveries == [frozenset({xedown_settings.CONTENT_WIDTH_REM})],
+            f"deliveries: {deliveries!r}",
+        )
+        record(
+            "settings-value-readable-after-set",
+            store.get(xedown_settings.CONTENT_WIDTH_REM) == 61,
+            f"value: {store.get(xedown_settings.CONTENT_WIDTH_REM)!r}",
+        )
+        record(
+            "settings-written-to-the-scratch-store",
+            store.write_error is None and store.path.exists(),
+            f"write_error={store.write_error!r} path={store.path}",
+        )
+        self._schedule(300, self.step_txt_tab_open)
         return False
 
     # --- menu sensitivity: is_sensitive(), never get_sensitive() -----------
@@ -756,6 +827,17 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record(
             "disable-no-info-bar",
             bar is not None and bar.get_parent() is None,
+        )
+        # Every controller in every window is torn down by a plugin disable,
+        # so nothing may still be subscribed. The store is a long-lived
+        # global: anything left here is a controller (and its WebView,
+        # document and tab) leaked for the life of the process. This is the
+        # only place that fact is observable.
+        store = getattr(self, "_settings_store", None)
+        record(
+            "disable-no-settings-listeners-left",
+            store is not None and not store._listeners,
+            f"listeners left: {sorted(getattr(store, '_listeners', {}))!r}",
         )
         self._schedule(300, self.step_settle_before_exit)
         return False

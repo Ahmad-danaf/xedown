@@ -69,7 +69,12 @@ echo "==> Launching xed under the probe"
 # XEDOWN_PROBE_TMPDIR nests the probe's own fixture files under $WORKDIR, so
 # the single rm -rf at the bottom of a clean run cleans those up too instead
 # of leaving an "xedown-probe-*" directory behind under /tmp every time.
+# XEDOWN_CONFIG_DIR keeps the settings the probe writes inside $WORKDIR. This
+# harness drives a REAL xed as the real user, so without it a test run would
+# rewrite -- and on a bad store, quarantine -- the developer's own
+# ~/.config/xedown/settings.json.
 XEDOWN_PROBE_REPORT="$REPORT" XEDOWN_PROBE_TMPDIR="$WORKDIR" \
+  XEDOWN_CONFIG_DIR="$WORKDIR/config" \
   xed --new-window "$SAMPLE" > "$XED_LOG" 2>&1 &
 XED_PID=$!
 

@@ -202,6 +202,7 @@ run_scenario() {
   XEDOWN_SHUTDOWN_REPORT="$report" \
   XEDOWN_SHUTDOWN_TMPDIR="$dir" \
   XEDOWN_SHUTDOWN_CONTROL="$([ "$CONTROL" = "1" ] && echo 1 || echo 0)" \
+  XEDOWN_CONFIG_DIR="$dir/config" \
     xed --new-window "$sample" > "$log" 2>&1 &
   XED_PID=$!
 

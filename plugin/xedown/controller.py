@@ -9,7 +9,7 @@ gi.require_version("Xed", "1.0")
 
 from gi.repository import GLib, Gtk, Xed
 
-from . import errors, renderer
+from . import errors, renderer, settings
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
@@ -33,6 +33,7 @@ class TabController:
         self.modebar = None
         self.preview = None
         self.theme_watcher = None
+        self._settings_token = None
 
         self._handlers = []  # (gobject, handler_id)
         self._refresh_source_id = 0
@@ -67,6 +68,10 @@ class TabController:
         if self.theme_watcher is not None:
             self.theme_watcher.disconnect()
             self.theme_watcher = None
+
+        if self._settings_token is not None:
+            settings.get_settings().disconnect(self._settings_token)
+            self._settings_token = None
 
         self._dismiss_info_bar()
 
@@ -121,6 +126,10 @@ class TabController:
         self.theme_watcher = ThemeWatcher()
         self._dark = self.theme_watcher.current_dark()
         self.theme_watcher.connect(self._on_theme_changed)
+
+        self._settings_token = settings.get_settings().connect(
+            self._on_settings_changed
+        )
 
         self.modebar = ModeBar()
         self.tab.pack_start(self.modebar, False, False, 0)
@@ -330,6 +339,18 @@ class TabController:
         self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
+
+    def _on_settings_changed(self, changed):
+        """React to a settings change. Nothing reads a setting yet.
+
+        The subscription exists ahead of its first consumer (brief 2, the
+        built-in preview themes) on purpose. The store is a long-lived
+        global holding a strong reference to every listener, so a missed
+        disconnect keeps this controller — and the WebView, document and tab
+        it references — alive for the life of the process. Establishing the
+        subscribe/unsubscribe pair once, here, is what stops that being
+        re-invented, and re-broken, by each brief that adds a consumer.
+        """
 
     def _on_mode_selected(self, _bar, mode_value):
         self.set_mode(Mode(mode_value))
