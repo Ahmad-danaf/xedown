@@ -102,6 +102,11 @@ REQUIRED=(
   "xedown/resources/preview.js"
   "xedown/resources/highlight-light.css"
   "xedown/resources/highlight-dark.css"
+  "xedown/resources/syntax.css"
+  "xedown/resources/themes/repository.css"
+  "xedown/resources/themes/focused.css"
+  "xedown/resources/themes/minimal.css"
+  "xedown/resources/themes/document.css"
   "xedown/LICENSE"
   "xedown.plugin"
 )

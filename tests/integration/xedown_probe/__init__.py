@@ -728,8 +728,77 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             store.write_error is None and store.path.exists(),
             f"write_error={store.write_error!r} path={store.path}",
         )
-        self._schedule(300, self.step_txt_tab_open)
+        self._schedule(400, self.step_theme_switch)
         return False
+
+    # --- a theme change reaches every open preview, in every window --------
+    #
+    # Brief 2's real claim, and the one unit tests structurally cannot make:
+    # every live controller picks the new theme up, and the page in the
+    # WebView actually carries it. Reading the class back out is
+    # asynchronous, so it lands in the step after this one -- the field
+    # changing on its own would not prove the page reloaded.
+    #
+    # This is also where the store is put back to its defaults. Brief 1's
+    # broadcast step leaves content_width_rem at 61, which is inert while
+    # nothing reads it and would quietly render every later step at a
+    # non-default width once brief 4 lands.
+
+    def step_theme_switch(self):
+        store = xedown_settings.get_settings()
+        store.set(xedown_settings.PREVIEW_THEME, "focused")
+        controllers = [
+            self._main_controller(),
+            self._controller_for(self._tab_b.get_view()),
+            self._controller_for(self._move_view),
+        ]
+        controllers = [c for c in controllers if c is not None]
+        switched = [c for c in controllers if getattr(c, "_theme", None) == "focused"]
+        record(
+            "theme-every-open-tab-switched",
+            len(controllers) == 3 and len(switched) == 3,
+            f"{len(switched)} of {len(controllers)} controllers on focused",
+        )
+        self._schedule(700, self.step_theme_switch_check)
+        return False
+
+    def step_theme_switch_check(self):
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record("theme-page-carries-the-theme-class", False, "no preview")
+            self._restore_settings()
+            return False
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                class_name = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                class_name = f"<error: {exc}>"
+            record(
+                "theme-page-carries-the-theme-class",
+                "xedown-theme-focused" in class_name,
+                f"body class: {class_name!r}",
+            )
+            self._restore_settings()
+
+        preview.widget.run_javascript("document.body.className", None, on_result, None)
+        return False
+
+    def _restore_settings(self):
+        """Hand the store back at its defaults, then carry on."""
+        store = xedown_settings.get_settings()
+        store.reset()
+        width = xedown_settings.CONTENT_WIDTH_REM
+        record(
+            "theme-settings-restored-to-defaults",
+            store.get(xedown_settings.PREVIEW_THEME) == "repository"
+            and store.get(width) == xedown_settings.by_name(width).default,
+            f"theme={store.get(xedown_settings.PREVIEW_THEME)!r} "
+            f"width={store.get(width)!r}",
+        )
+        self._schedule(300, self.step_txt_tab_open)
 
     # --- menu sensitivity: is_sensitive(), never get_sensitive() -----------
 
