@@ -28,10 +28,13 @@ has no file at all. Anything absent uses its default.
 Most of these defaults reproduce xedown 0.1.0 exactly: the preview keeps the
 same look, width, text size, refresh timing and starting mode.
 
-`content_width_rem` and `text_size_px` are **base** values, not the number you
-will see on screen: each theme multiplies them by its own measure and text
-scale — see [themes.md](themes.md) — so `document`, for instance, deliberately
-renders a narrower column than `content_width_rem` alone would suggest.
+`content_width_rem` and `text_size_px` are two of the values with no consumer
+yet, and when a later release does read them, they will describe a **base**
+value rather than the rendered result: every theme already declares its own
+measure and text scale to multiply them by — see [themes.md](themes.md) — so
+the number you set will not be the number rendered. `document`, for instance,
+is already built to render a narrower column than its base width alone would
+suggest.
 
 Three have no v0.1 equivalent, because the capability did not exist in v0.1 —
 `code_copy_buttons`, `remember_mode_per_file` and `watch_external_changes`.
