@@ -19,8 +19,10 @@ Markdown modes inside the same tab.
   plain text, Python, R, Ruby, Rust, SCSS, shell, SQL, Swift, TypeScript, XML
   and YAML. A fence with no language, or one outside that list, still renders
   as a plain styled block.
-- Light and dark preview themes that follow the desktop theme live, with no
-  restart required.
+- Four preview themes — Focused, Repository, Minimal and Document — each with a
+  full light and dark palette that follows the desktop theme live, with no
+  restart required. Every theme is checked against WCAG AA contrast in both
+  appearances. See [docs/themes.md](docs/themes.md).
 - Preview and Markdown modes switch in place, in the same tab. Preview is the
   default for a Markdown file. Each mode remembers its own scroll position,
   and the underlying text buffer is never touched, so switching modes never
@@ -112,6 +114,10 @@ and viewing never changes the file.
   the plugin can fix or avoid; save before dragging tabs between windows.
   Details and the stack trace are in
   [docs/known-issues.md](docs/known-issues.md).
+- Preview themes are chosen by editing `~/.config/xedown/settings.json`, and
+  the change takes effect when a Markdown tab next opens. The settings window
+  that will edit them, and apply a change to open previews immediately, is not
+  in this release.
 
 ## Documentation
 

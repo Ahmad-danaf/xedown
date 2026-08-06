@@ -3,9 +3,9 @@
 xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
-**As of v0.2 brief 1 nothing reads these values yet.** The store exists so the
-rest of v0.2 has one place to keep user choices; the preferences window that
-edits them, and the features that read them, arrive later in the version.
+**Most of these values have no consumer yet.** `preview_theme` is read as of
+v0.2 — see [themes.md](themes.md). The rest exist so that the features that use
+them, and the settings window that will edit them, have one place to look.
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -14,7 +14,7 @@ has no file at all. Anything absent uses its default.
 | --- | --- | --- |
 | `default_mode` | `preview`, `markdown` | `preview` |
 | `remember_mode_per_file` | `true`, `false` | `true` |
-| `preview_theme` | `cursor`, `github`, `minimal`, `document` | `github` |
+| `preview_theme` | `focused`, `repository`, `minimal`, `document` | `repository` |
 | `custom_stylesheet` | a file path, or `null` | `null` |
 | `content_width_rem` | 30 to 100 | `46` |
 | `text_size_px` | 11 to 28 | `16` |
@@ -28,6 +28,11 @@ has no file at all. Anything absent uses its default.
 Most of these defaults reproduce xedown 0.1.0 exactly: the preview keeps the
 same look, width, text size, refresh timing and starting mode.
 
+`content_width_rem` and `text_size_px` are **base** values, not the number you
+will see on screen: each theme multiplies them by its own measure and text
+scale — see [themes.md](themes.md) — so `document`, for instance, deliberately
+renders a narrower column than `content_width_rem` alone would suggest.
+
 Three have no v0.1 equivalent, because the capability did not exist in v0.1 —
 `code_copy_buttons`, `remember_mode_per_file` and `watch_external_changes`.
 Each ships **On**, so when the features that read them arrive later in v0.2
@@ -40,7 +45,7 @@ You can, and xedown tries hard to make sense of what it finds:
 
 - A value that is out of range is **brought into range**, not rejected.
   `"content_width_rem": 5000` reads as 100.
-- A choice is matched ignoring case and surrounding space, so `"GitHub"` works.
+- A choice is matched ignoring case and surrounding space, so `"Repository"` works.
 - A value of the wrong type falls back to that setting's default. Booleans must
   be real JSON booleans: `"auto_refresh": "yes"` is not recognised, and reads
   as the default.

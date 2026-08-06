@@ -9,6 +9,13 @@ this directory is third-party code; nothing here is written by this project.
 | highlight.js | 11.11.1 | BSD-3-Clause | `highlight.min.js`, `licenses/highlight.js-LICENSE` |
 | highlight.js themes | 11.11.1 | BSD-3-Clause | `../resources/highlight-light.css`, `../resources/highlight-dark.css` |
 
+The two highlight.js stylesheets are the **Repository** theme's syntax layer
+and nothing else. xedown's other three themes author their own syntax palettes,
+through `../resources/syntax.css` plus per-theme variables. Repository keeps
+this one because it must stay identical to xedown 0.1.0, whose code colours are
+these files — transcribing them into a hand-written stylesheet would drop the
+attribution this licence requires.
+
 Built with esbuild 0.24.0.
 
 ## Bundled languages (31)

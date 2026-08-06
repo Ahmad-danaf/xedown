@@ -88,11 +88,18 @@ row, but both are real content in that file and worth a look while it is on scre
 | 17 | In `tests/fixtures/edge-cases.md`, reference a remote image | Placeholder; nothing is fetched from the network (check with a network monitor if in doubt) |
 | 18 | Open several Markdown files in tabs and click between them | Each keeps its own mode and scroll position, with no visible redraw glitches |
 | 19 | Switch the desktop between light and dark | Preview follows without a restart |
-| 20 | Close a tab (click its close button) while Preview is active | Closes cleanly, no warnings |
-| 21 | Open a second window with Markdown files | Both windows work independently |
-| 22 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
-| 23 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
-| 24 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
+| 20 | Set `"preview_theme": "focused"` in `~/.config/xedown/settings.json`, restart xed, open `tests/fixtures/showcase.md` | Calm, low-contrast surfaces; no rules under headings; tables with horizontal rules only |
+| 21 | Repeat for `minimal` | Square corners throughout, no code-block fill, no table grid, noticeably more space |
+| 22 | Repeat for `document` | Serif prose in a visibly narrower column; uppercase letterspaced `h6`; a short centred horizontal rule |
+| 23 | Repeat for `repository` | Indistinguishable from xedown 0.1.0 |
+| 24 | Set `"preview_theme": "nonsense"` and reopen the file | Repository renders; the preview is never unstyled |
+| 25 | In each of the four themes, open `tests/fixtures/edge-cases.md` | The missing-image and remote-image placeholders are obviously placeholders in every theme; wide tables scroll inside themselves and the page never scrolls sideways |
+| 26 | Switch the desktop between light and dark in each of the four themes | Every theme follows live, and stays readable in both |
+| 27 | Close a tab (click its close button) while Preview is active | Closes cleanly, no warnings |
+| 28 | Open a second window with Markdown files | Both windows work independently |
+| 29 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
+| 30 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
+| 31 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion
@@ -101,7 +108,7 @@ blocker, not a cosmetic issue — **with exactly one named exception**: the asse
 (xed:PID): Gtk-CRITICAL **: HH:MM:SS.mmm: gtk_action_group_get_action: assertion 'GTK_IS_ACTION_GROUP (action_group)' failed
 ```
 
-printed at window close after the "move a tab to another window" step (row 23).
+printed at window close after the "move a tab to another window" step (row 30).
 This is a confirmed **xed 3.8.9 core bug**, not a xedown defect — it reproduces
 byte-identically with xedown completely uninstalled. That is not taken on
 trust from an old report: `XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh
@@ -109,7 +116,7 @@ move-tab` re-runs the identical scenario with xedown absent from the plugin
 directory entirely, and it is worth re-running whenever the exception is
 questioned.
 
-Expect to meet its other face while working through row 23: the same xed bug
+Expect to meet its other face while working through row 30: the same xed bug
 sometimes segfaults instead of printing the assertion (identical stack, in
 xed's own `received_clipboard_contents` — see
 [known-issues.md](known-issues.md)). A crash there is **not** covered by this
