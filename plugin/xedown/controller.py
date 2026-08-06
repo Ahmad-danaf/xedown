@@ -40,6 +40,7 @@ class TabController:
         self._built = False
         self._active = False
         self._dark = False
+        self._theme = None
         self._info_bar = None
 
     # --- lifecycle ---------------------------------------------------------
@@ -127,9 +128,9 @@ class TabController:
         self._dark = self.appearance_watcher.current_dark()
         self.appearance_watcher.connect(self._on_appearance_changed)
 
-        self._settings_token = settings.get_settings().connect(
-            self._on_settings_changed
-        )
+        store = settings.get_settings()
+        self._theme = store.get(settings.PREVIEW_THEME)
+        self._settings_token = store.connect(self._on_settings_changed)
 
         self.modebar = ModeBar()
         self.tab.pack_start(self.modebar, False, False, 0)
@@ -296,7 +297,10 @@ class TabController:
             )
         else:
             html = renderer.render_document(
-                self._buffer_text(), base_dir=self._base_dir(), dark=self._dark
+                self._buffer_text(),
+                base_dir=self._base_dir(),
+                dark=self._dark,
+                theme=self._theme,
             )
         base_dir = self._base_dir()
         self.preview.load_document(
@@ -341,16 +345,25 @@ class TabController:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
 
     def _on_settings_changed(self, changed):
-        """React to a settings change. Nothing reads a setting yet.
+        """Apply a settings change to this tab, immediately.
 
-        The subscription exists ahead of its first consumer (brief 2, the
-        built-in preview themes) on purpose. The store is a long-lived
-        global holding a strong reference to every listener, so a missed
-        disconnect keeps this controller — and the WebView, document and tab
-        it references — alive for the life of the process. Establishing the
-        subscribe/unsubscribe pair once, here, is what stops that being
-        re-invented, and re-broken, by each brief that adds a consumer.
+        The store is a long-lived global holding a strong reference to every
+        listener, so a missed disconnect keeps this controller — and the
+        WebView, document and tab it references — alive for the life of the
+        process. `deactivate()` owns that; nothing here may introduce state
+        that outlives it.
+
+        A theme change needs the whole page again, because the stylesheet is
+        inlined in <head> and `update_body` only swaps the article. That is
+        the same path an appearance change takes, scroll preservation
+        included. Delivery order between listeners is not depended on.
         """
+        if settings.PREVIEW_THEME not in changed:
+            return
+        self._theme = settings.get_settings().get(settings.PREVIEW_THEME)
+        self.state.preview_stale = True
+        if self._built and self.state.mode is Mode.PREVIEW:
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
 
     def _on_mode_selected(self, _bar, mode_value):
         self.set_mode(Mode(mode_value))
