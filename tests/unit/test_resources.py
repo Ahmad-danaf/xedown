@@ -154,3 +154,39 @@ def test_script_is_syntactically_valid():
         ["node", "--check", str(path)], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0, result.stderr
+
+
+OUR_STYLESHEETS = ("preview.css", "syntax.css") + tuple(
+    theme.stylesheet for theme in themes.THEMES
+)
+
+
+@pytest.mark.parametrize("name", OUR_STYLESHEETS)
+def test_our_stylesheets_reference_nothing_remote(name):
+    # The vendored highlight stylesheets are deliberately excluded: they are
+    # the vendoring script's output and carry a project URL in their licence
+    # header, exactly as the highlight bundle does.
+    css = vendoring.read_resource(name)
+    assert "http://" not in css
+    assert "https://" not in css
+    assert "@import" not in css
+    for reference in re.findall(r"url\(\s*['\"]?([^)'\"]*)", css):
+        assert reference.startswith("data:"), f"{name} loads {reference!r}"
+
+
+@pytest.mark.parametrize("name", OUR_STYLESHEETS)
+def test_our_stylesheets_never_suppress_the_focus_outline(name):
+    css = vendoring.read_resource(name)
+    assert "outline: none" not in css
+    assert "outline:none" not in css
+
+
+@pytest.mark.parametrize("name", OUR_STYLESHEETS)
+def test_every_font_stack_ends_in_a_generic_family(name):
+    # Themes may only use fonts already on the machine, so every stack needs
+    # a family the system is guaranteed to resolve.
+    generics = ("serif", "sans-serif", "monospace", "cursive", "fantasy")
+    css = vendoring.read_resource(name)
+    for stack in re.findall(r"font-family\s*:([^;}]*)", css):
+        last = stack.split(",")[-1].strip().strip("\"'")
+        assert last in generics, f"{name}: {stack.strip()!r} ends in {last!r}"

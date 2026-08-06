@@ -36,6 +36,13 @@ class Theme:
 
 THEMES = (
     Theme(
+        "focused",
+        "Focused",
+        "Calm and editor-adjacent, with restrained contrast and a single accent.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
+    Theme(
         "repository",
         "Repository",
         "Clean and familiar, for README files and technical documentation.",

@@ -1,0 +1,151 @@
+/* Focused: an editor-adjacent design.
+
+   Page and code surfaces sit close together while text contrast stays high;
+   headings carry no rules and take their hierarchy from size and weight; a
+   single accent is spent only on links and the focus ring, so nothing else
+   competes for attention. Denser than Repository, the way an editor is
+   denser than a web page. */
+
+:root {
+  --xedown-bg: #fbfbfa;
+  --xedown-fg: #24262b;
+  --xedown-heading-fg: #16181d;
+  --xedown-muted: #656b74;
+  --xedown-border: #e3e2de;
+  --xedown-quote-border: #d5d4cf;
+  --xedown-code-bg: #f2f1ed;
+  --xedown-link: #1a63a8;
+  --xedown-focus-ring: #1a63a8;
+  --xedown-error-bg: #fdf1ef;
+  --xedown-error-fg: #a3301f;
+  --xedown-error-border: #f0cdc6;
+  --xedown-syn-comment: #63686f;
+  --xedown-syn-keyword: #7a3fa0;
+  --xedown-syn-string: #2f6b45;
+  --xedown-syn-number: #8a5320;
+  --xedown-syn-function: #1a5f96;
+  --xedown-syn-type: #1a6b70;
+  --xedown-syn-variable: #24262b;
+  --xedown-syn-meta: #656b74;
+  --xedown-syn-addition-fg: #1f6033;
+  --xedown-syn-addition-bg: #eaf3ea;
+  --xedown-syn-deletion-fg: #a3301f;
+  --xedown-syn-deletion-bg: #fbeceb;
+  --xedown-measure-scale: 1;
+  --xedown-text-scale: .97;
+}
+
+body.dark {
+  --xedown-bg: #1b1c1e;
+  --xedown-fg: #dfe1e4;
+  --xedown-heading-fg: #f0f1f3;
+  --xedown-muted: #9aa0a8;
+  --xedown-border: #303236;
+  --xedown-quote-border: #3a3d42;
+  --xedown-code-bg: #232528;
+  --xedown-link: #7fbbd9;
+  --xedown-focus-ring: #7fbbd9;
+  --xedown-error-bg: #33211f;
+  --xedown-error-fg: #f0a99e;
+  --xedown-error-border: #52332f;
+  --xedown-syn-comment: #8f959d;
+  --xedown-syn-keyword: #c9a5e8;
+  --xedown-syn-string: #93cfa4;
+  --xedown-syn-number: #e0b07a;
+  --xedown-syn-function: #86bbe8;
+  --xedown-syn-type: #7fcfd0;
+  --xedown-syn-variable: #dfe1e4;
+  --xedown-syn-meta: #9aa0a8;
+  --xedown-syn-addition-fg: #9fe0ae;
+  --xedown-syn-addition-bg: #1d2f22;
+  --xedown-syn-deletion-fg: #f0a99e;
+  --xedown-syn-deletion-bg: #33211f;
+}
+
+body {
+  margin: 0;
+  background: var(--xedown-bg);
+  color: var(--xedown-fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xedown-document { margin: 0 auto; padding: 3rem 2rem 6rem; }
+
+@media (max-width: 40rem) {
+  .xedown-document { padding: 2rem 1.1rem 4rem; }
+}
+
+/* No rules under headings: hierarchy is size and weight, nothing drawn. */
+h1, h2, h3, h4, h5, h6 { margin: 2.1em 0 .55em; line-height: 1.3; }
+h1 { font-size: 1.9em; font-weight: 600; color: var(--xedown-heading-fg); }
+h2 { font-size: 1.45em; font-weight: 600; color: var(--xedown-heading-fg); }
+h3 { font-size: 1.2em; font-weight: 600; color: var(--xedown-heading-fg); }
+h4 { font-size: 1em; font-weight: 600; }
+h5 { font-size: .95em; font-weight: 400; color: var(--xedown-muted); }
+h6 { font-size: .9em; font-weight: 400; color: var(--xedown-muted); }
+
+p { margin: 0 0 1.05em; }
+
+a { color: var(--xedown-link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+a:focus-visible { border-radius: 2px; }
+
+ul, ol { margin: 0 0 1.05em; padding-left: 1.6em; }
+li { margin: .25em 0; }
+li > ul, li > ol { margin: .25em 0; }
+
+/* Quoted prose stays body-coloured: it is text to read, not an aside. */
+blockquote {
+  margin: 0 0 1.05em;
+  padding: .1em 0 .1em .9em;
+  border-left: 2px solid var(--xedown-quote-border);
+}
+
+hr { height: 1px; margin: 2em 0; border: 0; background: var(--xedown-border); }
+
+code, pre, kbd {
+  font-family: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+}
+
+code {
+  padding: .12em .3em;
+  font-size: .89em;
+  background: var(--xedown-code-bg);
+  border-radius: 3px;
+}
+
+/* Delimited by a quiet border rather than by a contrasting fill — the
+   surfaces are meant to sit close together. */
+pre {
+  margin: 0 0 1.1em;
+  padding: .9rem 1rem;
+  background: var(--xedown-code-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: 4px;
+  line-height: 1.5;
+}
+pre code { font-size: .875em; }
+
+/* Horizontal rules only: a table should scan, not draw a grid. */
+.xedown-table-scroll { margin: 0 0 1.1em; }
+table { font-size: .94em; }
+th, td { padding: .45em .75em; border: 0; border-bottom: 1px solid var(--xedown-border); }
+thead th { font-weight: 600; border-bottom: 2px solid var(--xedown-quote-border); }
+
+img { border-radius: 4px; }
+
+.xedown-image-error {
+  display: inline-block;
+  padding: .4em .65em;
+  font-size: .85em;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border: 1px solid var(--xedown-error-border);
+  border-radius: 4px;
+}
+
+.footnote { font-size: .9em; color: var(--xedown-muted); }
+.footnote hr { margin: 2.4em 0 1em; }

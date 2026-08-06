@@ -1,0 +1,64 @@
+/* Maps highlight.js's token classes onto the twelve --xedown-syn-* tokens an
+   authored theme supplies, so each theme states its syntax palette as twelve
+   values rather than restating this mapping.
+
+   The `repository` theme does not use this sheet. Its colours come from the
+   vendored highlight.js stylesheet, which is what makes it identical to
+   xedown 0.1.0 and what keeps that project's attribution attached to its own
+   work. */
+
+.hljs-comment,
+.hljs-quote,
+.hljs-formula { color: var(--xedown-syn-comment); }
+
+.hljs-keyword,
+.hljs-doctag,
+.hljs-section,
+.hljs-selector-tag,
+.hljs-template-tag,
+.hljs-variable.language_ { color: var(--xedown-syn-keyword); }
+
+.hljs-string,
+.hljs-regexp,
+.hljs-meta .hljs-string,
+.hljs-char.escape_ { color: var(--xedown-syn-string); }
+
+.hljs-number,
+.hljs-literal,
+.hljs-bullet,
+.hljs-symbol { color: var(--xedown-syn-number); }
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_,
+.hljs-name { color: var(--xedown-syn-function); }
+
+.hljs-type,
+.hljs-built_in,
+.hljs-selector-class { color: var(--xedown-syn-type); }
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-subst,
+.hljs-selector-id { color: var(--xedown-syn-variable); }
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-meta,
+.hljs-operator,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-tag { color: var(--xedown-syn-meta); }
+
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+.hljs-addition {
+  color: var(--xedown-syn-addition-fg);
+  background-color: var(--xedown-syn-addition-bg);
+}
+.hljs-deletion {
+  color: var(--xedown-syn-deletion-fg);
+  background-color: var(--xedown-syn-deletion-bg);
+}
