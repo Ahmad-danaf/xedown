@@ -170,11 +170,21 @@ class Settings:
         return self._values[name]
 
     def _load(self):
+        # Both handlers below name `Exception` rather than an enumerated list
+        # of types, and each wraps exactly one stdlib call so it cannot hide
+        # anything else. Enumerating is what went wrong twice here already:
+        # `read_text` raises UnicodeDecodeError (a ValueError, not an OSError)
+        # on invalid UTF-8, and `json.loads` raises RecursionError (a
+        # RuntimeError, not a ValueError) on deeply nested input. Each escaped
+        # its handler and stopped the plugin from loading at all -- and since
+        # the escape happened before the quarantine, the same file broke every
+        # subsequent launch too. The guarantee this module owes is absolute,
+        # so it must not depend on having named every exception correctly.
         try:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
             return
-        except OSError as exc:
+        except Exception as exc:  # noqa: BLE001 - see above
             self._quarantine(f"could not be read ({exc})")
             return
 
@@ -186,8 +196,8 @@ class Settings:
 
         try:
             stored = json.loads(text)
-        except ValueError as exc:
-            self._quarantine(f"is not valid JSON ({exc})")
+        except Exception as exc:  # noqa: BLE001 - see above
+            self._quarantine(f"could not be parsed ({exc})")
             return
 
         if not isinstance(stored, dict):

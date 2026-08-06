@@ -250,6 +250,27 @@ def test_an_unreadable_store_falls_back_to_defaults(tmp_path):
     assert settings.Settings(path).get("preview_theme") == "github"
 
 
+def test_a_file_of_invalid_utf8_bytes_is_quarantined(tmp_path):
+    # A write truncated mid-multibyte-character. `read_text` raises
+    # UnicodeDecodeError -- a ValueError, not an OSError -- so a handler that
+    # names only OSError lets it escape. Worse, the escape happens before the
+    # quarantine, so the same file would break every later launch too.
+    path = tmp_path / "settings.json"
+    path.write_bytes(b'{"preview_theme": "curs\xff\xfe')
+    store = settings.Settings(path)
+    assert store.get("preview_theme") == "github"
+    assert (tmp_path / "settings.json.corrupt").exists()
+
+
+def test_deeply_nested_json_is_quarantined(tmp_path):
+    # json.loads raises RecursionError -- a RuntimeError, not a ValueError.
+    path = tmp_path / "settings.json"
+    path.write_text("[" * 20_000 + "]" * 20_000, encoding="utf-8")
+    store = settings.Settings(path)
+    assert store.get("preview_theme") == "github"
+    assert (tmp_path / "settings.json.corrupt").exists()
+
+
 def test_the_quarantine_message_names_both_paths(tmp_path, capsys):
     path = tmp_path / "settings.json"
     path.write_text("{oops", encoding="utf-8")
