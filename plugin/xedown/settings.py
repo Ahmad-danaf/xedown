@@ -163,6 +163,8 @@ class Settings:
         self._values = defaults()
         # The names this instance has itself set. See `_write`.
         self._dirty = set()
+        self._listeners = {}  # token -> callback
+        self._next_token = 0
         self._load()
 
     # --- loading -----------------------------------------------------------
@@ -265,6 +267,7 @@ class Settings:
         self._values.update(coerced)
         self._dirty.update(changed)
         self._write()
+        self._notify(changed)
         return changed
 
     def reset(self):
@@ -320,3 +323,36 @@ class Settings:
         except Exception:  # noqa: BLE001 - untrusted content, as in _load
             return {}
         return stored if isinstance(stored, dict) else {}
+
+    # --- notification ------------------------------------------------------
+
+    def connect(self, callback):
+        """Call `callback(changed)` whenever values change. Returns a token.
+
+        Mirrors `ThemeWatcher`'s shape deliberately, so the two long-lived
+        subscriptions a controller holds are managed the same way. The token
+        must be handed back to `disconnect`: this store outlives every
+        controller, and a missed disconnect keeps a torn-down one — and the
+        WebView, document and tab it references — alive for the life of the
+        process.
+        """
+        self._next_token += 1
+        self._listeners[self._next_token] = callback
+        return self._next_token
+
+    def disconnect(self, token):
+        """Stop delivering to the listener `token` identifies. Idempotent."""
+        self._listeners.pop(token, None)
+
+    def _notify(self, changed):
+        # Iterate a snapshot, because a listener may disconnect itself or
+        # another listener from inside its own callback -- but re-check
+        # membership before each call, so one disconnected earlier in this
+        # same broadcast is not called after the fact.
+        for token, callback in list(self._listeners.items()):
+            if token not in self._listeners:
+                continue
+            try:
+                callback(changed)
+            except Exception as exc:  # noqa: BLE001 - one must not stop the rest
+                sys.stderr.write(f"xedown: a settings listener failed: {exc}\n")

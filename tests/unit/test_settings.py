@@ -487,3 +487,117 @@ def test_a_write_after_a_quarantine_starts_clean(tmp_path):
     store.set("preview_theme", "cursor")
     stored = json.loads(path.read_text(encoding="utf-8"))
     assert stored == {"preview_theme": "cursor"}
+
+
+def test_a_listener_is_told_what_changed(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    store.connect(seen.append)
+    store.set("preview_theme", "cursor")
+    assert seen == [frozenset({"preview_theme"})]
+
+
+def test_set_many_notifies_once(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    store.connect(seen.append)
+    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    assert seen == [frozenset({"preview_theme", "text_size_px"})]
+
+
+def test_a_no_op_set_notifies_nobody(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    store.connect(seen.append)
+    store.set("preview_theme", "github")
+    assert seen == []
+
+
+def test_every_listener_hears_about_a_change(tmp_path):
+    store = _store(tmp_path)
+    first, second = [], []
+    store.connect(first.append)
+    store.connect(second.append)
+    store.set("preview_theme", "cursor")
+    assert first == second == [frozenset({"preview_theme"})]
+
+
+def test_disconnect_stops_delivery(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    token = store.connect(seen.append)
+    store.disconnect(token)
+    store.set("preview_theme", "cursor")
+    assert seen == []
+
+
+def test_disconnecting_twice_is_harmless(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    token = store.connect(seen.append)
+    store.disconnect(token)
+    store.disconnect(token)
+    store.set("preview_theme", "cursor")
+    assert seen == []
+
+
+def test_a_listener_sees_the_new_value(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+    store.connect(lambda changed: seen.append(store.get("preview_theme")))
+    store.set("preview_theme", "cursor")
+    assert seen == ["cursor"]
+
+
+def test_a_listener_that_raises_does_not_stop_the_others(tmp_path):
+    store = _store(tmp_path)
+    seen = []
+
+    def explode(changed):
+        raise RuntimeError("this listener is broken")
+
+    store.connect(explode)
+    store.connect(seen.append)
+    store.set("preview_theme", "cursor")
+    assert seen == [frozenset({"preview_theme"})]
+
+
+def test_a_listener_that_raises_does_not_fail_the_write(tmp_path):
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+
+    def explode(changed):
+        raise RuntimeError("this listener is broken")
+
+    store.connect(explode)
+    store.set("preview_theme", "cursor")
+    assert settings.Settings(path).get("preview_theme") == "cursor"
+
+
+def test_a_listener_may_disconnect_another_mid_broadcast(tmp_path):
+    # A controller torn down in response to something must not then be
+    # called by the broadcast it was already part of.
+    store = _store(tmp_path)
+    calls = []
+    tokens = {}
+
+    def first(changed):
+        calls.append("first")
+        store.disconnect(tokens["second"])
+
+    tokens["first"] = store.connect(first)
+    tokens["second"] = store.connect(lambda changed: calls.append("second"))
+    store.set("preview_theme", "cursor")
+    assert calls == ["first"]
+
+
+def test_a_listener_still_runs_when_the_write_failed(tmp_path):
+    # The change is live for the session either way; a listener that skipped
+    # its work here would leave the preview disagreeing with the setting the
+    # user just chose.
+    (tmp_path / "settings.json.tmp").mkdir()
+    store = _store(tmp_path)
+    seen = []
+    store.connect(seen.append)
+    store.set("preview_theme", "cursor")
+    assert seen == [frozenset({"preview_theme"})]
