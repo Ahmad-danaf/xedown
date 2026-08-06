@@ -2,7 +2,7 @@ import os
 import re
 
 import pytest
-from xedown import renderer
+from xedown import renderer, themes
 
 
 @pytest.fixture
@@ -157,9 +157,23 @@ def test_document_inlines_the_highlight_bundle_and_preview_script():
     assert "hljs" in page
 
 
-def test_dark_mode_selects_the_dark_theme():
-    assert 'class="dark"' in renderer.render_document("# Hi", dark=True, nonce="n")
-    assert 'class="light"' in renderer.render_document("# Hi", dark=False, nonce="n")
+def test_the_body_carries_both_the_appearance_and_the_theme():
+    dark = renderer.render_document("# Hi", dark=True, nonce="n")
+    light = renderer.render_document("# Hi", dark=False, nonce="n")
+    assert 'class="dark xedown-theme-repository"' in dark
+    assert 'class="light xedown-theme-repository"' in light
+
+
+def test_a_named_theme_inlines_that_theme_stylesheet():
+    page = renderer.render_document("# Hi", nonce="n", theme="repository")
+    assert 'class="light xedown-theme-repository"' in page
+    assert "--xedown-bg" in page
+
+
+def test_an_unknown_theme_falls_back_to_the_default_rather_than_failing():
+    page = renderer.render_document("# Hi", nonce="n", theme="no-such-theme")
+    assert f'xedown-theme-{themes.DEFAULT_THEME}"' in page
+    assert "--xedown-bg" in page
 
 
 def test_highlight_theme_code_padding_wins_over_preview_css():

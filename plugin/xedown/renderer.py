@@ -3,7 +3,7 @@
 import secrets
 import urllib.parse
 
-from . import errors, vendoring
+from . import errors, themes, vendoring
 from .links import REMOTE_SCHEMES, resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
@@ -21,21 +21,21 @@ _CSP = (
     "object-src 'none'"
 )
 
-# The highlight theme is emitted before preview.css, and preview.css carries
-# an override of at least equal specificity — see the comment above
-# `pre code.hljs` in preview.css for why this order (not just the extra
-# rule) is what makes the override actually win.
+# The stylesheet is assembled by `themes.assemble_css`: the syntax sheet
+# first, then preview.css, then the theme. preview.css carries an override
+# of at least equal specificity to the highlight theme's — see the comment
+# above `pre code.hljs` in preview.css for why that ordering, and not just
+# the extra rule, is what makes the override actually win.
 _DOCUMENT = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{csp}">
 <style nonce="{nonce}">
-{highlight_css}
-{preview_css}
+{stylesheet}
 </style>
 </head>
-<body class="{theme}">
+<body class="{appearance} xedown-theme-{theme}">
 <article class="xedown-document" id="{content_id}">
 {body}
 </article>
@@ -100,15 +100,18 @@ def render_fragment(text, base_dir=None):
     return sanitize(raw, resolve_uri=resolve, on_blocked_image=_on_blocked_image)
 
 
-def render_document(text, base_dir=None, dark=False, nonce=None):
-    """Build the complete preview page. Never raises — failures become a page."""
+def render_document(text, base_dir=None, dark=False, nonce=None, theme=None):
+    """Build the complete preview page. Never raises — failures become a page.
+
+    `theme` is a `themes` identifier. Anything unknown resolves to the
+    default rather than producing an unstyled page, and a theme whose own
+    stylesheet cannot be read falls back the same way; only a broken
+    *default* reaches the "Installation incomplete" page below.
+    """
     token = nonce or secrets.token_urlsafe(16)
     try:
         body = render_fragment(text, base_dir=base_dir)
-        highlight_css = vendoring.read_resource(
-            "highlight-dark.css" if dark else "highlight-light.css"
-        )
-        preview_css = vendoring.read_resource("preview.css")
+        stylesheet, theme_identifier = themes.assemble_css(theme, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
@@ -129,11 +132,11 @@ def render_document(text, base_dir=None, dark=False, nonce=None):
     return _DOCUMENT.format(
         csp=_CSP.format(nonce=token),
         nonce=token,
-        theme="dark" if dark else "light",
+        appearance="dark" if dark else "light",
+        theme=theme_identifier,
         content_id=CONTENT_ELEMENT_ID,
         body=body,
-        preview_css=preview_css,
-        highlight_css=highlight_css,
+        stylesheet=stylesheet,
         preview_js=preview_js,
         highlight_js=highlight_js,
     )

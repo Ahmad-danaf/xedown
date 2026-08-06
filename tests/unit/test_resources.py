@@ -3,7 +3,7 @@ import shutil
 import subprocess
 
 import pytest
-from xedown import vendoring
+from xedown import themes, vendoring
 
 # Text-bearing blocks that must pick up their own base direction and
 # start-relative alignment. `unicode-bidi` is not inherited, so this must be
@@ -54,9 +54,11 @@ def preview_css():
     return vendoring.read_resource("preview.css")
 
 
-def test_stylesheet_defines_both_themes(preview_css):
-    assert "--xedown-bg" in preview_css
-    assert "body.dark" in preview_css or ".dark" in preview_css
+@pytest.mark.parametrize("identifier", [t.identifier for t in themes.THEMES])
+def test_every_theme_defines_a_light_and_a_dark_palette(identifier):
+    css = vendoring.read_resource(themes.resolve(identifier).stylesheet)
+    assert "--xedown-bg" in css
+    assert "body.dark" in css
 
 
 def test_stylesheet_caps_the_document_width(preview_css):

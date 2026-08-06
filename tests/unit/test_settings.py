@@ -38,18 +38,24 @@ def test_an_unknown_setting_name_is_a_programming_error():
 
 
 def test_content_width_default_still_matches_the_live_stylesheet():
+    # preview.css exposes this as the --xedown-content-width custom property
+    # (consumed via calc() in .xedown-document's max-width) rather than as a
+    # literal max-width, so that a theme's own measure-scale can multiply it.
     css = PREVIEW_CSS.read_text(encoding="utf-8")
     expected = settings.defaults()["content_width_rem"]
-    assert f"max-width: {expected:g}rem;" in css, (
+    assert f"--xedown-content-width: {expected:g}rem;" in css, (
         "the default must stay today's value; if preview.css changed "
         "deliberately, change the default with it"
     )
 
 
 def test_text_size_default_still_matches_the_live_stylesheet():
+    # Same indirection as above, via --xedown-text-size and a theme's
+    # text-scale, and declared on :root rather than body -- see the comment
+    # above :root in preview.css for why.
     css = PREVIEW_CSS.read_text(encoding="utf-8")
     expected = settings.defaults()["text_size_px"]
-    assert f"font-size: {expected:g}px;" in css
+    assert f"--xedown-text-size: {expected:g}px;" in css
 
 
 def test_refresh_delay_default_still_matches_the_live_constant():
