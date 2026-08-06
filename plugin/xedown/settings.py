@@ -7,7 +7,11 @@ rather than failing the load. That file belongs to the user, and a broken one
 must never stop the plugin from working.
 """
 
+import json
 import math
+import os
+import pathlib
+import sys
 
 DEFAULT_MODE = "default_mode"
 REMEMBER_MODE_PER_FILE = "remember_mode_per_file"
@@ -145,3 +149,77 @@ def by_name(name):
 def defaults():
     """A fresh dict of every setting's default value."""
     return {setting.name: setting.default for setting in SETTINGS}
+
+
+class Settings:
+    """The user's settings: loaded once, written through on change.
+
+    Everything here runs on the GTK main thread, so there is no locking.
+    """
+
+    def __init__(self, path):
+        self.path = pathlib.Path(path)
+        self._values = defaults()
+        self._load()
+
+    # --- loading -----------------------------------------------------------
+
+    def get(self, name):
+        """The current value of `name`. An unknown name is a programming error."""
+        by_name(name)
+        return self._values[name]
+
+    def _load(self):
+        try:
+            text = self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            self._quarantine(f"could not be read ({exc})")
+            return
+
+        if not text.strip():
+            # A blank file is what a truncated write leaves behind. There is
+            # nothing in it worth preserving, so it means "no settings yet"
+            # rather than corruption, and produces no quarantine noise.
+            return
+
+        try:
+            stored = json.loads(text)
+        except ValueError as exc:
+            self._quarantine(f"is not valid JSON ({exc})")
+            return
+
+        if not isinstance(stored, dict):
+            self._quarantine("does not contain a JSON object")
+            return
+
+        for name, value in stored.items():
+            setting = _BY_NAME.get(name)
+            if setting is not None:
+                # A misspelled key is simply not one of ours, and is left
+                # alone rather than treated as a failure.
+                self._values[name], _ = setting.coerce(value)
+
+    def _quarantine(self, reason):
+        """Move a store we cannot use aside, keeping the user's copy.
+
+        The name is fixed rather than timestamped, so a second corruption
+        overwrites the first preserved copy. That keeps the config directory
+        from growing without bound and gives the preferences window a path it
+        can always quote. Failing to move it is survivable — the defaults are
+        already in memory either way.
+        """
+        target = self.path.with_name(self.path.name + ".corrupt")
+        try:
+            os.replace(self.path, target)
+        except OSError as exc:
+            sys.stderr.write(
+                f"xedown: {self.path} {reason}; using defaults "
+                f"(it could not be moved aside: {exc})\n"
+            )
+            return
+        sys.stderr.write(
+            f"xedown: {self.path} {reason}; using defaults. "
+            f"Your copy was kept at {target}\n"
+        )

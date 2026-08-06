@@ -181,3 +181,136 @@ def test_a_stylesheet_path_is_kept_exactly_as_written(given, expected):
 @pytest.mark.parametrize("given", [42, True, ["/a"], {"path": "/a"}])
 def test_a_non_string_stylesheet_value_is_refused(given):
     assert settings.by_name("custom_stylesheet").coerce(given) == (None, False)
+
+
+def _store(tmp_path, text=None):
+    """A Settings over tmp_path/settings.json, optionally pre-seeded."""
+    path = tmp_path / "settings.json"
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    return settings.Settings(path)
+
+
+def test_a_missing_file_gives_defaults_and_creates_nothing(tmp_path):
+    store = _store(tmp_path)
+    assert store.get("preview_theme") == "github"
+    assert not (tmp_path / "settings.json").exists()
+
+
+def test_a_stored_value_is_used(tmp_path):
+    store = _store(tmp_path, '{"preview_theme": "cursor"}')
+    assert store.get("preview_theme") == "cursor"
+
+
+def test_the_store_reads_the_file_only_once(tmp_path):
+    store = _store(tmp_path, '{"preview_theme": "cursor"}')
+    (tmp_path / "settings.json").write_text(
+        '{"preview_theme": "minimal"}', encoding="utf-8"
+    )
+    assert store.get("preview_theme") == "cursor"
+
+
+def test_getting_an_unknown_setting_raises(tmp_path):
+    with pytest.raises(KeyError):
+        _store(tmp_path).get("who_knows")
+
+
+@pytest.mark.parametrize("text", ["", "\n", "   \n  \t\n"])
+def test_a_blank_file_is_not_treated_as_corruption(tmp_path, text):
+    # Nothing in it to preserve, and this is exactly what a truncated write
+    # or a `: > settings.json` leaves behind.
+    store = _store(tmp_path, text)
+    assert store.get("preview_theme") == "github"
+    assert not (tmp_path / "settings.json.corrupt").exists()
+
+
+@pytest.mark.parametrize(
+    "text", ['{"preview_theme": "cursor"', "not json at all", '{"a": }', "{"]
+)
+def test_unparseable_json_is_quarantined(tmp_path, text):
+    store = _store(tmp_path, text)
+    assert store.get("preview_theme") == "github"
+    assert (tmp_path / "settings.json.corrupt").read_text(encoding="utf-8") == text
+    assert not (tmp_path / "settings.json").exists()
+
+
+@pytest.mark.parametrize("text", ["[]", '"github"', "42", "null", "true"])
+def test_json_that_is_not_an_object_is_quarantined(tmp_path, text):
+    store = _store(tmp_path, text)
+    assert store.get("preview_theme") == "github"
+    assert (tmp_path / "settings.json.corrupt").read_text(encoding="utf-8") == text
+
+
+def test_an_unreadable_store_falls_back_to_defaults(tmp_path):
+    # A directory where the file belongs. Chosen over chmod because it fails
+    # for root too, so the test cannot pass by accident on a runner that
+    # happens to be root.
+    path = tmp_path / "settings.json"
+    path.mkdir()
+    assert settings.Settings(path).get("preview_theme") == "github"
+
+
+def test_the_quarantine_message_names_both_paths(tmp_path, capsys):
+    path = tmp_path / "settings.json"
+    path.write_text("{oops", encoding="utf-8")
+    settings.Settings(path)
+    message = capsys.readouterr().err
+    assert str(path) in message
+    assert str(path) + ".corrupt" in message
+
+
+def test_a_second_corruption_replaces_the_first_preserved_copy(tmp_path):
+    # A deliberate tradeoff, pinned here so changing it is a decision rather
+    # than an accident: a fixed name keeps the config directory from growing
+    # without bound and gives the preferences window a path it can always
+    # quote.
+    path = tmp_path / "settings.json"
+    path.write_text("first broken copy", encoding="utf-8")
+    settings.Settings(path)
+    path.write_text("second broken copy", encoding="utf-8")
+    settings.Settings(path)
+    preserved = tmp_path / "settings.json.corrupt"
+    assert preserved.read_text(encoding="utf-8") == "second broken copy"
+
+
+def test_unknown_keys_are_ignored_without_quarantine(tmp_path):
+    store = _store(tmp_path, '{"preview_theme": "cursor", "who_knows": 1}')
+    assert store.get("preview_theme") == "cursor"
+    assert not (tmp_path / "settings.json.corrupt").exists()
+
+
+def test_a_wrong_typed_value_defaults_without_touching_its_neighbours(tmp_path):
+    store = _store(tmp_path, '{"auto_refresh": "yes", "preview_theme": "minimal"}')
+    assert store.get("auto_refresh") is True
+    assert store.get("preview_theme") == "minimal"
+
+
+def test_an_out_of_range_value_is_clamped_on_load(tmp_path):
+    store = _store(tmp_path, '{"content_width_rem": 5000, "text_size_px": 2}')
+    assert store.get("content_width_rem") == 100.0
+    assert store.get("text_size_px") == 11.0
+
+
+def test_a_mis_cased_choice_is_accepted_on_load(tmp_path):
+    store = _store(tmp_path, '{"preview_theme": "GitHub"}')
+    assert store.get("preview_theme") == "github"
+
+
+def test_a_hand_edited_disaster_still_loads(tmp_path):
+    # Every failure mode at once: wrong types, out of range, a misspelled
+    # key, a mis-cased choice. None of it may stop the plugin loading.
+    broken = {
+        "default_mode": "Markdown",
+        "auto_refresh": "no",
+        "content_width_rem": "wide",
+        "text_size_px": 9999,
+        "refresh_dely_ms": 10,
+        "custom_stylesheet": 42,
+    }
+    store = _store(tmp_path, json.dumps(broken))
+    assert store.get("default_mode") == "markdown"
+    assert store.get("auto_refresh") is True
+    assert store.get("content_width_rem") == 46.0
+    assert store.get("text_size_px") == 28.0
+    assert store.get("refresh_delay_ms") == 250
+    assert store.get("custom_stylesheet") is None
