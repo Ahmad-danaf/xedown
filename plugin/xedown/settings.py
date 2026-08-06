@@ -112,7 +112,7 @@ class PathSetting(_Setting):
         if value is None:
             return None, True
         if not isinstance(value, str):
-            return None, False
+            return self.default, False
         # Deliberately not resolved, and `~` deliberately not expanded:
         # brief 3 owns turning this into a file, and storing a resolved value
         # would make the setting misreport what the user actually chose.
@@ -188,6 +188,10 @@ class Settings:
         # the escape happened before the quarantine, the same file broke every
         # subsequent launch too. The guarantee this module owes is absolute,
         # so it must not depend on having named every exception correctly.
+        # The rule that follows from it: use a broad handler wherever
+        # untrusted DATA flows, not merely wherever untrusted I/O happens.
+        # The fourth escape (`json.dumps` in `_write`) survived three rounds
+        # of fixes precisely because each fix asked which call read the file.
         try:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -292,13 +296,32 @@ class Settings:
         preferences window can tell the user rather than leaving a mystery.
         """
         merged = self._stored_on_disk()
-        merged.update({name: self._values[name] for name in self._dirty})
+        own = self._own_settings()
+        for name in self._dirty:
+            if name in own:
+                merged[name] = own[name]
+            else:
+                # A key sitting at its default is written as absent rather
+                # than as an explicit default. That is what makes "anything
+                # absent uses its default" stay true after `reset()`, and it
+                # means a user who resets still receives a changed default in
+                # a later release instead of being pinned to today's.
+                merged.pop(name, None)
+        try:
+            payload = json.dumps(merged, indent=2, sort_keys=True) + "\n"
+        except Exception:  # noqa: BLE001 - merged carries untrusted content
+            # Readable, parseable, a valid object -- and still impossible to
+            # re-serialise. `json.dumps(indent=...)` uses the pure-Python
+            # encoder, which recurses roughly ten times more per nesting
+            # level than the C scanner behind `json.loads`, so a store can
+            # load, correctly escape quarantine, and blow the stack here.
+            # Keep our own keys rather than let the user's file block every
+            # save from now on.
+            payload = json.dumps(own, indent=2, sort_keys=True) + "\n"
         temp = self.path.with_name(self.path.name + ".tmp")
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp.write_text(
-                json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-            )
+            temp.write_text(payload, encoding="utf-8")
             # Atomic within one filesystem, so a crash mid-write cannot
             # leave a half-written store behind.
             os.replace(temp, self.path)
@@ -311,6 +334,19 @@ class Settings:
                 pass
             return
         self.write_error = None
+
+    def _own_settings(self):
+        """This instance's own settings that differ from their default.
+
+        Every value here came from `coerce`, so it is a scalar: a str, bool,
+        int, float or None. That is what makes it a safe fallback payload
+        when the merged content cannot be serialised.
+        """
+        return {
+            name: self._values[name]
+            for name in self._dirty
+            if self._values[name] != by_name(name).default
+        }
 
     def _stored_on_disk(self):
         """The file's current contents, or `{}` when it cannot be used.

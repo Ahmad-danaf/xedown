@@ -65,13 +65,13 @@ class TabController:
                 pass
         self._handlers = []
 
-        if self.theme_watcher is not None:
-            self.theme_watcher.disconnect()
-            self.theme_watcher = None
-
         if self._settings_token is not None:
             settings.get_settings().disconnect(self._settings_token)
             self._settings_token = None
+
+        if self.theme_watcher is not None:
+            self.theme_watcher.disconnect()
+            self.theme_watcher = None
 
         self._dismiss_info_bar()
 

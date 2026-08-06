@@ -451,6 +451,49 @@ def test_a_write_survives_the_file_being_replaced_underneath(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "cursor"}
 
 
+def test_a_write_survives_json_too_deep_to_re_serialise(tmp_path):
+    # Valid JSON, a valid object, correctly NOT quarantined -- and still
+    # impossible to re-serialise. json.dumps(indent=...) uses the pure-Python
+    # encoder, which recurses about ten times more per level than the C
+    # scanner behind json.loads, so roughly 1,000-10,000 levels load fine and
+    # then blow the stack on write. The sibling test above uses 20,000 levels,
+    # which fails at *load* instead -- it never reaches the encoder at all.
+    store = _store(tmp_path)
+    path = tmp_path / "settings.json"
+    path.write_text('{"note": ' + "[" * 1200 + "1" + "]" * 1200 + "}", encoding="utf-8")
+    assert store.set("preview_theme", "cursor") is True
+    assert json.loads(path.read_text(encoding="utf-8")) == {"preview_theme": "cursor"}
+
+
+def test_a_key_returned_to_its_default_is_written_as_absent(tmp_path):
+    # "Anything absent uses its default" is the documented contract, so a
+    # value back at its default is stored as absence rather than as an
+    # explicit default -- which is also what lets a later release change a
+    # default for users who have reset.
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+    store.set("preview_theme", "cursor")
+    store.set("preview_theme", "github")
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+
+def test_reset_leaves_no_settings_behind_in_the_file(tmp_path):
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+    store.set_many({"preview_theme": "cursor", "text_size_px": 22})
+    store.reset()
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+
+def test_reset_does_not_disturb_keys_this_version_does_not_know(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text('{"who_knows": "keep me"}', encoding="utf-8")
+    store = settings.Settings(path)
+    store.set("preview_theme", "cursor")
+    store.reset()
+    assert json.loads(path.read_text(encoding="utf-8")) == {"who_knows": "keep me"}
+
+
 def test_a_failed_write_keeps_the_value_and_records_why(tmp_path):
     # A directory sitting exactly where the temp file must go. Chosen over
     # chmod because it fails for root too. This deliberately couples the
