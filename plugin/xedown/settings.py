@@ -83,7 +83,11 @@ class NumberSetting(_Setting):
             return self.default, False
         # json.loads accepts the literals NaN, Infinity and -Infinity by
         # default. None of the three can be clamped into a usable range.
-        if math.isnan(value) or math.isinf(value):
+        # Guarded to floats on purpose: JSON integers are unbounded, and
+        # `math.isnan`/`isinf` raise OverflowError on an int too large to
+        # convert to a C double -- which would turn a hand-edited setting
+        # into a crash. An int can never be NaN or infinite anyway.
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
             return self.default, False
         clamped = min(max(value, self.minimum), self.maximum)
         # `round` with one argument already returns an int. Do not wrap it in

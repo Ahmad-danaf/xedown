@@ -147,6 +147,23 @@ def test_a_non_number_falls_back_to_the_default(given):
 
 
 @pytest.mark.parametrize(
+    "name,given,expected",
+    [
+        ("content_width_rem", 10**400, 100.0),
+        ("content_width_rem", -(10**400), 30.0),
+        ("refresh_delay_ms", 10**400, 2000),
+        ("text_size_px", -(10**400), 11.0),
+    ],
+)
+def test_an_enormous_integer_is_clamped_rather_than_crashing(name, given, expected):
+    # JSON integers are unbounded, so a hand-edited file can hold one too
+    # large to convert to a C double. `math.isnan`/`isinf` raise
+    # OverflowError on those, which would turn a bad setting into a crash --
+    # the one thing this module exists to prevent.
+    assert settings.by_name(name).coerce(given) == (expected, True)
+
+
+@pytest.mark.parametrize(
     "given,expected",
     [
         ("/home/me/style.css", "/home/me/style.css"),
