@@ -12,6 +12,11 @@ the settings window that will edit them, have one place to look.
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
 
+xedown reads this file when it starts, so a change you make by hand takes
+effect the next time xed starts. Nothing watches the file: the preferences
+window that will apply a change to open previews as you make it is still to
+come.
+
 | Key | Values | Default |
 | --- | --- | --- |
 | `default_mode` | `preview`, `markdown` | `preview` |
@@ -36,8 +41,10 @@ multiply them by — see [themes.md](themes.md) — so the number you set is not
 always the number rendered. `document`, for instance, renders a narrower column
 than its base width alone would suggest.
 
-`custom_stylesheet` is applied on top of the selected theme, and the file
-itself is watched: saving an edit to it updates every open preview.
+`custom_stylesheet` is applied on top of the selected theme, and the stylesheet
+it points at is the one thing here that *is* watched: saving an edit to that
+file updates every open preview straight away. Changing which file this setting
+names is an ordinary settings change, and needs a restart like the rest.
 [themes.md](themes.md) covers what a custom stylesheet can and cannot do —
 in particular that nothing in it can reach the network.
 
@@ -61,8 +68,7 @@ preview's content security policy enforces that rather than trusting the
 setting. `hidden` hides the message, not the reason for it.
 
 `code_copy_buttons` shows a copy button in the corner of every code block.
-Set it to `false` and the buttons vanish from every open preview
-immediately — no restart, no reopening the file.
+Set it to `false` to remove them.
 
 `text_direction` decides which way the **document** lays out. `auto`, the
 default, counts the strong right-to-left and left-to-right characters in the
@@ -111,8 +117,8 @@ still applies for the rest of the session; it just will not survive a restart.
 
 - Settings are global. There are no per-file or per-window settings.
 - All of xed's windows normally share one process, so a change applies to every
-  open tab in every window immediately. `xed --standalone` starts a second
-  process: neither process will overwrite the other's saved settings, but a
-  running second process will not see a change until it restarts.
+  open tab in every window at once — on the next start, as above. `xed
+  --standalone` starts a second process: neither process will overwrite the
+  other's saved settings, and each picks up a change when it next starts.
 - `XEDOWN_CONFIG_DIR` overrides the location entirely. The live test harnesses
   set it so a test run cannot touch your real settings.
