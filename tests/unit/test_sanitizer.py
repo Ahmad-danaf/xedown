@@ -1,5 +1,5 @@
 import pytest
-from xedown.sanitizer import sanitize
+from xedown.sanitizer import ImagePlaceholder, sanitize
 
 
 def test_keeps_ordinary_markup():
@@ -161,63 +161,90 @@ def test_resolver_hook_never_sees_a_rejected_scheme():
     assert seen == []
 
 
-def test_without_on_blocked_image_hook_remote_src_is_unchanged():
-    # Existing behavior must survive: with no `on_blocked_image` callback,
-    # `resolve_uri`'s return value (here left as-is) is emitted verbatim,
-    # even for a remote reference. The blocked-image behavior is opt-in.
-    result = sanitize('<img src="https://example.com/x.png">')
-    assert 'src="https://example.com/x.png"' in result
+def test_without_an_on_image_hook_an_img_is_emitted_unchanged():
+    result = sanitize('<img src="https://example.com/a.png" alt="A">')
+    assert "<img" in result
     assert "xedown-image-error" not in result
 
 
-def test_on_blocked_image_hook_replaces_a_remote_image_with_a_placeholder():
+def test_on_image_may_return_a_replacement_src():
     result = sanitize(
-        '<img src="https://example.com/x.png" alt="x">',
-        resolve_uri=lambda name, value: value,  # remote passes through unchanged
-        on_blocked_image=lambda uri: "blocked: " + uri,
+        '<img src="a.png" alt="A" title="T">',
+        on_image=lambda reference, alt: "file:///x/a.png",
     )
+    assert 'src="file:///x/a.png"' in result
+    assert 'alt="A"' in result
+    assert 'title="T"' in result
+
+
+def test_on_image_may_return_a_placeholder():
+    result = sanitize(
+        '<img src="https://e/a.png" alt="A">',
+        on_image=lambda reference, alt: ImagePlaceholder("error", "no: " + reference),
+    )
+    assert '<span class="xedown-image-error">no: https://e/a.png</span>' in result
     assert "<img" not in result
+
+
+def test_the_alt_kind_gets_its_own_class():
+    result = sanitize(
+        '<img src="https://e/a.png" alt="A logo">',
+        on_image=lambda reference, alt: ImagePlaceholder("alt", alt),
+    )
+    assert '<span class="xedown-image-alt">A logo</span>' in result
+
+
+def test_an_unknown_placeholder_kind_falls_back_to_the_error_class():
+    result = sanitize(
+        '<img src="a.png">',
+        on_image=lambda reference, alt: ImagePlaceholder("nonsense", "t"),
+    )
     assert 'class="xedown-image-error"' in result
-    assert "blocked: https://example.com/x.png" in result
 
 
-def test_on_blocked_image_hook_replaces_an_unresolvable_image_with_a_placeholder():
+def test_on_image_may_return_nothing_at_all():
+    result = sanitize(
+        '<img src="https://e/a.png" alt="A">', on_image=lambda reference, alt: None
+    )
+    assert "img" not in result
+    assert "span" not in result
+
+
+def test_on_image_receives_the_reference_and_the_alt_text():
+    seen = []
+
+    def record(reference, alt):
+        seen.append((reference, alt))
+
+    sanitize('<img src="pics/a.png" alt="Company logo">', on_image=record)
+    assert seen == [("pics/a.png", "Company logo")]
+
+
+def test_placeholder_text_is_escaped():
     result = sanitize(
         '<img src="a.png">',
-        resolve_uri=lambda name, value: None,  # e.g. no base directory
-        on_blocked_image=lambda uri: "missing: " + uri,
-    )
-    assert "<img" not in result
-    assert "missing: a.png" in result
-
-
-def test_on_blocked_image_hook_leaves_a_resolved_local_image_alone():
-    result = sanitize(
-        '<img src="a.png">',
-        resolve_uri=lambda name, value: "file:///base/" + value,
-        on_blocked_image=lambda uri: "blocked",
-    )
-    assert 'src="file:///base/a.png"' in result
-    assert "xedown-image-error" not in result
-
-
-def test_on_blocked_image_hook_leaves_a_data_image_alone():
-    result = sanitize(
-        '<img src="data:image/png;base64,iVBORw0KGgo=">',
-        on_blocked_image=lambda uri: "blocked",
-    )
-    assert 'src="data:image/png;base64,iVBORw0KGgo="' in result
-    assert "xedown-image-error" not in result
-
-
-def test_on_blocked_image_hook_output_is_escaped():
-    result = sanitize(
-        '<img src="a.png">',
-        resolve_uri=lambda name, value: None,
-        on_blocked_image=lambda uri: "<script>alert(1)</script>",
+        on_image=lambda reference, alt: ImagePlaceholder(
+            "error", "<script>alert(1)</script>"
+        ),
     )
     assert "<script>" not in result
     assert "&lt;script&gt;" in result
+
+
+def test_an_img_whose_src_fails_the_scheme_allowlist_emits_nothing():
+    calls = []
+
+    def record(reference, alt):
+        calls.append(reference)
+        return "x"
+
+    result = sanitize('<img src="javascript:alert(1)" alt="A">', on_image=record)
+    assert result == ""
+    assert calls == []
+
+
+def test_an_img_with_no_src_at_all_emits_nothing():
+    assert sanitize('<img alt="A">', on_image=lambda reference, alt: "x") == ""
 
 
 def test_content_cannot_spoof_the_image_error_placeholder_class():

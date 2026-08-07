@@ -6,7 +6,7 @@ import urllib.parse
 from . import errors, stylesheets, themes, vendoring
 from .links import REMOTE_SCHEMES, resolve_to_uri
 from .mdext import make_extensions
-from .sanitizer import sanitize
+from .sanitizer import ImagePlaceholder, sanitize
 
 CONTENT_ELEMENT_ID = "xedown-content"
 
@@ -59,13 +59,17 @@ def _build_converter():
     )
 
 
-def _on_blocked_image(uri):
-    """Placeholder text for an <img> src the sanitizer refused to emit.
+def _on_blocked_image(uri, _alt):
+    """Placeholder for an <img> src that could not be resolved locally.
 
     `uri` is the original reference (a `#`-free, already-safety-checked
     value) that either resolved to a remote scheme or failed to resolve to a
     local file at all. Which wording applies is decided here, from the
     reference itself, so the sanitizer stays free of user-facing copy.
+
+    This is a temporary shim: it does not distinguish a missing local image
+    from an unreadable one — both currently read as "unresolved". Task 5
+    replaces it with a callback that stats the file to tell them apart.
     """
     try:
         scheme = urllib.parse.urlparse(uri).scheme.lower()
@@ -75,19 +79,20 @@ def _on_blocked_image(uri):
         # "unresolved local" wording rather than crashing the render.
         scheme = ""
     if scheme in REMOTE_SCHEMES:
-        return errors.remote_image_text(uri)
-    return errors.local_image_unresolved_text(uri)
+        return ImagePlaceholder("error", errors.remote_image_text(uri))
+    return ImagePlaceholder("error", errors.local_image_unresolved_text(uri))
 
 
 def render_fragment(text, base_dir=None):
     """Convert Markdown to sanitized body HTML with absolute URIs.
 
     URI resolution happens inside the sanitizer's single structural pass:
-    `resolve_uri` turns a relative href/src into an absolute `file://` URI
-    (or leaves a remote/anchor target alone), and `on_blocked_image` — the
-    controller's amendment for images specifically — replaces an `<img>`
-    whose src is remote or unresolvable with a visible placeholder instead
-    of emitting a tag that would never load.
+    `resolve_uri` turns a relative href into an absolute `file://` URI (or
+    leaves a remote/anchor target alone), and `on_image` — the controller's
+    amendment for images specifically — decides each `<img>` for itself:
+    a reference that resolves to a local `file:`/`data:` URI is rendered,
+    and anything remote or unresolvable becomes a visible placeholder
+    instead of a tag that would never load.
     """
     converter = _build_converter()
     raw = converter.convert(text or "")
@@ -97,7 +102,17 @@ def render_fragment(text, base_dir=None):
             return value
         return resolve_to_uri(value, base_dir)
 
-    return sanitize(raw, resolve_uri=resolve, on_blocked_image=_on_blocked_image)
+    def on_image(reference, alt):
+        # Temporary shim standing in for Task 5: try the same local
+        # resolution `resolve_uri` performs for other attributes, and fall
+        # back to a placeholder — with no missing/unreadable distinction
+        # yet — when that fails.
+        resolved = resolve_to_uri(reference, base_dir)
+        if resolved is not None and resolved.lower().startswith(("file:", "data:")):
+            return resolved
+        return _on_blocked_image(reference, alt)
+
+    return sanitize(raw, resolve_uri=resolve, on_image=on_image)
 
 
 def render_document(text, base_dir=None, dark=False, nonce=None, style=None):
