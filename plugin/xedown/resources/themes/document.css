@@ -22,6 +22,7 @@
   --xedown-error-bg: #fbeeea;
   --xedown-error-fg: #96301c;
   --xedown-error-border: #ecc9bd;
+  --xedown-shadow: rgba(51, 42, 32, .2);
   --xedown-syn-comment: #6b645e;
   --xedown-syn-keyword: #8c3a1a;
   --xedown-syn-string: #3d6b3f;
@@ -51,6 +52,7 @@ body.dark {
   --xedown-error-bg: #322019;
   --xedown-error-fg: #f0aa96;
   --xedown-error-border: #4f342b;
+  --xedown-shadow: rgba(0, 0, 0, .55);
   --xedown-syn-comment: #9b9287;
   --xedown-syn-keyword: #e0a06a;
   --xedown-syn-string: #a8c9a0;

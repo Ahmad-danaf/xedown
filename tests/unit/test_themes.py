@@ -22,6 +22,11 @@ REQUIRED_COLOUR_TOKENS = (
     "--xedown-error-bg",
     "--xedown-error-fg",
     "--xedown-error-border",
+    # Decorative, not text: it paints the edge shadow that tells a reader a
+    # table continues past the visible edge. Not contrast-gated for that
+    # reason, but still required of every theme -- a theme without it would
+    # silently lose the cue.
+    "--xedown-shadow",
 )
 
 REQUIRED_SCALE_TOKENS = ("--xedown-measure-scale", "--xedown-text-scale")
