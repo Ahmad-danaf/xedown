@@ -24,6 +24,8 @@ Markdown modes inside the same tab.
   restart required. Every theme's text is held to WCAG AA contrast in both
   appearances, with one documented exception — see
   [docs/themes.md](docs/themes.md).
+- Adjustable content width and text size, and your own stylesheet layered over
+  the built-in theme.
 - Preview and Markdown modes switch in place, in the same tab. Preview is the
   default for a Markdown file. Each mode remembers its own scroll position,
   and the underlying text buffer is never touched, so switching modes never
@@ -115,10 +117,15 @@ and viewing never changes the file.
   the plugin can fix or avoid; save before dragging tabs between windows.
   Details and the stack trace are in
   [docs/known-issues.md](docs/known-issues.md).
-- Preview themes are chosen by editing `~/.config/xedown/settings.json`, and
-  the change takes effect the next time xed starts. The settings window
-  that will edit them, and apply a change to open previews immediately, is not
-  in this release.
+- Appearance settings — the theme, content width, text size and custom
+  stylesheet — are chosen by editing `~/.config/xedown/settings.json`, and
+  xedown reads that file once when xed starts. The settings window that will
+  edit them, and apply a change to open previews immediately, is not in this
+  release. The one exception is the custom stylesheet **file**: its contents
+  are watched, so saving an edit to it updates open previews straight away.
+- A custom stylesheet cannot load anything from the network, and cannot load a
+  font file even from your own disk — install the font and name it instead.
+  See [docs/themes.md](docs/themes.md).
 
 ## Documentation
 

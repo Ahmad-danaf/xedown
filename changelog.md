@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Your own stylesheet on top of the built-in theme. Point `custom_stylesheet`
+  at a CSS file in `~/.config/xedown/settings.json`; saving an edit to that
+  file updates every open preview. If the file is missing, unreadable, empty,
+  over 512 KiB or otherwise unusable, the preview keeps working on the built-in
+  theme and a bar at the top says which file is at fault and why. Nothing in a
+  stylesheet can reach the network — web fonts and `@import` silently do
+  nothing, by design. See [docs/themes.md](docs/themes.md).
+- Content width and text size, as `content_width_rem` (30–100, default 46) and
+  `text_size_px` (11–28, default 16). Text size scales the whole document
+  together rather than only the body text. Both defaults reproduce 0.1.0
+  exactly.
 - Four preview themes — **Focused**, **Repository**, **Minimal** and
   **Document** — each a complete design rather than a recolour, and each with a
   full light and dark palette that keeps following your desktop. Choose one

@@ -58,14 +58,16 @@ terminal is itself one of the checks.
 Two ready-made documents in `tests/fixtures/` give the checklist below something
 concrete to open. Use `tests/fixtures/showcase.md` for everything that should render
 and behave correctly — every mode-switching, editing and window-management row, plus
-rows 13–15. Use `tests/fixtures/edge-cases.md` specifically for rows 16 and 17
-(missing and remote images): its broken references are deliberate test cases, not
-mistakes — see `tests/fixtures/README.md` before changing anything in it. While
-`edge-cases.md` is open, it is also worth glancing over its basic bidirectional-text
-cases (an Arabic paragraph, heading, list, table, blockquote, and a Python fence with
-Arabic comments that must stay left-to-right) and its demonstration of the known GFM
-paragraph/list gap tracked in `docs/known-issues.md` — neither has its own numbered
-row, but both are real content in that file and worth a look while it is on screen.
+rows 13–15 and rows 32–34. Use `tests/fixtures/edge-cases.md` specifically for rows
+16 and 17 (missing and remote images): its broken references are deliberate test
+cases, not mistakes — see `tests/fixtures/README.md` before changing anything in it.
+While `edge-cases.md` is open, it is also worth glancing over its basic
+bidirectional-text cases (an Arabic paragraph, heading, list, table, blockquote, and
+a Python fence with Arabic comments that must stay left-to-right) and its
+demonstration of the known GFM paragraph/list gap tracked in `docs/known-issues.md`
+— neither has its own numbered row, but both are real content in that file and
+worth a look while it is on screen. Rows 32–34 also need a scratch stylesheet at
+`~/.config/xedown/mine.css`, which row 36 removes.
 
 | # | Step | Expected |
 | --- | --- | --- |
@@ -100,8 +102,11 @@ row, but both are real content in that file and worth a look while it is on scre
 | 29 | Open a second window with Markdown files | Both windows work independently |
 | 30 | Disable the plugin from *Preferences → Plugins* while Preview is active, then re-enable it | Source editor returns in every tab on disable, with no warnings; Preview works again on re-enable |
 | 31 | Drag a Markdown tab out into its own window (or *Documents → Move to New Window*) while Preview is active | Mode bar and preview arrive intact in the new window — this used to silently strand the tab in plain Source mode with no way back |
-| 32 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
-| 33 | Clean up: remove `preview_theme` from `~/.config/xedown/settings.json` (or set it back to `"repository"`) | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
+| 32 | Create `~/.config/xedown/mine.css` containing `body { background: #101820; }`, set `"custom_stylesheet": "~/.config/xedown/mine.css"` in `settings.json`, restart xed and open `tests/fixtures/showcase.md` | The preview background is that colour rather than the theme's — the stylesheet is layered over the theme, not replacing it |
+| 33 | With that preview still open, open `mine.css` in xed itself, change the colour to `#201810` and save | The open preview changes colour within a moment. No restart, no reopening the document, no flicker of the wrong content |
+| 34 | Delete `mine.css` from a terminal while the preview is still open | Within a moment the preview returns to the built-in theme, with a bar at the top of the page naming `mine.css` and saying it was not found. The document is still fully rendered below the bar |
+| 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
+| 36 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem` and `text_size_px` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

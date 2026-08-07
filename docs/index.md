@@ -12,8 +12,9 @@
   against
 - Settings — [settings.md](settings.md), the settings file's location, keys,
   defaults and recovery behaviour
-- Preview themes — [themes.md](themes.md), the four built-in themes, how to
-  choose one, and the contrast policy. `scripts/render-themes.sh` renders every
-  fixture in every theme, light and dark, for review in a browser
+- Preview appearance — [themes.md](themes.md), the four built-in themes, your
+  own stylesheet, content width and text size, and the contrast policy.
+  `scripts/render-themes.sh` renders every fixture in every theme, light and
+  dark, plus the extremes of width and size, for review in a browser
 - Architecture — planned
 - Troubleshooting — planned

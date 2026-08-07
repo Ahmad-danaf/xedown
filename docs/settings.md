@@ -3,7 +3,8 @@
 xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
-**Most of these values have no consumer yet.** `preview_theme` is read as of
+**Most of these values have no consumer yet.** `preview_theme`,
+`custom_stylesheet`, `content_width_rem` and `text_size_px` are read as of
 v0.2 — see [themes.md](themes.md). The rest exist so that the features that use
 them, and the settings window that will edit them, have one place to look.
 
@@ -28,13 +29,16 @@ has no file at all. Anything absent uses its default.
 Most of these defaults reproduce xedown 0.1.0 exactly: the preview keeps the
 same look, width, text size, refresh timing and starting mode.
 
-`content_width_rem` and `text_size_px` are two of the values with no consumer
-yet, and when a later release does read them, they will describe a **base**
-value rather than the rendered result: every theme already declares its own
-measure and text scale to multiply them by — see [themes.md](themes.md) — so
-the number you set will not be the number rendered. `document`, for instance,
-is already built to render a narrower column than its base width alone would
-suggest.
+`content_width_rem` and `text_size_px` describe a **base** value rather than
+the rendered result: every theme declares its own measure and text scale to
+multiply them by — see [themes.md](themes.md) — so the number you set is not
+always the number rendered. `document`, for instance, renders a narrower column
+than its base width alone would suggest.
+
+`custom_stylesheet` is applied on top of the selected theme, and the file
+itself is watched: saving an edit to it updates every open preview.
+[themes.md](themes.md) covers what a custom stylesheet can and cannot do —
+in particular that nothing in it can reach the network.
 
 Three have no v0.1 equivalent, because the capability did not exist in v0.1 —
 `code_copy_buttons`, `remember_mode_per_file` and `watch_external_changes`.
