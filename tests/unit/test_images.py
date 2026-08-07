@@ -76,7 +76,7 @@ def test_a_file_that_cannot_be_opened_is_unreadable(tmp_path, image):
 
 
 def test_malformed_input_never_raises_and_is_never_shown(tmp_path):
-    for reference in ("a\x00b.png", "http://[unclosed/a.png", "%%%.png"):
+    for reference in ("a\x00b.png", "http://[unclosed/a.png", "%%%.png", None, ""):
         assert images.classify_image(reference, str(tmp_path)).status != images.OK
 
 

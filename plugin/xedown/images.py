@@ -39,6 +39,18 @@ class ImageDecision:
 
 def classify_image(reference, base_dir):
     """What can be done with `reference`. Never raises, never fetches."""
+    # No caller in this codebase can reach this today: the sanitizer never
+    # hands `on_image` a reference at all unless `_is_safe_uri` already
+    # accepted it, which requires a non-empty string. But the guarantee is
+    # this module's own, not its callers' -- `images.py` exists to be
+    # called and tested directly, so `None`/`""` must resolve to a status
+    # rather than raise or read a bogus path (an empty reference would
+    # otherwise resolve to `base_dir` itself and be reported "unreadable").
+    if not isinstance(reference, str) or not reference:
+        return ImageDecision(
+            UNRESOLVED, reference=reference if isinstance(reference, str) else ""
+        )
+
     try:
         scheme = urllib.parse.urlparse(reference).scheme.lower()
     except ValueError:
