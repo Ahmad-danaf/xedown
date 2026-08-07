@@ -207,3 +207,26 @@ def test_no_stylesheet_pins_a_font_size_in_pixels(name):
         if re.search(r"\d\s*px", declaration)
     ]
     assert offenders == [], f"{name}: {offenders}"
+
+
+def test_the_notice_bar_is_coloured_only_from_the_error_tokens(preview_css):
+    # One rule in the base sheet, driven by tokens every theme declares, so
+    # the notice works in all four themes and both appearances without four
+    # copies. Its contrast is already gated: error-fg on error-bg is a row in
+    # test_contrast.py's table.
+    bodies = _rule_bodies_for(preview_css, ".xedown-notice")
+    assert bodies, "preview.css must style .xedown-notice"
+    body = bodies[0]
+    for token in (
+        "--xedown-error-fg",
+        "--xedown-error-bg",
+        "--xedown-error-border",
+    ):
+        assert token in body, f".xedown-notice must use {token}"
+    assert "#" not in body, "the notice must not hardcode a colour"
+
+
+def test_the_notice_bar_cannot_push_the_page_sideways(preview_css):
+    # It carries a filesystem path, which can be long and has no spaces.
+    bodies = _rule_bodies_for(preview_css, ".xedown-notice")
+    assert any("overflow-wrap" in body for body in bodies)

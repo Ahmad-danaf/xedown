@@ -114,3 +114,25 @@ def stylesheet_problem_phrase(problem, detail=""):
     """
     phrase = _STYLESHEET_PHRASES.get(problem, "could not be used")
     return f"{phrase} ({detail})" if detail else phrase
+
+
+def user_stylesheet_notice(problem, path, detail="", theme_label=""):
+    """The in-page bar shown when a custom stylesheet could not be used.
+
+    A sibling of the document article rather than a child: `update_body`
+    replaces the article's contents with a fragment that knows nothing about
+    this, so a notice inside it would vanish on the first keystroke.
+
+    Both the path and the theme label are escaped. The path comes out of a
+    file the user hand-edits, which makes it data rather than markup.
+    """
+    sentence = f"{html.escape(str(path))} {stylesheet_problem_phrase(problem, detail)}."
+    trailer = (
+        f" Showing the {html.escape(str(theme_label))} theme." if theme_label else ""
+    )
+    return (
+        '<div class="xedown-notice">'
+        "<strong>Custom stylesheet not applied</strong> "
+        f"{sentence}{trailer}"
+        "</div>"
+    )

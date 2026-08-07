@@ -66,3 +66,36 @@ def test_local_image_unresolved_text_contains_uri_and_the_unsaved_hint():
     assert "save" in text.lower()
     assert "<" not in text
     assert ">" not in text
+
+
+def test_the_stylesheet_notice_names_the_file_and_the_fallback():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_EMPTY, "/home/you/mine.css", theme_label="Repository"
+    )
+    assert 'class="xedown-notice"' in html_text
+    assert "/home/you/mine.css" in html_text
+    assert "is empty" in html_text
+    assert "Repository" in html_text
+
+
+def test_the_stylesheet_notice_escapes_the_path():
+    # The path comes out of a file the user hand-edits. It is data, not markup.
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_NOT_FOUND, "/tmp/<script>alert(1)</script>.css"
+    )
+    assert "<script>" not in html_text
+    assert "&lt;script&gt;" in html_text
+
+
+def test_the_stylesheet_notice_includes_the_reason_detail():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_UNREADABLE, "/x.css", detail="Permission denied"
+    )
+    assert "Permission denied" in html_text
+
+
+def test_the_stylesheet_notice_escapes_the_theme_label():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_EMPTY, "/x.css", theme_label="<b>Nope</b>"
+    )
+    assert "<b>" not in html_text

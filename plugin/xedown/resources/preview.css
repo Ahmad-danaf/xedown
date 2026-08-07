@@ -66,6 +66,23 @@ a:focus-visible {
   outline-offset: 2px;
 }
 
+/* xedown's own chrome, not part of the document: shown when the user's
+   custom stylesheet could not be used. Coloured from the error tokens every
+   theme declares, so one rule covers all four themes in both appearances
+   rather than four near-identical copies — and its contrast is already
+   gated, because error-fg on error-bg is a row in test_contrast.py.
+   Full width rather than aligned to the reading column, because each theme
+   pads .xedown-document differently and this is chrome, not content. */
+.xedown-notice {
+  padding: .75em 1.25em;
+  font-size: .9em;
+  line-height: 1.5;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border-bottom: 1px solid var(--xedown-error-border);
+  overflow-wrap: break-word;
+}
+
 ul.task-list { list-style: none; padding-left: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
 li.task-list-item > input[type="checkbox"] {

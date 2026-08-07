@@ -33,6 +33,20 @@ SUBSTITUTIONS = {
     ),
 }
 
+# Selectors v0.2 introduces that v0.1 never had.
+#
+# Admissible only when the selector cannot match anything a page v0.1 could
+# have produced. That constraint is what keeps this from being a hole in the
+# guard: a rule matching no element in an existing document cannot move an
+# upgrading user's preview, which is the one thing this test exists to
+# protect. Anything that could match existing markup is a change to v0.1's
+# design and belongs in SUBSTITUTIONS, with its v0.1 counterpart named.
+ADDITIONS = {
+    # Emitted only when the user has set a custom stylesheet that could not
+    # be used — and v0.1 had no such setting, so no v0.1 page contains one.
+    ".xedown-notice",
+}
+
 
 def _shipped():
     """The declarations a `repository` preview actually receives."""
@@ -75,9 +89,29 @@ def test_repository_is_the_v01_stylesheet():
     # reference is itself a value compared above -- so v0.2's added tokens are
     # allowed while every real declaration must match.
     for selector, props in shipped.items():
+        if selector in ADDITIONS:
+            continue
         for name, value in props.items():
             if name.startswith("--"):
                 continue
             assert (
                 v01.get(selector, {}).get(name) == value
             ), f"{selector} {{ {name}: {value} }} is not in v0.1"
+
+
+def test_every_addition_is_absent_from_v01():
+    # An entry here that v0.1 also declared would silently stop comparing a
+    # selector that does need comparing.
+    v01, _ = declarations(V01.read_text(encoding="utf-8"))
+    for selector in ADDITIONS:
+        assert selector not in v01, f"{selector} exists in v0.1; it is not an addition"
+
+
+def test_every_addition_is_actually_shipped():
+    # A stale entry would leave the guard permanently relaxed for a selector
+    # nothing declares any more.
+    shipped, _ = _shipped()
+    for selector in ADDITIONS:
+        assert (
+            selector in shipped
+        ), f"{selector} is in ADDITIONS but nothing declares it"
