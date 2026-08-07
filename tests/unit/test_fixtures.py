@@ -77,28 +77,24 @@ def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
     assert "Remote image, not fetched: https://example.com/not-fetched.png" in body
 
 
-def test_edge_cases_missing_local_image_becomes_a_placeholder_when_unresolvable():
-    # Nuance worth spelling out: the renderer never checks the filesystem
-    # for a local image's existence (see links.resolve_to_uri and
-    # links._normalized_local_path -- neither calls os.path.exists, unlike
-    # links.classify_link which does for link *clicks*). Given a real
-    # base_dir, "pics/does-not-exist.png" resolves to a syntactically valid
-    # (but dead) file: URI and renders as a plain <img>; the placeholder a
-    # human sees for that case is produced client-side, by preview.js's
-    # <img> "error" handler in an actual browser -- which is exactly why
-    # docs/manual-smoke-test.md keeps a missing-image row as a manual
-    # check: pure-Python rendering never reaches that boundary.
-    #
-    # What Python *can* verify, faithfully, is the other half of the same
-    # mechanism: this exact reference becomes a placeholder naming its path
-    # the moment there is no base_dir to resolve against at all -- the
-    # unresolvable-reference case the renderer does handle server-side
-    # (see the comment on test_relative_image_without_a_base_becomes_a
-    # _placeholder in test_renderer.py: an unresolvable image src must not be
-    # left to fail silently in the browser).
+def test_edge_cases_missing_local_image_becomes_a_placeholder(tmp_path):
+    # The half that used to be unreachable from Python. The renderer now
+    # stats a local image reference, so a file that is not there is named as
+    # missing at render time rather than left to fail in the browser.
+    body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "xedown-image-error" in body
+    assert "pics/does-not-exist.png" in body
+    assert "not found" in body
+
+
+def test_edge_cases_missing_local_image_is_unresolvable_without_a_base_dir():
+    # The other reason the same reference cannot be shown: an unsaved
+    # document has nothing to resolve a relative path against. Different
+    # cause, different sentence.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=None)
     assert "xedown-image-error" in body
     assert "pics/does-not-exist.png" in body
+    assert "has not been saved" in body
 
 
 def test_showcase_feature_markers_survive():

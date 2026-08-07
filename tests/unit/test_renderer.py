@@ -379,3 +379,64 @@ def test_render_fragment_does_not_raise_on_a_malformed_url(base):
     renderer.render_fragment("![x](http://[bad)", base_dir=base)
     renderer.render_fragment("[x](http://[bad)")  # no base_dir either
     renderer.render_fragment("![x](http://[bad)")
+
+
+def test_a_missing_local_image_says_so_by_name(tmp_path):
+    html = renderer.render_fragment("![A logo](pics/gone.png)", base_dir=str(tmp_path))
+    assert "xedown-image-error" in html
+    assert "not found" in html
+    assert "A logo" in html
+
+
+def test_a_readable_local_image_is_emitted(tmp_path):
+    (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    html = renderer.render_fragment("![A](a.png)", base_dir=str(tmp_path))
+    assert "<img" in html
+    assert "xedown-image-error" not in html
+
+
+def test_alt_mode_replaces_every_failure_with_its_alt_text(tmp_path):
+    source = "![A logo](pics/gone.png)\n\n![Remote](https://example.com/a.png)\n"
+    html = renderer.render_fragment(source, base_dir=str(tmp_path), image_display="alt")
+    assert html.count('class="xedown-image-alt"') == 2
+    assert "xedown-image-error" not in html
+    assert "example.com" not in html
+
+
+def test_hidden_mode_leaves_nothing_behind(tmp_path):
+    source = "![A logo](pics/gone.png)\n\n![Remote](https://example.com/a.png)\n"
+    html = renderer.render_fragment(
+        source, base_dir=str(tmp_path), image_display="hidden"
+    )
+    assert "xedown-image" not in html
+    assert "<img" not in html
+
+
+def test_no_display_mode_ever_emits_a_remote_source(tmp_path):
+    for display in ("placeholder", "alt", "hidden"):
+        html = renderer.render_document(
+            "![R](https://example.com/a.png)",
+            base_dir=str(tmp_path),
+            image_display=display,
+        )
+        assert 'src="https://' not in html
+        assert "img-src file: data:" in html
+
+
+def test_an_unusable_display_value_renders_the_default(tmp_path):
+    html = renderer.render_fragment(
+        "![A](pics/gone.png)", base_dir=str(tmp_path), image_display="nonsense"
+    )
+    assert "xedown-image-error" in html
+
+
+def test_the_page_carries_its_config():
+    html = renderer.render_document("# x", code_copy_buttons=False, image_display="alt")
+    assert '"codeCopy": false' in html
+    assert '"imageDisplay": "alt"' in html
+
+
+def test_the_config_defaults_reproduce_v01_behaviour():
+    html = renderer.render_document("# x")
+    assert '"codeCopy": true' in html
+    assert '"imageDisplay": "placeholder"' in html
