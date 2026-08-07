@@ -9,7 +9,7 @@ gi.require_version("Xed", "1.0")
 
 from gi.repository import GLib, Gtk, Xed
 
-from . import errors, renderer, settings, stylesheets
+from . import errors, renderer, settings, stylesheets, stylewatcher
 from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
@@ -40,7 +40,8 @@ class TabController:
         self._built = False
         self._active = False
         self._dark = False
-        self._theme = None
+        self._style = None
+        self._stylesheet_token = None
         self._info_bar = None
 
     # --- lifecycle ---------------------------------------------------------
@@ -69,6 +70,10 @@ class TabController:
         if self._settings_token is not None:
             settings.get_settings().disconnect(self._settings_token)
             self._settings_token = None
+
+        if self._stylesheet_token is not None:
+            stylewatcher.get_watcher().disconnect(self._stylesheet_token)
+            self._stylesheet_token = None
 
         if self.appearance_watcher is not None:
             self.appearance_watcher.disconnect()
@@ -129,7 +134,14 @@ class TabController:
         self.appearance_watcher.connect(self._on_appearance_changed)
 
         store = settings.get_settings()
-        self._theme = store.get(settings.PREVIEW_THEME)
+        # Connected before the style is built, so `current()` is the value
+        # this tab renders with and the value the watcher will report from.
+        self._stylesheet_token = stylewatcher.get_watcher().connect(
+            self._on_user_stylesheet_changed
+        )
+        self._style = stylesheets.PreviewStyle.from_settings(
+            store, user=stylewatcher.get_watcher().current()
+        )
         self._settings_token = store.connect(self._on_settings_changed)
 
         self.modebar = ModeBar()
@@ -300,9 +312,7 @@ class TabController:
                 self._buffer_text(),
                 base_dir=self._base_dir(),
                 dark=self._dark,
-                # Task 8 replaces this with the controller's own PreviewStyle,
-                # which also carries the width, the size and the user's sheet.
-                style=stylesheets.PreviewStyle(theme=self._theme),
+                style=self._style,
             )
         base_dir = self._base_dir()
         self.preview.load_document(
@@ -355,14 +365,54 @@ class TabController:
         process. `deactivate()` owns that; nothing here may introduce state
         that outlives it.
 
+        `CUSTOM_STYLESHEET` is deliberately absent. Both routes to a
+        different user stylesheet — the setting moving, or the file changing —
+        arrive through `stylewatcher` instead, so this handler never has to
+        run before or after the watcher's own settings listener. Delivery
+        order between listeners is not depended on anywhere.
+
         A theme change needs the whole page again, because the stylesheet is
-        inlined in <head> and `update_body` only swaps the article. That is
-        the same path an appearance change takes, scroll preservation
-        included. Delivery order between listeners is not depended on.
+        inlined in <head> and `update_body` only swaps the article. Width and
+        text size do not: they are two custom properties the loaded page
+        already reads, so they are poked in place.
         """
-        if settings.PREVIEW_THEME not in changed:
+        if self._style is None:
             return
-        self._theme = settings.get_settings().get(settings.PREVIEW_THEME)
+        store = settings.get_settings()
+        # Rebuilt rather than mutated, so the numbers are re-coerced through
+        # the same path a fresh tab uses.
+        self._style = stylesheets.PreviewStyle.from_settings(
+            store, user=self._style.user
+        )
+
+        reloaded = False
+        if settings.PREVIEW_THEME in changed:
+            self.state.preview_stale = True
+            if self._built and self.state.mode is Mode.PREVIEW:
+                self._reload_preview(restore_scroll=self._current_preview_scroll())
+                reloaded = True
+
+        metrics_moved = (
+            settings.CONTENT_WIDTH_REM in changed or settings.TEXT_SIZE_PX in changed
+        )
+        # Skipped after a reload, which already carries the new values in its
+        # own stylesheet -- and would otherwise run against the outgoing page,
+        # since load_html is asynchronous.
+        if metrics_moved and not reloaded and self.preview is not None:
+            self.preview.set_metrics(
+                self._style.content_width_rem, self._style.text_size_px
+            )
+
+    def _on_user_stylesheet_changed(self, user):
+        """The user's stylesheet moved, or its file changed.
+
+        A full reload, for the same reason a theme change is one: the
+        stylesheet is inlined in <head>, and `update_body` only swaps the
+        article.
+        """
+        if self._style is None:
+            return
+        self._style.user = user
         self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
