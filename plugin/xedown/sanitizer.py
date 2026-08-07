@@ -277,7 +277,17 @@ class _Sanitizer(HTMLParser):
             escaped = html_module.escape(outcome.text or "", quote=False)
             self.parts.append(f'<span class="{css_class}">{escaped}</span>')
             return
-        rendered.insert(0, f'src="{html_module.escape(str(outcome), quote=True)}"')
+        # The callback is trusted code (the only production callback returns
+        # links.uri_for_path(...) or a data: URI this module already
+        # validated) -- but this module's whole job is rebuilding HTML from
+        # an explicit scheme allowlist, and re-checking its own output costs
+        # nothing. Without this, a future callback that ever returned
+        # something unvalidated would emit it unchecked. Fail closed: an
+        # unsafe value emits nothing rather than a broken-but-safe img.
+        candidate = str(outcome)
+        if not _is_safe_uri(candidate, allow_data_image=True):
+            return
+        rendered.insert(0, f'src="{html_module.escape(candidate, quote=True)}"')
         self.parts.append(f"<img {' '.join(rendered)} />")
 
 

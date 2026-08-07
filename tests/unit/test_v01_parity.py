@@ -203,6 +203,17 @@ def test_every_deliberate_selector_is_actually_shipped():
         ), f"{selector} is in DELIBERATE_SELECTORS but nothing declares it"
 
 
+def test_every_deliberate_selector_is_absent_from_v01():
+    # Same reason as ADDITIONS: an entry v0.1 also declared would exempt a
+    # whole existing selector, which is exactly what DELIBERATE_DECLARATIONS
+    # exists to make impossible one property at a time.
+    v01, _ = declarations(V01.read_text(encoding="utf-8"))
+    for selector in DELIBERATE_SELECTORS:
+        assert (
+            selector not in v01
+        ), f"{selector} exists in v0.1; use DELIBERATE_DECLARATIONS"
+
+
 def test_every_deliberate_declaration_is_actually_shipped():
     shipped, _ = _shipped()
     for selector, name in DELIBERATE_DECLARATIONS:

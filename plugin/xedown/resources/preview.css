@@ -87,9 +87,17 @@ ul.task-list { list-style: none; padding-left: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
 
 /* Drawn rather than native, so a checkbox belongs to the selected theme
-   instead of to the browser. Colour comes from --xedown-link on
-   --xedown-bg, a pair test_contrast.py already gates at 4.5:1, so this
-   needs no new token and no new contrast row. */
+   instead of to the browser. Two states, two tokens: unchecked identifies
+   itself only by this border, so it needs a boundary that meets WCAG
+   1.4.11's 3:1 for a UI component on its own -- --xedown-muted on
+   --xedown-bg is a SEMANTIC_PAIRS row in test_contrast.py gated at 4.5:1,
+   comfortably above that floor in every theme and appearance. (--xedown-
+   border is a separator tint, gridlines and the like, not gated for
+   component-boundary contrast, and measures as low as 1.25:1 here -- a
+   regression against the native control this replaced.) Checked fills the
+   whole box, so its colour is the box's own surface, not its edge: that is
+   --xedown-link on --xedown-bg below, the same gated pair at the same
+   4.5:1. */
 li.task-list-item > input[type="checkbox"] {
   margin: .45em 0 0;
   width: .95em;
@@ -99,7 +107,7 @@ li.task-list-item > input[type="checkbox"] {
   -webkit-appearance: none;
   appearance: none;
   background: var(--xedown-bg);
-  border: 1px solid var(--xedown-border);
+  border: 1px solid var(--xedown-muted);
   border-radius: .2em;
   /* A disabled control is dimmed and given a "no entry" cursor by the
      browser. Both read as broken. These are read-only by design -- the

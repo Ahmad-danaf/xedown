@@ -77,7 +77,7 @@ def test_local_image_unreadable_text_carries_the_reason_when_there_is_one():
 def test_with_alt_appends_the_authors_words_only_when_there_are_any():
     result = errors.with_alt("Image not found: a.png", "Company logo")
     # em dash (U+2014) and curly quotes (U+201C, U+201D)
-    expected = f"Image not found: a.png — {chr(0x201c)}Company logo{chr(0x201d)}"
+    expected = "Image not found: a.png — “Company logo”"
     assert result == expected
     assert errors.with_alt("x", "") == "x"
     assert errors.with_alt("x", None) == "x"

@@ -245,10 +245,12 @@
     if (on) { element.classList.add(name); } else { element.classList.remove(name); }
   }
 
-  /* Only ever one side at a time has "more", and only while there is more:
-     read from the live scroll position rather than assumed from the width.
-     The 1px slack absorbs sub-pixel layout, which would otherwise leave a
-     shadow showing at a hard stop. */
+  /* Each side is cued only while that side has more to show, read from the
+     live scroll position rather than assumed from the width. Mid-scroll both
+     sides have more, so both classes are set at once -- preview.css's
+     combined ".xedown-more-left.xedown-more-right" selector is what paints
+     that state. The 1px slack absorbs sub-pixel layout, which would
+     otherwise leave a shadow showing at a hard stop. */
   function updateTableCue(wrapper) {
     var limit = wrapper.scrollWidth - wrapper.clientWidth;
     toggleClass(wrapper, "xedown-more-left", wrapper.scrollLeft > 1);

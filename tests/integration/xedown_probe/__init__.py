@@ -1128,11 +1128,25 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             label = payload.get("buttonLabel") or ""
             selection_text = payload.get("selection") or ""
             leaked = bool(label) and label in selection_text
+            # A select-all that actually selected nothing (or something
+            # truncated) would leave selection_text == "", which made leaked
+            # False and this pass for having nothing to find -- wrong twice
+            # for two different reasons. Requiring text from both ends of
+            # the fixture (the heading and inside the fenced code block)
+            # closes that: an empty or partial selection now fails loudly.
+            selected_the_document = (
+                "Round Trip" in selection_text and "def total(items)" in selection_text
+            )
             record(
                 "copy-button-never-joins-a-selection",
-                button_present and bool(label) and not leaked and not failure,
-                f"button present: {button_present} label: {label!r} "
-                f"leaked: {leaked} selection: {selection_text!r}{failure}",
+                button_present
+                and bool(label)
+                and selected_the_document
+                and not leaked
+                and not failure,
+                f"button present: {button_present} label: {label!r} selected-document: "
+                f"{selected_the_document} leaked: {leaked} selection: {selection_text!r}"
+                f"{failure}",
             )
             record(
                 "a-wide-table-scrolls-inside-its-own-area",

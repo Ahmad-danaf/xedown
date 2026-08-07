@@ -106,9 +106,8 @@ def with_alt(text, alt):
     meant to say and why it is not there.
     """
     words = (alt or "").strip()
-    # Use Unicode code points for curly quotes: U+201C (left) and U+201D (right)
     if words:
-        return f"{text} — {chr(0x201c)}{words}{chr(0x201d)}"
+        return f"{text} — “{words}”"
     return text
 
 

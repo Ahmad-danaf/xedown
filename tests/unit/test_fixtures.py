@@ -77,7 +77,7 @@ def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
     assert "Remote image, not fetched: https://example.com/not-fetched.png" in body
 
 
-def test_edge_cases_missing_local_image_becomes_a_placeholder(tmp_path):
+def test_edge_cases_missing_local_image_becomes_a_placeholder():
     # The half that used to be unreachable from Python. The renderer now
     # stats a local image reference, so a file that is not there is named as
     # missing at render time rather than left to fail in the browser.

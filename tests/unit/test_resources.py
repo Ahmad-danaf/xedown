@@ -327,9 +327,13 @@ def test_the_cap_leaves_an_author_sized_image_alone(preview_css):
 
 
 def test_images_are_never_enlarged(preview_css):
-    for body in _rule_bodies_for(preview_css, "img"):
-        assert "min-width" not in body
-        assert "min-height" not in body
+    # img:not([width]):not([height]) is the rule that could plausibly
+    # acquire a min-height (it already caps max-height for tall images), so
+    # it needs the same check as the bare `img` selector.
+    for selector in ("img", "img:not([width]):not([height])"):
+        for body in _rule_bodies_for(preview_css, selector):
+            assert "min-width" not in body
+            assert "min-height" not in body
 
 
 def test_alt_text_shown_in_place_of_an_image_is_visibly_not_the_document(preview_css):

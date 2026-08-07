@@ -247,6 +247,44 @@ def test_an_img_with_no_src_at_all_emits_nothing():
     assert sanitize('<img alt="A">', on_image=lambda reference, alt: "x") == ""
 
 
+def test_on_image_returning_an_unsafe_scheme_emits_nothing():
+    # The callback is trusted code, but the sanitizer's job is rebuilding
+    # HTML from an explicit scheme allowlist -- so its own output is
+    # re-checked before being emitted, same as any other src.
+    result = sanitize(
+        '<img src="a.png" alt="A">',
+        on_image=lambda reference, alt: "javascript:alert(1)",
+    )
+    assert result == ""
+    assert "javascript" not in result.lower()
+
+
+def test_on_image_set_means_resolve_uri_is_never_consulted_for_img():
+    # The bypass this pins: when on_image is set, <img src> goes through
+    # on_image alone. resolve_uri existing and being armed to answer must
+    # not matter -- it should simply never be called for an <img>.
+    resolve_calls = []
+
+    def resolve_uri(name, value):
+        resolve_calls.append((name, value))
+        return "SHOULD-NOT-BE-USED"
+
+    on_image_calls = []
+
+    def on_image(reference, alt):
+        on_image_calls.append((reference, alt))
+        return "file:///resolved/a.png"
+
+    result = sanitize(
+        '<img src="a.png" alt="A">',
+        resolve_uri=resolve_uri,
+        on_image=on_image,
+    )
+    assert resolve_calls == []
+    assert on_image_calls == [("a.png", "A")]
+    assert 'src="file:///resolved/a.png"' in result
+
+
 def test_content_cannot_spoof_the_image_error_placeholder_class():
     # xedown- must never join _ALLOWED_CLASS_PREFIXES: the placeholder span
     # sanitize() writes for a blocked image is trusted only because ordinary
