@@ -8,13 +8,18 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("WebKit2", "4.1")
 
-from gi.repository import GLib, WebKit2
+from gi.repository import GLib, Gtk, WebKit2
 
 _MESSAGE_HANDLER = "xedown"
 
 
 class PreviewView:
     """Wraps a WebView. Not a widget subclass — `widget` is the thing to pack."""
+
+    # A code block larger than this is a pathology, not a copy. Refused
+    # rather than shipped through the message channel and into the
+    # clipboard, and reported as a failure so the button says so.
+    MAX_COPY_CHARS = 1024 * 1024
 
     def __init__(self, on_link=None, on_image_error=None):
         self.on_link = on_link
@@ -97,6 +102,20 @@ class PreviewView:
         )
         self._run(script)
 
+    def set_config(self, code_copy_buttons, image_display):
+        """Tell an already-loaded page what the settings now say.
+
+        The same two values a fresh page receives in its `window.xedownConfig`
+        block, so the two routes cannot disagree. No reload: copy buttons are
+        added or removed in place, and the image display mode only affects
+        the client-side fallback, since the body itself is re-rendered by the
+        controller.
+        """
+        payload = json.dumps(
+            {"codeCopy": bool(code_copy_buttons), "imageDisplay": str(image_display)}
+        )
+        self._run(f"if (window.xedown) {{ window.xedown.setConfig({payload}); }}")
+
     def scroll_to_anchor(self, anchor):
         self._run(
             f"if (window.xedown) {{ window.xedown.scrollToAnchor({json.dumps(anchor)}); }}"
@@ -125,6 +144,40 @@ class PreviewView:
                 pass
         elif kind == "imageError" and self.on_image_error is not None:
             self.on_image_error(payload.get("src") or "")
+        elif kind == "copy":
+            self._copy_to_clipboard(payload.get("token"), payload.get("text"))
+
+    def _copy_to_clipboard(self, token, text):
+        """Put a code block on the clipboard on the page's behalf.
+
+        The page has no clipboard access of its own — `javascript-can-access-
+        clipboard` stays off, so nothing running in the preview can read or
+        write it — which makes this the only route, and it is one-way:
+        xedown writes what the page asked to copy and never reads anything
+        back out.
+
+        Failure is answered, never raised: the button says "Copy failed"
+        rather than sitting on "Copy" as though the click did nothing.
+        """
+        ok = False
+        if isinstance(text, str) and len(text) <= self.MAX_COPY_CHARS:
+            try:
+                clipboard = Gtk.Clipboard.get_default(self.widget.get_display())
+                clipboard.set_text(text, -1)
+                ok = True
+            except Exception:  # noqa: BLE001 - a failed copy is reported, not raised
+                ok = False
+        self.copy_result(token, ok)
+
+    def copy_result(self, token, ok):
+        """Tell the page how its copy went, so the button can confirm it."""
+        self._run(
+            "if (window.xedown) { window.xedown.copyResult("
+            + json.dumps(token)
+            + ", "
+            + json.dumps(bool(ok))
+            + "); }"
+        )
 
     def _on_decide_policy(self, _view, decision, decision_type):
         if decision_type != WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
