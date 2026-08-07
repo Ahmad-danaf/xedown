@@ -1071,13 +1071,21 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_copy_verify(self):
         preview = self._copy_preview()
+        if preview is None:
+            record("clipboard-holds-exactly-the-authors-code", False, "no preview")
+            self._schedule(300, self.step_txt_tab_open)
+            return False
         clipboard = Gtk.Clipboard.get_default(preview.widget.get_display())
         copied = clipboard.wait_for_text() or ""
-        # Byte for byte, including the Arabic comment. The fence's closing
-        # newline is a delimiter, not code, so it is not copied.
+        # Strip exactly one trailing newline, mirroring preview.js's
+        # captureSources ("if the last char is '\n', slice it off") rather
+        # than rstrip("\n"), which would strip every trailing newline and
+        # only coincidentally agree with the fence here because it happens
+        # to have exactly one.
+        expected_code = _COPY_CODE.removesuffix("\n")
         record(
             "clipboard-holds-exactly-the-authors-code",
-            copied == _COPY_CODE.rstrip("\n"),
+            copied == expected_code,
             f"copied {copied!r}",
         )
 
@@ -1088,10 +1096,43 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 payload = json.loads(value.get_js_value().to_string())
             except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
                 failure = f"<error: {exc}>"
+            # Matched against the button's OWN current label, not a fixed
+            # guess: the copy round trip is an in-process message hop with
+            # no I/O, so by the time this runs (900ms after the click) the
+            # label already reads "Copied", not "Copy"
+            # (COPY_ANSWER_MS/COPY_REVERT_MS are both 1500ms in preview.js),
+            # and "Copy" is not a substring of "Copied" -- English drops the
+            # "y" before "-ed" -- so a fixed "Copy" search could never have
+            # caught the button's text leaking into the selection here (it
+            # did not: confirmed live against this exact deployed step,
+            # see the task report). Reading the label live instead of
+            # guessing its text works whatever it currently says.
+            #
+            # This also replaces an earlier attempt at this fix that used
+            # `Selection.containsNode(button, true)`: verified, in
+            # isolation, to return true for this button regardless of
+            # whether `user-select: none` is present or removed, because
+            # the button sits inside the DOM range a full-page select-all
+            # spans either way -- CSS does not move it out of that range,
+            # it only changes whether the *text* extracted from the range
+            # includes it. containsNode answers "is this node structurally
+            # within the selection", not "would copying the selection
+            # include what this node shows" -- a different question, and
+            # the wrong one to ask here.
+            #
+            # buttonPresent still has to be true and the label non-empty:
+            # an absent button, or an empty label, would make this pass for
+            # having nothing to find rather than for the CSS actually
+            # working.
+            button_present = bool(payload.get("buttonPresent"))
+            label = payload.get("buttonLabel") or ""
+            selection_text = payload.get("selection") or ""
+            leaked = bool(label) and label in selection_text
             record(
                 "copy-button-never-joins-a-selection",
-                "Copy" not in (payload.get("selection") or "") and not failure,
-                f"selection length: {len(payload.get('selection') or '')}{failure}",
+                button_present and bool(label) and not leaked and not failure,
+                f"button present: {button_present} label: {label!r} "
+                f"leaked: {leaked} selection: {selection_text!r}{failure}",
             )
             record(
                 "a-wide-table-scrolls-inside-its-own-area",
@@ -1109,6 +1150,8 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
         preview.widget.run_javascript(
             "(function () {"
+            "  var button = document.querySelector('.xedown-copy');"
+            "  var label = button ? button.textContent : '';"
             "  document.execCommand('selectAll');"
             "  var s = String(window.getSelection());"
             "  window.getSelection().removeAllRanges();"
@@ -1117,6 +1160,8 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "  var d = document.documentElement;"
             "  return JSON.stringify({"
             "    selection: s,"
+            "    buttonPresent: !!button,"
+            "    buttonLabel: label,"
             "    tableScroll: w.scrollWidth, tableClient: w.clientWidth,"
             "    tableOverflows: w.scrollWidth > w.clientWidth,"
             "    pageScroll: d.scrollWidth, pageWidth: window.innerWidth,"
@@ -1136,6 +1181,16 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_copy_disabled_check(self):
         preview = self._copy_preview()
+        if preview is None:
+            record("copy-buttons-off-removes-them-live", False, "no preview")
+            # Undo what this chain segment changed even on the short-circuit
+            # path: leaving CODE_COPY_BUTTONS at False would silently affect
+            # every later step's rendering for the rest of the process.
+            xedown_settings.get_settings().set(xedown_settings.CODE_COPY_BUTTONS, True)
+            if getattr(self, "_copy_tab", None) is not None:
+                self.window.close_tab(self._copy_tab)
+            self._schedule(500, self.step_txt_tab_open)
+            return False
 
         def on_result(webview, result, _user_data):
             found = ""
