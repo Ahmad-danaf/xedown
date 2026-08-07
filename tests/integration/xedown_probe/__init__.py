@@ -91,6 +91,18 @@ _TAB_B_MD = "# Tab B\n\nA second Markdown tab; its mode must stay independent.\n
 _PLAIN_TXT = (
     "Just plain text. Not Markdown. The menu action must be insensitive here.\n"
 )
+# A fence whose exact bytes the clipboard assertion compares against,
+# including the Arabic comments -- the case most likely to regress, since
+# code must stay left-to-right while its comments are right-to-left.
+_COPY_CODE = "# هذه دالة بسيطة\n" "def total(items):\n" "    return sum(items)\n"
+_COPY_MD = (
+    "# Copy\n\n```python\n"
+    + _COPY_CODE
+    + "```\n\n"
+    + "| a | b | c | d | e | f | g | h | i | j |\n"
+    + "| - | - | - | - | - | - | - | - | - | - |\n"
+    + "| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |\n"
+)
 
 
 def _long_markdown():
@@ -998,7 +1010,148 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             f"theme={store.get(xedown_settings.PREVIEW_THEME)!r} "
             f"width={store.get(width)!r} stylesheet={store.get(sheet)!r}",
         )
-        self._schedule(300, self.step_txt_tab_open)
+        self._schedule(300, self.step_copy_tab_open)
+
+    # --- the copy button: the clipboard round trip cannot be unit-tested ---
+
+    def step_copy_tab_open(self):
+        path = os.path.join(self._tmpdir, "copy.md")
+        with open(path, "w") as handle:
+            handle.write(_COPY_MD)
+        self._copy_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1500, self.step_copy_click)
+        return False
+
+    def _copy_preview(self):
+        view = self._copy_tab.get_view()
+        controller = getattr(view, "_xedown_controller", None)
+        return controller.preview if controller is not None else None
+
+    def step_copy_click(self):
+        preview = self._copy_preview()
+        if preview is None:
+            record("copy-button-present", False, "no preview")
+            self._schedule(300, self.step_txt_tab_open)
+            return False
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            record("copy-button-present", found == "1", f"buttons: {found}")
+            self._schedule(900, self.step_copy_verify)
+
+        # Clicked from script rather than synthesised as a pointer event:
+        # what is under test is the message round trip, not GTK's hit
+        # testing. The count is returned so a missing button fails here
+        # rather than silently passing the clipboard check below.
+        preview.widget.run_javascript(
+            "(function () {"
+            "  var b = document.querySelectorAll('.xedown-copy');"
+            "  if (b.length) { b[0].click(); }"
+            "  return String(b.length);"
+            "})()",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    def step_copy_verify(self):
+        preview = self._copy_preview()
+        clipboard = Gtk.Clipboard.get_default(preview.widget.get_display())
+        copied = clipboard.wait_for_text() or ""
+        # Byte for byte, including the Arabic comment. The fence's closing
+        # newline is a delimiter, not code, so it is not copied.
+        record(
+            "clipboard-holds-exactly-the-authors-code",
+            copied == _COPY_CODE.rstrip("\n"),
+            f"copied {copied!r}",
+        )
+
+        def on_result(webview, result, _user_data):
+            payload, failure = {}, ""
+            try:
+                value = webview.run_javascript_finish(result)
+                payload = json.loads(value.get_js_value().to_string())
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                failure = f"<error: {exc}>"
+            record(
+                "copy-button-never-joins-a-selection",
+                "Copy" not in (payload.get("selection") or "") and not failure,
+                f"selection length: {len(payload.get('selection') or '')}{failure}",
+            )
+            record(
+                "a-wide-table-scrolls-inside-its-own-area",
+                bool(payload.get("tableOverflows")) and not failure,
+                f"table: {payload.get('tableScroll')} > {payload.get('tableClient')}"
+                f"{failure}",
+            )
+            record(
+                "a-wide-table-never-scrolls-the-page-sideways",
+                bool(payload.get("pageFits")) and not failure,
+                f"page: {payload.get('pageScroll')} <= {payload.get('pageWidth')}"
+                f"{failure}",
+            )
+            self._schedule(300, self.step_copy_disable)
+
+        preview.widget.run_javascript(
+            "(function () {"
+            "  document.execCommand('selectAll');"
+            "  var s = String(window.getSelection());"
+            "  window.getSelection().removeAllRanges();"
+            "  var w = document.querySelector('.xedown-table-scroll') ||"
+            "          {scrollWidth: 0, clientWidth: 0};"
+            "  var d = document.documentElement;"
+            "  return JSON.stringify({"
+            "    selection: s,"
+            "    tableScroll: w.scrollWidth, tableClient: w.clientWidth,"
+            "    tableOverflows: w.scrollWidth > w.clientWidth,"
+            "    pageScroll: d.scrollWidth, pageWidth: window.innerWidth,"
+            "    pageFits: d.scrollWidth <= window.innerWidth + 1"
+            "  });"
+            "})()",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    def step_copy_disable(self):
+        xedown_settings.get_settings().set(xedown_settings.CODE_COPY_BUTTONS, False)
+        self._schedule(600, self.step_copy_disabled_check)
+        return False
+
+    def step_copy_disabled_check(self):
+        preview = self._copy_preview()
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            # Removed from the DOM, not merely hidden: nothing left to
+            # focus, find or copy. And with no reload -- this page was
+            # never loaded again.
+            record(
+                "copy-buttons-off-removes-them-live", found == "0", f"buttons: {found}"
+            )
+            xedown_settings.get_settings().set(xedown_settings.CODE_COPY_BUTTONS, True)
+            self.window.close_tab(self._copy_tab)
+            self._schedule(500, self.step_txt_tab_open)
+
+        preview.widget.run_javascript(
+            "String(document.querySelectorAll('.xedown-copy').length)",
+            None,
+            on_result,
+            None,
+        )
+        return False
 
     # --- menu sensitivity: is_sensitive(), never get_sensitive() -----------
 
