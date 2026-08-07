@@ -38,6 +38,9 @@ SUBSTITUTIONS = {
         ('li.task-list-item > input[type="checkbox"]:checked', "background"),
         "var(--xedown-link)",
     ),
+    # v0.1 capped every table at the container width, which meant a wide
+    # table was compressed instead of scrolling inside its own wrapper.
+    ("table", "width"): (("table", "width"), "auto"),
 }
 
 # Selectors v0.2 introduces that v0.1 never had.
@@ -52,6 +55,11 @@ ADDITIONS = {
     # Emitted only when the user has set a custom stylesheet that could not
     # be used — and v0.1 had no such setting, so no v0.1 page contains one.
     ".xedown-notice",
+    # v0.1 never set these classes on a table's wrapper, so a rule that only
+    # matches their combination cannot match anything a v0.1 page produced.
+    ".xedown-table-scroll.xedown-more-left",
+    ".xedown-table-scroll.xedown-more-right",
+    ".xedown-table-scroll.xedown-more-left.xedown-more-right",
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
@@ -98,6 +106,11 @@ DELIBERATE_DECLARATIONS = {
     ('li.task-list-item > input[type="checkbox"]', "cursor"): (
         "brief 5: read-only, not unavailable"
     ),
+    ("table", "min-width"): (
+        "brief 5: a narrow table still fills the column while a wide one overflows"
+    ),
+    ("th", "min-width"): ("brief 5: a floor under column width"),
+    ("td", "min-width"): ("brief 5: a floor under column width"),
 }
 
 

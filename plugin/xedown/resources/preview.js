@@ -90,6 +90,29 @@
     }
   }
 
+  function toggleClass(element, name, on) {
+    if (on) { element.classList.add(name); } else { element.classList.remove(name); }
+  }
+
+  /* Only ever one side at a time has "more", and only while there is more:
+     read from the live scroll position rather than assumed from the width.
+     The 1px slack absorbs sub-pixel layout, which would otherwise leave a
+     shadow showing at a hard stop. */
+  function updateTableCue(wrapper) {
+    var limit = wrapper.scrollWidth - wrapper.clientWidth;
+    toggleClass(wrapper, "xedown-more-left", wrapper.scrollLeft > 1);
+    toggleClass(wrapper, "xedown-more-right", wrapper.scrollLeft < limit - 1);
+  }
+
+  function watchTable(wrapper) {
+    wrapper.addEventListener("scroll", function () { updateTableCue(wrapper); });
+    /* The window can be resized until a table that fitted no longer does. */
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(function () { updateTableCue(wrapper); }).observe(wrapper);
+    }
+    updateTableCue(wrapper);
+  }
+
   function wrapWideTables(root) {
     var tables = root.querySelectorAll("table");
     for (var i = 0; i < tables.length; i++) {
@@ -100,6 +123,7 @@
       wrapper.className = "xedown-table-scroll";
       table.parentNode.insertBefore(wrapper, table);
       wrapper.appendChild(table);
+      watchTable(wrapper);
     }
   }
 

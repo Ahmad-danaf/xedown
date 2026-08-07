@@ -147,6 +147,33 @@ pre code.hljs {
 }
 
 .xedown-table-scroll { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; }
+
+/* `width: 100%` capped the table at the container, so a table with more
+   columns than fit was compressed rather than allowed to overflow -- and
+   the wrapper above it never had anything to scroll. `auto` lets the table
+   take the width it needs; `min-width` keeps a narrow one filling the
+   column exactly as it did in v0.1. */
+table { border-collapse: collapse; width: auto; min-width: 100%; }
+
+/* A floor under a column. Auto table layout will otherwise wrap prose down
+   to a few characters per column in a narrow window, which is the
+   "squashed into unreadable columns" this brief exists to stop. Cells still
+   wrap; only the squeezing stops. */
+th, td { min-width: 8ch; }
+
+/* The cue that a table continues past the edge. Inset shadows paint on the
+   container's own box and do not scroll with its content, so this stays put
+   at the visible edge; preview.js toggles the classes from the live scroll
+   position, so a shadow only ever appears on a side that has more to show. */
+.xedown-table-scroll.xedown-more-left {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-right {
+  box-shadow: inset -14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-left.xedown-more-right {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow),
+              inset -14px 0 10px -12px var(--xedown-shadow);
+}
 
 img { max-width: 100%; height: auto; }

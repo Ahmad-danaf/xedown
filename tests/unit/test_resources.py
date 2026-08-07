@@ -270,3 +270,40 @@ def test_no_checkbox_colour_is_hardcoded(preview_css):
     ):
         for body in _rule_bodies_for(preview_css, selector):
             assert "#" not in body, f"{selector} declares a colour literal"
+
+
+def test_a_wide_table_overflows_rather_than_compresses(preview_css):
+    bodies = _rule_bodies_for(preview_css, "table")
+    # width: 100% would cap the table at the container and force the
+    # browser to squeeze columns instead of letting the wrapper scroll.
+    assert any("width: auto" in body for body in bodies)
+    assert any("min-width: 100%" in body for body in bodies)
+
+
+def test_table_cells_have_a_width_floor(preview_css):
+    for selector in ("th", "td"):
+        assert any(
+            "min-width" in body for body in _rule_bodies_for(preview_css, selector)
+        ), f"{selector} has no minimum width"
+
+
+def test_the_table_edge_cue_is_an_inset_shadow_from_the_theme(preview_css):
+    # Inset shadows paint on the container's own box and do not scroll with
+    # its content, which is what makes this an edge marker rather than a
+    # stripe that slides out of view.
+    for selector in (
+        ".xedown-table-scroll.xedown-more-left",
+        ".xedown-table-scroll.xedown-more-right",
+    ):
+        bodies = _rule_bodies_for(preview_css, selector)
+        assert bodies, f"no rule for {selector}"
+        for body in bodies:
+            assert "inset" in body
+            assert "var(--xedown-shadow)" in body
+
+
+def test_the_script_keeps_the_table_cue_in_step_with_scrolling(preview_js):
+    assert "xedown-more-left" in preview_js
+    assert "xedown-more-right" in preview_js
+    assert "scrollLeft" in preview_js
+    assert "ResizeObserver" in preview_js
