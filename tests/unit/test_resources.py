@@ -513,8 +513,11 @@ def test_the_footnote_backref_turns_around_in_a_right_to_left_document(preview_c
     # rather than left to the bidi algorithm. Targeted by href, not by class:
     # `class` is not an allowed attribute on `a`, so `footnote-backref` does
     # not survive the sanitizer -- but an in-page anchor passes through
-    # resolve_uri untouched.
-    selector = '[dir="rtl"] .footnote a[href^="#fnref"]'
+    # resolve_uri untouched. Scoped to `.xedown-document[dir="rtl"]`, not bare
+    # `[dir="rtl"]`: the bare form also matches an English article nested
+    # inside `<html dir="rtl">` on a right-to-left desktop, which would
+    # mirror the arrow for a document that isn't right-to-left at all.
+    selector = '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]'
     bodies = _rule_bodies_for(preview_css, selector)
     assert bodies, f"no rule for {selector}"
     assert any("scaleX(-1)" in body for body in bodies)

@@ -88,8 +88,8 @@ ADDITIONS = {
     ".xedown-copy:focus-visible",
     "@media (hover: none) .xedown-copy",
     # v0.1 emitted no `dir` attribute anywhere, so a rule scoped to
-    # [dir="rtl"] cannot match anything a v0.1 page produced.
-    '[dir="rtl"] .footnote a[href^="#fnref"]',
+    # .xedown-document[dir="rtl"] cannot match anything a v0.1 page produced.
+    '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]',
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --

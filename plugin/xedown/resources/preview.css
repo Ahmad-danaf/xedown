@@ -75,8 +75,17 @@ a { unicode-bidi: plaintext; }
    Targeted by href rather than by class: `class` is not an allowed attribute
    on `a`, so Python-Markdown's `footnote-backref` does not survive the
    sanitizer. The href does — an in-page anchor is passed through
-   `resolve_uri` unchanged — and `div.footnote` keeps its own class. */
-[dir="rtl"] .footnote a[href^="#fnref"] {
+   `resolve_uri` unchanged — and `div.footnote` keeps its own class.
+
+   Scoped to `.xedown-document[dir="rtl"]`, not bare `[dir="rtl"]`: a
+   descendant combinator does not stop at the article, so the bare form also
+   matched an English article sitting inside `<html dir="rtl">` on an Arabic
+   desktop — mirroring a left-to-right document's footnote arrow for a
+   reason that has nothing to do with the document. `dir` is emitted on the
+   very element that carries `class="xedown-document"` (see `_DOCUMENT` in
+   renderer.py), so this matches exactly when the *document* is
+   right-to-left. */
+.xedown-document[dir="rtl"] .footnote a[href^="#fnref"] {
   display: inline-block;
   transform: scaleX(-1);
 }
