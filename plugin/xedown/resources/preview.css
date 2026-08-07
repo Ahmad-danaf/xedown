@@ -26,10 +26,11 @@
    its own content or from the `text_direction` setting, and is what makes
    the layout below mirror.
 
-   On top of that, each text-bearing block still picks its own base direction
-   from its own first strong character, so an English paragraph inside an
-   Arabic document reads and aligns left-to-right while the list it sits in
-   keeps the document's direction. `unicode-bidi` is NOT inherited, so this
+   On top of that, each text-bearing block below still picks its own base
+   direction from its own first strong character, so an English paragraph
+   inside an Arabic document reads and aligns left-to-right. A list item is
+   deliberately not one of them — see the `li` rule under this one.
+   `unicode-bidi` is NOT inherited, so this
    is declared on every text-bearing block individually rather than once on a
    container — a structural wrapper (ul, ol, table, the article root, ...)
    would get no benefit from it and is deliberately left alone.
@@ -37,10 +38,29 @@
    `text-align: start` rather than `left`: under `plaintext` the used
    alignment follows each block's own resolved base direction, which is the
    whole point. */
-p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th {
+p, h1, h2, h3, h4, h5, h6, blockquote, td, th {
   unicode-bidi: plaintext;
   text-align: start;
 }
+
+/* A list item is the one text-bearing block deliberately left out of the
+   rule above, and it is a rendering constraint rather than a preference.
+
+   Under `plaintext` the list marker is positioned from the item's own
+   content-derived direction rather than the list's, and in a right-to-left
+   document that breaks two ways. An item whose content *begins* with a bidi
+   isolate — which is what the `a` rule below makes every link — renders its
+   bullet on top of the text, or not at all; `- [نص](file.md)` is enough to
+   show it. And an item resolving to the other direction puts its bullet on
+   the opposite side from all of its siblings.
+
+   A marker is layout, and layout follows the document: bullets, quote bars
+   and column order all move together, which is what `text_direction` means
+   when it says it sets the layout and not each block. The text inside the
+   item is still reordered by the bidi algorithm, so an English item in an
+   Arabic list reads left-to-right — it is aligned with its list rather than
+   with itself. `text-align: start` is kept, and now follows `direction`. */
+li { text-align: start; }
 
 /* Code must never follow the surrounding prose's detected direction. A
    fenced block containing Arabic comments still has to read as code, left

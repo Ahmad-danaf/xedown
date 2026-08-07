@@ -15,7 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   copy button on a code block all move to the correct side, while each
   paragraph, heading and cell still picks its own direction from its own
   content — so an English paragraph inside an Arabic document still reads
-  left to right. Fenced blocks, inline code and a link whose text is a URL or
+  left to right. A list item aligns with its list rather than with itself, so
+  every bullet in a list stays on the same side; the item's own text still
+  reads in its own direction.
+  Fenced blocks, inline code and a link whose text is a URL or
   a path stay left-to-right and no longer disturb the sentence around them.
   Set `"text_direction"` to `ltr` or `rtl` in
   `~/.config/xedown/settings.json` to override the automatic choice for the

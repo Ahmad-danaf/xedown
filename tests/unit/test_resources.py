@@ -10,6 +10,9 @@ from .cssparse import declarations
 # Text-bearing blocks that must pick up their own base direction and
 # start-relative alignment. `unicode-bidi` is not inherited, so this must be
 # declared on each of these individually, not once on a shared ancestor.
+#
+# `li` is deliberately absent -- see
+# test_a_list_item_takes_its_direction_from_the_document_not_its_own_content.
 _BIDI_TEXT_SELECTORS = (
     "p",
     "h1",
@@ -18,7 +21,6 @@ _BIDI_TEXT_SELECTORS = (
     "h4",
     "h5",
     "h6",
-    "li",
     "blockquote",
     "td",
     "th",
@@ -94,6 +96,37 @@ def test_stylesheet_applies_bidi_plaintext_to_every_text_bearing_block(preview_c
         assert any(
             "text-align" in body and "start" in body for body in bodies
         ), f"{selector} must declare text-align: start"
+
+
+def test_a_list_item_takes_its_direction_from_the_document_not_its_own_content(
+    preview_css,
+):
+    # `li` is the one text-bearing block that must NOT get
+    # `unicode-bidi: plaintext`, and this is a rendering constraint rather
+    # than a stylistic choice.
+    #
+    # Under `plaintext` WebKit positions the list marker from the item's own
+    # content-derived direction rather than the list's. Two things then go
+    # wrong in a right-to-left document: an item whose content *begins* with
+    # a bidi isolate -- which is exactly what `a { unicode-bidi: plaintext }`
+    # below makes every link -- renders its bullet on top of the text or not
+    # at all; and an item that resolves to the other direction puts its
+    # bullet on the far side from every sibling's.
+    #
+    # A marker is layout, and layout follows the document: bullets, quote
+    # bars and column order all move together. The text inside the item is
+    # still reordered by the bidi algorithm, so an English item in an Arabic
+    # list reads correctly -- it is aligned with its list rather than with
+    # itself.
+    for body in _rule_bodies_for(preview_css, "li"):
+        assert "plaintext" not in body, (
+            "li must not declare unicode-bidi: plaintext -- it misplaces the "
+            "list marker; see this test's comment"
+        )
+    assert any(
+        "text-align" in body and "start" in body
+        for body in _rule_bodies_for(preview_css, "li")
+    ), "li must still align to the start side"
 
 
 def test_stylesheet_no_longer_hardcodes_left_alignment_for_table_cells(preview_css):

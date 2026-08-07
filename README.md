@@ -48,9 +48,12 @@ Markdown modes inside the same tab.
   place instead. Nothing xedown does ever reaches out to the network.
 - Right-to-left documents: Arabic and Hebrew lay out as well as they read.
   Bullets, indentation, quote bars, table columns, footnote markers and the
-  copy button all move to the correct side, while each paragraph, heading,
-  list item and table cell still picks its own direction from its own
-  content — so mixed documents read correctly in both directions. Code stays
+  copy button all move to the correct side, while each paragraph, heading and
+  table cell still picks its own direction from its own content — so mixed
+  documents read correctly in both directions. A list item is the exception:
+  it aligns with its list rather than with itself, so every bullet in a list
+  stays on the same side, and the item's text still reads in its own
+  direction. Code stays
   left-to-right whatever surrounds it. Override the automatic choice for a
   whole document with `text_direction` in
   [docs/settings.md](docs/settings.md). One limitation remains: a bare,

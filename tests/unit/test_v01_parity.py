@@ -92,6 +92,27 @@ ADDITIONS = {
     '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]',
 }
 
+# Declarations v0.1 shipped that v0.2 deliberately DROPS, with no v0.2
+# counterpart to put in SUBSTITUTIONS. Same doctrine as the two tables below:
+# an entry here changes an upgrading user's preview, so it is a decision
+# someone approved and the reason lives beside it.
+#
+# This table is the narrowest of the four, and should stay that way: a
+# removal is the one kind of change that leaves nothing behind to compare, so
+# nothing but the reason written here records that it was intended.
+DELIBERATE_REMOVALS = {
+    ("li", "unicode-bidi"): (
+        "brief 7: under `plaintext` WebKit positions a list marker from the "
+        "item's own content-derived direction rather than the list's. In a "
+        "right-to-left document an item beginning with a bidi isolate -- "
+        "which `a { unicode-bidi: plaintext }` makes every link -- paints its "
+        "bullet over the text or drops it, and an item resolving the other "
+        "way puts its bullet on the far side from its siblings. A marker is "
+        "layout, and layout follows the document. `li { text-align: start }` "
+        "is kept and now follows `direction`."
+    ),
+}
+
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
 # so each one does change an upgrading user's preview, on purpose.
 #
@@ -175,6 +196,21 @@ def test_repository_is_the_v01_stylesheet():
     v01, v01_duplicates = declarations(V01.read_text(encoding="utf-8"))
     assert v01_duplicates == []
     shipped, _ = _shipped()
+
+    for selector, name in DELIBERATE_REMOVALS:
+        # Dropped from v0.1's side before the comparison below, so the
+        # removal is recorded rather than merely tolerated. Asserting it was
+        # there in v0.1 is what keeps a stale entry from silently exempting
+        # a property that no longer needs exempting.
+        assert name in v01.get(selector, {}), (
+            f"{selector} {{ {name} }} is in DELIBERATE_REMOVALS but v0.1 "
+            "never declared it"
+        )
+        del v01[selector][name]
+        assert name not in shipped.get(selector, {}), (
+            f"{selector} {{ {name} }} is in DELIBERATE_REMOVALS but the "
+            "shipped stylesheet still declares it"
+        )
 
     for old, new in SUBSTITUTIONS.items():
         old_selector, old_property = old

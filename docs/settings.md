@@ -79,10 +79,17 @@ right-to-left. Set it to `ltr` or `rtl` to decide for yourself. xedown reads
 
 Forcing a direction sets the **layout** — bullets and their indentation,
 quote bars, table column order, footnote markers, the copy button — and not
-each block. Every paragraph, heading, list item and table cell still picks
-its own reading direction from its own content, so `"text_direction": "rtl"`
-does not left-align your English paragraphs and `"ltr"` does not misplace the
+each block. Every paragraph, heading and table cell still picks its own
+reading direction from its own content, so `"text_direction": "rtl"` does not
+left-align your English paragraphs and `"ltr"` does not misplace the
 punctuation in your Arabic ones.
+
+A **list item** is the one exception, and deliberately so: it aligns with the
+list it belongs to rather than with its own content, so every bullet in a
+list stays on the same side. Its text is still reordered normally, so an
+English item in an Arabic list reads left to right — it simply sits on the
+list's side. A bullet is part of the layout, and the layout is what
+`text_direction` sets.
 
 This setting says nothing about xedown's own interface. The Preview/Markdown
 bar, the stylesheet notice and the error pages follow your **desktop's**
