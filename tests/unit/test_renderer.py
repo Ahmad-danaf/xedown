@@ -462,14 +462,20 @@ ENGLISH_DOC = "# Title\n\nAn ordinary English paragraph.\n"
 
 
 def _article_tag(page):
-    # Anchored on an actual `dir="..."` attribute (equals sign and quotes),
-    # not just the word "article" followed by "dir": brief 7's preview.css
-    # comment names the `<article dir>` attribute in backticks, and that
-    # literal text is inlined into the page inside the <style> block, ahead
-    # of the real element. A bare `<article[^>]*>` search matches that
-    # comment text first and never reaches the actual tag.
-    match = re.search(r'<article\b[^>]*\sdir="[^"]*"[^>]*>', page)
-    assert match, 'no <article dir="..."> in the page'
+    # Anchored on the content element's id, not on `dir="..."` itself: the
+    # four tests below use this helper to assert about `dir`, so anchoring
+    # the *lookup* on that same attribute would let it match a comment
+    # instead of the real element -- preview.css already names `<article
+    # dir>` in a comment once, which is why this had to be tightened before,
+    # and any future comment in preview.css, preview.js or an error template
+    # containing the literal text `<article dir="rtl">` would do it again.
+    # `CONTENT_ELEMENT_ID` is emitted unconditionally by the single
+    # template, so finding the element this way is decoupled from asserting
+    # anything about its direction.
+    match = re.search(
+        rf'<article\b[^>]*\bid="{renderer.CONTENT_ELEMENT_ID}"[^>]*>', page
+    )
+    assert match, f'no <article id="{renderer.CONTENT_ELEMENT_ID}"> in the page'
     return match.group(0)
 
 
