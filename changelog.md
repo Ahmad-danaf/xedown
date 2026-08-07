@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Right-to-left documents now lay out as well as they read. In an Arabic or
+  Hebrew document the list bullets and their indentation, the quote bar, the
+  table's column order, the footnote marker and its back-reference, and the
+  copy button on a code block all move to the correct side, while each
+  paragraph, heading and cell still picks its own direction from its own
+  content — so an English paragraph inside an Arabic document still reads
+  left to right. Fenced blocks, inline code and a link whose text is a URL or
+  a path stay left-to-right and no longer disturb the sentence around them.
+  Set `"text_direction"` to `ltr` or `rtl` in
+  `~/.config/xedown/settings.json` to override the automatic choice for the
+  whole document. xedown reads that file when it starts, so restart xed after
+  editing it. xedown's own interface follows your desktop's direction, not
+  your document's. You can also mark a run yourself with `<bdi>…</bdi>` or
+  `dir="ltr"`, which the preview now keeps.
 - A copy button on every code block, revealed on hover and reachable by
   keyboard. It copies exactly what the author wrote, confirms briefly, and
   says so when a copy fails rather than pretending it worked. Turn it off

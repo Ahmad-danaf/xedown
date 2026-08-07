@@ -111,6 +111,13 @@ body.xedown-theme-document h1 { color: #333; }  /* only under Document */
 Clear the setting — set it to `null` — and the preview goes back to the plain
 built-in theme.
 
+Use logical properties rather than physical ones — `padding-inline-start`
+rather than `padding-left`, `border-inline-start` rather than `border-left`,
+`inset-inline-end` rather than `right`. Every built-in theme does, which is
+what lets one stylesheet lay out correctly in both directions; a rule written
+with `padding-left` will put your indent on the wrong side of an Arabic
+document. `text-align: start` and `end` follow the same rule.
+
 ### What a custom stylesheet cannot do
 
 xedown never touches the network, and the preview's content security policy
