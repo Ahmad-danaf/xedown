@@ -69,9 +69,9 @@ demonstration of the known GFM paragraph/list gap tracked in `docs/known-issues.
 worth a look while it is on screen. Rows 32–34 also need a scratch stylesheet at
 `~/.config/xedown/mine.css`, which row 46 removes.
 
-Rows 47–52 use `tests/fixtures/rtl.md` and `tests/fixtures/mixed-direction.md`.
+Rows 47–53 use `tests/fixtures/rtl.md` and `tests/fixtures/mixed-direction.md`.
 Both are clean documents like `showcase.md` — an error placeholder in either is
-a real regression. Row 52 restores the settings file, like row 46.
+a real regression. Row 53 restores the settings file, like row 46.
 
 | # | Step | Expected |
 | --- | --- | --- |
@@ -123,10 +123,11 @@ a real regression. Row 52 restores the settings file, like row 46.
 | 46 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images` and `code_copy_buttons` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
 | 47 | Open `tests/fixtures/rtl.md`, in each of the four themes, light and dark | Bullets, numbers and their indentation on the right; the nested list indented from the right; the quote bar on the right; the table's first column on the right; the footnote marker and its back-reference on the right, with the arrow pointing right |
 | 48 | In the same file, hover a code block | The copy button is at the **top-left** of the block, and the code inside it still reads left to right with every line starting at the left edge |
-| 49 | Open `tests/fixtures/mixed-direction.md` | The page is right-to-left, but the English paragraph reads left to right against the left edge while the bullets of the list below it stay on the right. The path marked with `<bdi>` and the one marked `dir="ltr"` both read correctly, slashes included |
-| 50 | Set `"text_direction": "ltr"` in `~/.config/xedown/settings.json`, restart xed, and reopen `tests/fixtures/rtl.md` | The layout is left-to-right — bullets and quote bars on the left — while every Arabic paragraph still reads right-to-left, stays right-aligned, and keeps its full stop on the left |
-| 51 | Open a new empty file, save it as `scratch.md`, and type a line of Arabic | About a quarter of a second later the layout flips to right-to-left by itself |
-| 52 | Clean up: remove `text_direction` from `~/.config/xedown/settings.json`, and delete `scratch.md` | Your normal settings are restored |
+| 49 | Scroll the wide table in `tests/fixtures/rtl.md` sideways | A shadow marks the side with more content, starting on the **left** edge — the table's first column is on the right — and swaps to the right edge as you reach it |
+| 50 | Open `tests/fixtures/mixed-direction.md` | The page is right-to-left, but the English paragraph reads left to right against the left edge while the bullets of the list below it stay on the right. The path marked with `<bdi>` and the one marked `dir="ltr"` both read correctly, slashes included |
+| 51 | Set `"text_direction": "ltr"` in `~/.config/xedown/settings.json`, restart xed, and reopen `tests/fixtures/rtl.md` | The layout is left-to-right — bullets and quote bars on the left — while every Arabic paragraph still reads right-to-left, stays right-aligned, and keeps its full stop on the left |
+| 52 | Remove `text_direction` from `~/.config/xedown/settings.json` (row 51 left it forced to `ltr`) and restart xed, then open a new empty file, save it as `scratch.md`, switch to Markdown and type a line of Arabic, switch to Preview, and press <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo the line and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to redo it | About a quarter of a second after each key press the layout flips in place between left-to-right and right-to-left — no page reload, no flash, no lost scroll position |
+| 53 | Clean up: delete `scratch.md` | Your normal settings are restored |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion
