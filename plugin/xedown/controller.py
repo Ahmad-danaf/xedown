@@ -9,7 +9,15 @@ gi.require_version("Xed", "1.0")
 
 from gi.repository import GLib, Gtk, Xed
 
-from . import errors, images, renderer, settings, stylesheets, stylewatcher
+from . import (
+    direction,
+    errors,
+    images,
+    renderer,
+    settings,
+    stylesheets,
+    stylewatcher,
+)
 from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
@@ -43,6 +51,8 @@ class TabController:
         self._style = None
         self._image_display = images.DISPLAY_PLACEHOLDER
         self._copy_buttons = True
+        self._text_direction = direction.AUTO
+        self._ui_direction = direction.LTR
         self._stylesheet_token = None
         self._info_bar = None
 
@@ -147,6 +157,16 @@ class TabController:
         self._settings_token = store.connect(self._on_settings_changed)
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        self._text_direction = store.get(settings.TEXT_DIRECTION)
+        # The desktop's own direction, which xedown's chrome inside the page
+        # follows -- the mode bar already gets this free from GTK. Read once:
+        # a desktop's text direction is fixed at login, and nothing in xed
+        # signals a change to it.
+        self._ui_direction = (
+            direction.RTL
+            if Gtk.Widget.get_default_direction() == Gtk.TextDirection.RTL
+            else direction.LTR
+        )
 
         self.modebar = ModeBar()
         self.tab.pack_start(self.modebar, False, False, 0)
@@ -290,18 +310,23 @@ class TabController:
         """Re-render the body in place. Shared by the debounce timer and an
         immediate save-time refresh (see `_on_document_saved`) — neither
         case wants a full page reload."""
+        text = self._buffer_text()
         try:
             fragment = renderer.render_fragment(
-                self._buffer_text(),
+                text,
                 base_dir=self._base_dir(),
                 image_display=self._image_display,
             )
+            # Inside the try with the render: under `auto` this reads the
+            # same text, and a failure here must land on the same error page
+            # rather than escape as an exception.
+            resolved = direction.resolve(self._text_direction, text)
         except Exception as exc:  # noqa: BLE001 - never leave a blank pane
             self._reload_preview(
                 error=exc, restore_scroll=self._current_preview_scroll()
             )
             return
-        self.preview.update_body(fragment)
+        self.preview.update_body(fragment, resolved)
         self.state.preview_stale = False
 
     def _reload_preview(self, error=None, restore_scroll=0.0):
@@ -312,6 +337,7 @@ class TabController:
                 "Cannot render this document",
                 errors.render_failure_detail(error),
                 dark=self._dark,
+                ui_direction=self._ui_direction,
             )
         else:
             html = renderer.render_document(
@@ -321,6 +347,8 @@ class TabController:
                 style=self._style,
                 image_display=self._image_display,
                 code_copy_buttons=self._copy_buttons,
+                text_direction=self._text_direction,
+                ui_direction=self._ui_direction,
             )
         base_dir = self._base_dir()
         self.preview.load_document(
@@ -393,6 +421,12 @@ class TabController:
         the page's own config. Both are re-read before the theme branch, so
         a broadcast that moves several keys at once cannot leave a reload
         carrying the outgoing values.
+
+        `TEXT_DIRECTION` joins them for the same reason: it is one attribute
+        on the article, and no stylesheet changed, so there is nothing in
+        <head> to rebuild. It costs one re-render of the Markdown, which is
+        the right price for a setting nobody changes twice a day and reuses
+        machinery that is already correct about mode and staleness.
         """
         if self._style is None:
             return
@@ -403,8 +437,10 @@ class TabController:
             store, user=self._style.user
         )
         previous_display = self._image_display
+        previous_direction = self._text_direction
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        self._text_direction = store.get(settings.TEXT_DIRECTION)
 
         reloaded = False
         if settings.PREVIEW_THEME in changed:
@@ -435,10 +471,13 @@ class TabController:
         ) and self.preview is not None:
             self.preview.set_config(self._copy_buttons, self._image_display)
 
-        # Only the image mode changes the emitted body, and only the body:
-        # the CSS for all three modes is already in the loaded page, so this
-        # is a fragment swap rather than a reload.
-        if self._image_display != previous_display:
+        # The two settings that change the emitted body, and only the body:
+        # the CSS for every image mode is already in the loaded page, and the
+        # direction is one attribute on the article. Neither needs a reload.
+        if (
+            self._image_display != previous_display
+            or self._text_direction != previous_direction
+        ):
             if self._built and self.state.mode is Mode.PREVIEW:
                 self._refresh_body_now()
             else:
