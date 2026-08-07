@@ -520,3 +520,26 @@ def test_the_footnote_backref_turns_around_in_a_right_to_left_document(preview_c
     assert any("scaleX(-1)" in body for body in bodies)
     # A transform does nothing to an inline box.
     assert any("inline-block" in body for body in bodies)
+
+
+def test_a_body_swap_carries_the_documents_direction(preview_js):
+    # Under `auto` the direction is a function of the content, so typing
+    # Arabic into an empty document has to flip the layout on the next
+    # debounce -- without a page reload, which is what replaceBody exists to
+    # avoid. Applied to the content element, which is what carries dir.
+    body = preview_js[preview_js.index("function replaceBody(") :]
+    assert "setAttribute" in body
+    assert '"dir"' in body
+    # Only the two real values, so a bad host call cannot write junk into the
+    # attribute.
+    assert '"rtl"' in body and '"ltr"' in body
+
+
+def test_the_table_cue_reads_the_containers_own_direction(preview_js):
+    # scrollLeft runs negative from a resting 0 in a right-to-left container,
+    # so both cues would be wrong from the first frame: a wide Arabic table
+    # would show "more content" against the edge that has none.
+    body = preview_js[preview_js.index("function updateTableCue(") :]
+    assert "Math.abs" in body
+    assert "getComputedStyle" in preview_js
+    assert "xedown-more-left" in body and "xedown-more-right" in body
