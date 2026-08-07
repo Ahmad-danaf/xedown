@@ -92,6 +92,8 @@ find "$STAGING" -name '*.py[cod]' -delete
 REQUIRED=(
   "xedown/__init__.py"
   "xedown/renderer.py"
+  "xedown/stylesheets.py"
+  "xedown/stylewatcher.py"
   "xedown/vendoring.py"
   "xedown/vendor/MANIFEST.md"
   "xedown/vendor/markdown/__init__.py"

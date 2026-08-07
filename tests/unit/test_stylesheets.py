@@ -315,3 +315,18 @@ def test_assemble_with_no_style_at_all_still_works():
     css, effective = stylesheets.assemble()
     assert effective == themes.DEFAULT_THEME
     assert "--xedown-bg" in css
+
+
+# --- the file watcher ---------------------------------------------------------
+
+
+def test_the_watcher_module_imports_without_a_desktop():
+    # It talks to Gio, but lazily, inside its methods -- the same shape
+    # appearance.AppearanceWatcher uses for Gtk. A module-level `gi` import
+    # here would put it out of reach of every unit test in this file and
+    # break the import in CI, where no typelibs exist.
+    from xedown import stylewatcher
+
+    assert stylewatcher.DEBOUNCE_MS > 0
+    assert stylewatcher.get_watcher() is stylewatcher.get_watcher()
+    assert stylewatcher.get_watcher().current().problem is None
