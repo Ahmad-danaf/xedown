@@ -9,7 +9,7 @@ gi.require_version("Xed", "1.0")
 
 from gi.repository import GLib, Gtk, Xed
 
-from . import errors, renderer, settings, stylesheets, stylewatcher
+from . import errors, images, renderer, settings, stylesheets, stylewatcher
 from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
@@ -41,6 +41,8 @@ class TabController:
         self._active = False
         self._dark = False
         self._style = None
+        self._image_display = images.DISPLAY_PLACEHOLDER
+        self._copy_buttons = True
         self._stylesheet_token = None
         self._info_bar = None
 
@@ -143,6 +145,8 @@ class TabController:
             store, user=stylewatcher.get_watcher().current()
         )
         self._settings_token = store.connect(self._on_settings_changed)
+        self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
+        self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
 
         self.modebar = ModeBar()
         self.tab.pack_start(self.modebar, False, False, 0)
@@ -288,7 +292,9 @@ class TabController:
         case wants a full page reload."""
         try:
             fragment = renderer.render_fragment(
-                self._buffer_text(), base_dir=self._base_dir()
+                self._buffer_text(),
+                base_dir=self._base_dir(),
+                image_display=self._image_display,
             )
         except Exception as exc:  # noqa: BLE001 - never leave a blank pane
             self._reload_preview(
@@ -313,6 +319,8 @@ class TabController:
                 base_dir=self._base_dir(),
                 dark=self._dark,
                 style=self._style,
+                image_display=self._image_display,
+                code_copy_buttons=self._copy_buttons,
             )
         base_dir = self._base_dir()
         self.preview.load_document(
@@ -379,6 +387,12 @@ class TabController:
         inlined in <head> and `update_body` only swaps the article. Width and
         text size do not: they are two custom properties the loaded page
         already reads, so they are poked in place.
+
+        `REMOTE_IMAGES` and `CODE_COPY_BUTTONS` are handled here rather than
+        through a reload: the first changes only the body, the second only
+        the page's own config. Both are re-read before the theme branch, so
+        a broadcast that moves several keys at once cannot leave a reload
+        carrying the outgoing values.
         """
         if self._style is None:
             return
@@ -388,6 +402,9 @@ class TabController:
         self._style = stylesheets.PreviewStyle.from_settings(
             store, user=self._style.user
         )
+        previous_display = self._image_display
+        self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
+        self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
 
         reloaded = False
         if settings.PREVIEW_THEME in changed:
@@ -406,6 +423,26 @@ class TabController:
             self.preview.set_metrics(
                 self._style.content_width_rem, self._style.text_size_px
             )
+
+        if reloaded:
+            # The reload already carried both values in its own config block
+            # and re-rendered the body with them. Poking the outgoing page
+            # would land on nothing: load_html is asynchronous.
+            return
+
+        if (
+            settings.CODE_COPY_BUTTONS in changed or settings.REMOTE_IMAGES in changed
+        ) and self.preview is not None:
+            self.preview.set_config(self._copy_buttons, self._image_display)
+
+        # Only the image mode changes the emitted body, and only the body:
+        # the CSS for all three modes is already in the loaded page, so this
+        # is a fragment swap rather than a reload.
+        if self._image_display != previous_display:
+            if self._built and self.state.mode is Mode.PREVIEW:
+                self._refresh_body_now()
+            else:
+                self.state.preview_stale = True
 
     def _on_user_stylesheet_changed(self, user):
         """The user's stylesheet moved, or its file changed.
