@@ -56,6 +56,31 @@ pre, code {
   unicode-bidi: isolate;
 }
 
+/* A link's text is its own run. A URL or a path used as link text inside an
+   Arabic sentence would otherwise drag the sentence's neutrals — its
+   slashes, dots and colons — to the wrong end of it.
+
+   `plaintext`, not `isolate`: `isolate` takes its base direction from the
+   inherited `direction` property, so it would read Arabic link text
+   left-to-right inside a left-to-right document. `plaintext` takes it from
+   the link's own content, which is correct in both directions and changes
+   nothing for a link whose text matches the prose around it. */
+a { unicode-bidi: plaintext; }
+
+/* The footnote back-reference means "go back", and back is the other way in
+   a right-to-left document. U+21A9 is not a mirrored character, so the glyph
+   is flipped rather than left to the bidi algorithm — and `inline-block`
+   because a transform does nothing to an inline box.
+
+   Targeted by href rather than by class: `class` is not an allowed attribute
+   on `a`, so Python-Markdown's `footnote-backref` does not survive the
+   sanitizer. The href does — an in-page anchor is passed through
+   `resolve_uri` unchanged — and `div.footnote` keeps its own class. */
+[dir="rtl"] .footnote a[href^="#fnref"] {
+  display: inline-block;
+  transform: scaleX(-1);
+}
+
 .xedown-document {
   max-width: calc(var(--xedown-content-width) * var(--xedown-measure-scale));
   overflow-wrap: break-word;

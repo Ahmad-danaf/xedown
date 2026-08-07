@@ -87,6 +87,9 @@ ADDITIONS = {
     ".xedown-code-block:hover > .xedown-copy",
     ".xedown-copy:focus-visible",
     "@media (hover: none) .xedown-copy",
+    # v0.1 emitted no `dir` attribute anywhere, so a rule scoped to
+    # [dir="rtl"] cannot match anything a v0.1 page produced.
+    '[dir="rtl"] .footnote a[href^="#fnref"]',
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
@@ -143,6 +146,10 @@ DELIBERATE_DECLARATIONS = {
     ("td", "min-width"): ("brief 5: a floor under column width"),
     ("blockquote", "padding-inline-start"): (
         "brief 7: the quote's indent, split out of v0.1's four-value padding"
+    ),
+    ("a", "unicode-bidi"): (
+        "brief 7: a link's text is its own bidi run, so a URL used as link "
+        "text stops dragging the sentence's neutrals around"
     ),
 }
 

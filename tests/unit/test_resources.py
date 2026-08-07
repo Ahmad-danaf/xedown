@@ -491,3 +491,32 @@ def test_the_list_indent_is_start_relative_in_every_theme():
     for theme in themes.THEMES:
         css = vendoring.read_resource(theme.stylesheet)
         assert "padding-inline-start" in css, f"{theme.identifier} indents no list"
+
+
+def test_a_links_text_is_its_own_bidi_run(preview_css):
+    # A URL or a path used as link text inside an Arabic sentence would
+    # otherwise drag the sentence's neutrals -- its slashes, dots and colons
+    # -- to the wrong end. `plaintext` rather than `isolate`: `isolate` takes
+    # its base direction from the inherited `direction` property, so it would
+    # read Arabic link text left-to-right inside a left-to-right document.
+    # `plaintext` takes it from the link's own content, which is right in
+    # both directions.
+    bodies = _rule_bodies_for(preview_css, "a")
+    assert any(
+        "unicode-bidi" in body and "plaintext" in body for body in bodies
+    ), "a must declare unicode-bidi: plaintext"
+    assert not any("isolate" in body for body in bodies)
+
+
+def test_the_footnote_backref_turns_around_in_a_right_to_left_document(preview_css):
+    # U+21A9 is not a mirrored character, so the glyph has to be flipped
+    # rather than left to the bidi algorithm. Targeted by href, not by class:
+    # `class` is not an allowed attribute on `a`, so `footnote-backref` does
+    # not survive the sanitizer -- but an in-page anchor passes through
+    # resolve_uri untouched.
+    selector = '[dir="rtl"] .footnote a[href^="#fnref"]'
+    bodies = _rule_bodies_for(preview_css, selector)
+    assert bodies, f"no rule for {selector}"
+    assert any("scaleX(-1)" in body for body in bodies)
+    # A transform does nothing to an inline box.
+    assert any("inline-block" in body for body in bodies)
