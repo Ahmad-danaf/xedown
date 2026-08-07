@@ -13,6 +13,7 @@ Every step is wrapped by `_guard`, which turns an uncaught exception into a
 FAIL line rather than silently ending the sequence.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -945,25 +946,38 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             return False
 
         def on_result(webview, result, _user_data):
+            notice, children, failure = "", 0, ""
             try:
                 value = webview.run_javascript_finish(result)
-                text = value.get_js_value().to_string()
+                payload = json.loads(value.get_js_value().to_string())
+                notice = payload.get("notice") or ""
+                children = payload.get("children") or 0
             except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
-                text = f"<error: {exc}>"
+                failure = f"<error: {exc}>"
             record(
                 "stylesheet-deletion-shows-a-notice",
-                "probe.css" in text and "not applied" in text,
-                f"notice: {text!r}",
+                "probe.css" in notice and "not applied" in notice,
+                f"notice: {notice!r}{failure}",
             )
+            # The article is always emitted, and the notice is its sibling, so a
+            # child count of zero means the document itself did not render --
+            # which is also what an error page looks like. Reading the notice
+            # text alone could not tell those apart from a blank page: the JS
+            # degrades to '' rather than throwing, so the old assertion passed
+            # for exactly the failure it was named after.
             record(
                 "stylesheet-deletion-leaves-the-document-rendered",
-                "<error:" not in text,
-                f"notice: {text!r}",
+                children > 0 and not failure,
+                f"content children: {children}{failure}",
             )
             self._restore_settings()
 
         preview.widget.run_javascript(
-            "(document.querySelector('.xedown-notice') || {}).textContent || ''",
+            "JSON.stringify({"
+            "notice: (document.querySelector('.xedown-notice') || {}).textContent || '',"
+            "children: (document.getElementById('xedown-content')"
+            " || {children: []}).children.length"
+            "})",
             None,
             on_result,
             None,
