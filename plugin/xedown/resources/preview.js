@@ -69,14 +69,45 @@
     }
   }
 
-  /* Defined ahead of highlight(): the file's own reading order mirrors
-     decorate()'s call order below, source captured before it is rewritten. */
+  function highlight(root) {
+    if (typeof hljs === "undefined") { return; }
+    var engine = hljs.default || hljs;
+    var blocks = root.querySelectorAll("pre > code");
+    for (var i = 0; i < blocks.length; i++) {
+      var block = blocks[i];
+      var declared = null;
+      var classes = (block.className || "").split(/\s+/);
+      for (var c = 0; c < classes.length; c++) {
+        if (classes[c].indexOf("language-") === 0) {
+          declared = classes[c].slice("language-".length);
+        }
+      }
+      /* No language, or one outside the bundle, renders as a plain block.
+         The bundle throws on unregistered languages, so guard both ways. */
+      if (!declared || !engine.getLanguage(declared)) { continue; }
+      try {
+        var result = engine.highlight(block.textContent, { language: declared });
+        block.innerHTML = result.value;
+        block.classList.add("hljs");
+      } catch (e) {
+        /* Leave the block unhighlighted rather than breaking the document. */
+      }
+    }
+  }
+
   function captureSources(root) {
     var blocks = root.querySelectorAll("pre > code");
     for (var i = 0; i < blocks.length; i++) {
       var text = blocks[i].textContent || "";
       /* The newline before a closing fence is a delimiter, not code. */
       if (text.charAt(text.length - 1) === "\n") { text = text.slice(0, -1); }
+      /* textContent can never contain "\r": the HTML parser normalises
+         "\r\n" and lone "\r" to "\n" before the DOM exists, and the text
+         reaching the renderer already came from a GtkTextBuffer, which
+         holds "\n" regardless of the file's line endings and restores the
+         original ending on save. So this always matches what selecting and
+         copying in the source view would return -- there is no CRLF to
+         preserve at this layer. */
       sources.set(blocks[i], text);
     }
   }
@@ -153,32 +184,6 @@
   function finishCopy(button, ok) {
     setCopyLabel(button, ok ? "Copied" : "Copy failed");
     window.setTimeout(function () { setCopyLabel(button, "Copy"); }, COPY_REVERT_MS);
-  }
-
-  function highlight(root) {
-    if (typeof hljs === "undefined") { return; }
-    var engine = hljs.default || hljs;
-    var blocks = root.querySelectorAll("pre > code");
-    for (var i = 0; i < blocks.length; i++) {
-      var block = blocks[i];
-      var declared = null;
-      var classes = (block.className || "").split(/\s+/);
-      for (var c = 0; c < classes.length; c++) {
-        if (classes[c].indexOf("language-") === 0) {
-          declared = classes[c].slice("language-".length);
-        }
-      }
-      /* No language, or one outside the bundle, renders as a plain block.
-         The bundle throws on unregistered languages, so guard both ways. */
-      if (!declared || !engine.getLanguage(declared)) { continue; }
-      try {
-        var result = engine.highlight(block.textContent, { language: declared });
-        block.innerHTML = result.value;
-        block.classList.add("hljs");
-      } catch (e) {
-        /* Leave the block unhighlighted rather than breaking the document. */
-      }
-    }
   }
 
   /* Remote images are meant to be replaced with a placeholder before this

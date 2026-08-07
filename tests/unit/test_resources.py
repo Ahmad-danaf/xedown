@@ -382,6 +382,10 @@ def test_the_copy_button_reports_a_failure_rather_than_pretending(preview_js):
 
 
 def test_the_copied_text_is_captured_before_highlighting(preview_js):
-    capture = preview_js.index("captureSources(")
-    highlight = preview_js.index("highlight(root)")
-    assert capture < highlight, "highlight() would be copied instead of the source"
+    # highlight() rewrites each block's innerHTML, so capturing after it
+    # would copy whatever the highlighter left behind rather than what the
+    # author wrote. What matters is the order of the CALLS inside
+    # decorate() -- not the order the functions happen to be defined in,
+    # which is what a naive search of the whole file measures instead.
+    body = preview_js[preview_js.index("function decorate(") :]
+    assert body.index("captureSources(root)") < body.index("highlight(root)")
