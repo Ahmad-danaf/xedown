@@ -177,3 +177,19 @@ th, td { min-width: 8ch; }
 }
 
 img { max-width: 100%; height: auto; }
+
+/* A long screenshot should not run for several screens. With both
+   dimensions auto the browser's own constraint algorithm shrinks the image
+   proportionally, so the ratio is preserved by construction rather than by
+   a rule that has to be got right -- and `max-*` never enlarges, so a small
+   image keeps its natural size. An image the author sized by hand is
+   excluded by the selector: they already said what they wanted. */
+img:not([width]):not([height]) { max-height: 80vh; width: auto; }
+
+/* xedown speaking, not the document: the author's alt text, shown in place
+   of an image that cannot be displayed. Distinguishable from real prose on
+   purpose. */
+.xedown-image-alt {
+  font-style: italic;
+  color: var(--xedown-muted);
+}

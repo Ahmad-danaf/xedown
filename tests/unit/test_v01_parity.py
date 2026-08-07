@@ -60,6 +60,8 @@ ADDITIONS = {
     ".xedown-table-scroll.xedown-more-left",
     ".xedown-table-scroll.xedown-more-right",
     ".xedown-table-scroll.xedown-more-left.xedown-more-right",
+    # Emitted only in alt-only mode, which v0.1 had no setting for.
+    ".xedown-image-alt",
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
@@ -76,6 +78,9 @@ DELIBERATE_SELECTORS = {
     ),
     'li.task-list-item > input[type="checkbox"]:checked::after': (
         "brief 5: the tick inside a drawn checkbox"
+    ),
+    "img:not([width]):not([height])": (
+        "brief 5: very tall images are capped to the window"
     ),
 }
 

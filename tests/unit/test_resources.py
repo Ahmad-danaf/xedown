@@ -307,3 +307,34 @@ def test_the_script_keeps_the_table_cue_in_step_with_scrolling(preview_js):
     assert "xedown-more-right" in preview_js
     assert "scrollLeft" in preview_js
     assert "ResizeObserver" in preview_js
+
+
+def test_a_tall_image_is_capped_without_losing_its_ratio(preview_css):
+    bodies = _rule_bodies_for(preview_css, "img:not([width]):not([height])")
+    assert bodies, "no cap for images the author did not size"
+    for body in bodies:
+        assert "max-height" in body
+        # Both dimensions auto is what makes the browser's own constraint
+        # algorithm shrink the image proportionally. Capping height while
+        # width stays fixed is exactly how an aspect ratio gets broken.
+        assert "width: auto" in body
+
+
+def test_the_cap_leaves_an_author_sized_image_alone(preview_css):
+    # The selector, not a second rule, is what excludes them: an author who
+    # wrote width= or height= already said what size they wanted.
+    assert ":not([width]):not([height])" in preview_css
+
+
+def test_images_are_never_enlarged(preview_css):
+    for body in _rule_bodies_for(preview_css, "img"):
+        assert "min-width" not in body
+        assert "min-height" not in body
+
+
+def test_alt_text_shown_in_place_of_an_image_is_visibly_not_the_document(preview_css):
+    bodies = _rule_bodies_for(preview_css, ".xedown-image-alt")
+    assert bodies, "no rule for alt-only placeholders"
+    for body in bodies:
+        assert "italic" in body
+        assert "var(--xedown-muted)" in body
