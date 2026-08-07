@@ -99,3 +99,18 @@ def test_the_stylesheet_notice_escapes_the_theme_label():
         errors.STYLESHEET_EMPTY, "/x.css", theme_label="<b>Nope</b>"
     )
     assert "<b>" not in html_text
+
+
+def test_the_stylesheet_notice_escapes_a_phrase_containing_markup():
+    # STYLESHEET_UNSAFE's own phrase contains a literal "</style", which the
+    # HTML tokenizer reads as an end tag and follows to the next ">" -- the
+    # notice's own closing </div>. Unescaped, that swallows half the message
+    # and leaves the document nested inside the error bar.
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_UNSAFE, "/home/you/mine.css", theme_label="Repository"
+    )
+    assert "</style" not in html_text
+    assert "&lt;/style" in html_text
+    assert html_text.endswith("</div>")
+    assert "cannot be embedded safely" in html_text
+    assert "Showing the Repository theme." in html_text

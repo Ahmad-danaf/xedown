@@ -124,9 +124,16 @@ def user_stylesheet_notice(problem, path, detail="", theme_label=""):
     this, so a notice inside it would vanish on the first keystroke.
 
     Both the path and the theme label are escaped. The path comes out of a
-    file the user hand-edits, which makes it data rather than markup.
+    file the user hand-edits, which makes it data rather than markup. So can
+    the phrase itself: STYLESHEET_UNSAFE's own wording contains a literal
+    "</style", which an unescaped interpolation would hand the HTML
+    tokenizer as an end-tag-open, consuming everything up to this notice's
+    own closing </div>.
     """
-    sentence = f"{html.escape(str(path))} {stylesheet_problem_phrase(problem, detail)}."
+    sentence = (
+        f"{html.escape(str(path))} "
+        f"{html.escape(stylesheet_problem_phrase(problem, detail))}."
+    )
     trailer = (
         f" Showing the {html.escape(str(theme_label))} theme." if theme_label else ""
     )
