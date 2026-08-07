@@ -95,8 +95,16 @@ _PLAIN_TXT = (
 # including the Arabic comments -- the case most likely to regress, since
 # code must stay left-to-right while its comments are right-to-left.
 _COPY_CODE = "# هذه دالة بسيطة\n" "def total(items):\n" "    return sum(items)\n"
+# Deliberately titled "Round Trip", not "Copy": step_copy_verify asserts the
+# word "Copy" is absent from a select-all, which is what proves the button's
+# `user-select: none` actually works (confirmed live: with that CSS removed,
+# the same select-all picks up a second "Copy" from the button label).
+# A heading that itself says "Copy" would make that assertion fail on every
+# run regardless of whether the CSS is doing its job -- caught by an
+# out-of-probe repro against this exact fixture before this comment was
+# written, which is also how the CSS-removed case above was confirmed.
 _COPY_MD = (
-    "# Copy\n\n```python\n"
+    "# Round Trip\n\n```python\n"
     + _COPY_CODE
     + "```\n\n"
     + "| a | b | c | d | e | f | g | h | i | j |\n"
