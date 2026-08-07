@@ -3,7 +3,7 @@
 import secrets
 import urllib.parse
 
-from . import errors, themes, vendoring
+from . import errors, stylesheets, vendoring
 from .links import REMOTE_SCHEMES, resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
@@ -21,7 +21,7 @@ _CSP = (
     "object-src 'none'"
 )
 
-# The stylesheet is assembled by `themes.assemble_css`: the syntax sheet
+# The stylesheet is assembled by `stylesheets.assemble_css`: the syntax sheet
 # first, then preview.css, then the theme. preview.css carries an override
 # of at least equal specificity to the highlight theme's — see the comment
 # above `pre code.hljs` in preview.css for why that ordering, and not just
@@ -111,7 +111,7 @@ def render_document(text, base_dir=None, dark=False, nonce=None, theme=None):
     token = nonce or secrets.token_urlsafe(16)
     try:
         body = render_fragment(text, base_dir=base_dir)
-        stylesheet, theme_identifier = themes.assemble_css(theme, dark=dark)
+        stylesheet, theme_identifier = stylesheets.assemble_css(theme, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:

@@ -6,16 +6,16 @@ the single source of truth for which themes exist, and it is what brief 14's
 preferences window iterates instead of hardcoding a second list — the same
 role `SETTINGS` plays in `settings.py`.
 
+Assembling the stylesheet a page receives is `stylesheets.py`'s job, not this
+module's: it layers the user's own stylesheet and the content-width and
+text-size settings on top of a theme, and emission order across all five
+layers has to live in one place.
+
 The desktop's light/dark setting is a separate axis entirely and belongs to
 `appearance.py`. Every theme works in both.
 """
 
-import sys
-
-from . import vendoring
-
 DEFAULT_THEME = "repository"
-BASE_STYLESHEET = "preview.css"
 SHARED_SYNTAX_STYLESHEET = "syntax.css"
 
 
@@ -86,39 +86,3 @@ def resolve(identifier):
         if theme is not None:
             return theme
     return _BY_IDENTIFIER[DEFAULT_THEME]
-
-
-def assemble_css(identifier, dark=False):
-    """`(css, effective_identifier)` for one theme, in emission order.
-
-    Syntax sheet, then base, then theme. Syntax comes first because
-    `preview.css`'s `pre code.hljs` override beats the highlight stylesheet
-    by source order rather than by specificity — see the comment above that
-    rule.
-
-    Raises `VendorError` only when the *default* theme cannot be read, which
-    means the installation itself is incomplete; `render_document` turns that
-    into a readable page.
-    """
-    theme = resolve(identifier)
-    try:
-        return _read(theme, dark), theme.identifier
-    except vendoring.VendorError as exc:
-        if theme.identifier == DEFAULT_THEME:
-            raise
-        sys.stderr.write(
-            f"xedown: the {theme.identifier} theme could not be read ({exc}); "
-            f"using {DEFAULT_THEME} instead\n"
-        )
-        default = _BY_IDENTIFIER[DEFAULT_THEME]
-        return _read(default, dark), default.identifier
-
-
-def _read(theme, dark):
-    return "\n".join(
-        (
-            vendoring.read_resource(theme.syntax_stylesheet(dark)),
-            vendoring.read_resource(BASE_STYLESHEET),
-            vendoring.read_resource(theme.stylesheet),
-        )
-    )
