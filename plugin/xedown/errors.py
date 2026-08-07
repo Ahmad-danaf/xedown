@@ -69,9 +69,25 @@ def missing_vendor_detail(exc):
     )
 
 
-def remote_image_blocked_text(uri):
-    """Placeholder text shown in place of an image the plugin refuses to fetch."""
-    return f"Remote image blocked: {uri}"
+def remote_image_text(uri):
+    """Placeholder text for an image xedown does not fetch.
+
+    Not "blocked": that invites "how do I unblock it?", and nothing can.
+    This is a statement about what xedown does, which is nothing.
+    """
+    return f"Remote image, not fetched: {uri}"
+
+
+def local_image_missing_text(path):
+    """Placeholder text for a reference that resolved to nothing on disk."""
+    return f"Image not found: {path}"
+
+
+def local_image_unreadable_text(path, detail=""):
+    """Placeholder text for a file that is there and cannot be opened."""
+    if detail:
+        return f"Image could not be read: {path} ({detail})"
+    return f"Image could not be read: {path}"
 
 
 def local_image_unresolved_text(uri):
@@ -81,6 +97,18 @@ def local_image_unresolved_text(uri):
     against.
     """
     return f"Image not found: {uri}. {UNSAVED_DOCUMENT_HINT}"
+
+
+def with_alt(text, alt):
+    """`text`, followed by the author's alt text when there is any.
+
+    Appended rather than substituted: a reader needs both what the image was
+    meant to say and why it is not there.
+    """
+    words = (alt or "").strip()
+    if words:
+        return f"{text} — “{words}”"
+    return text
 
 
 # The ways a user's own stylesheet can fail to be usable. Named here, beside

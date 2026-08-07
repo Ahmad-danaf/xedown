@@ -85,12 +85,57 @@ a:focus-visible {
 
 ul.task-list { list-style: none; padding-left: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
+
+/* Drawn rather than native, so a checkbox belongs to the selected theme
+   instead of to the browser. Two states, two tokens: unchecked identifies
+   itself only by this border, so it needs a boundary that meets WCAG
+   1.4.11's 3:1 for a UI component on its own -- --xedown-muted on
+   --xedown-bg is a SEMANTIC_PAIRS row in test_contrast.py gated at 4.5:1,
+   comfortably above that floor in every theme and appearance. (--xedown-
+   border is a separator tint, gridlines and the like, not gated for
+   component-boundary contrast, and measures as low as 1.25:1 here -- a
+   regression against the native control this replaced.) Checked fills the
+   whole box, so its colour is the box's own surface, not its edge: that is
+   --xedown-link on --xedown-bg below, the same gated pair at the same
+   4.5:1. */
 li.task-list-item > input[type="checkbox"] {
   margin: .45em 0 0;
   width: .95em;
   height: .95em;
   flex: none;
-  accent-color: var(--xedown-link);
+  position: relative;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--xedown-bg);
+  border: 1px solid var(--xedown-muted);
+  border-radius: .2em;
+  /* A disabled control is dimmed and given a "no entry" cursor by the
+     browser. Both read as broken. These are read-only by design -- the
+     plugin never writes to the buffer -- so they must look deliberate. */
+  opacity: 1;
+  cursor: default;
+}
+
+li.task-list-item > input[type="checkbox"]:checked {
+  background: var(--xedown-link);
+  border-color: var(--xedown-link);
+}
+
+/* The tick is a refinement, not the signal. A pseudo-element on a replaced
+   element is the least certain rule here, and a filled box against an
+   empty one already distinguishes the two states in every theme -- so this
+   failing to render would not make a checked item unreadable. */
+li.task-list-item > input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: .2em;
+  height: .42em;
+  margin: -.26em 0 0 -.1em;
+  border: solid var(--xedown-bg);
+  border-width: 0 .13em .13em 0;
+  transform: rotate(45deg);
 }
 
 pre { overflow-x: auto; }          /* the block scrolls, never the page */
@@ -109,7 +154,94 @@ pre code.hljs {
   background: none;
 }
 
+/* The copy button lives beside <pre>, not inside it, and out of flow: the
+   block scrolls horizontally, and showing or hiding a button must not move
+   or resize the code it belongs to. The wrapper adds no padding or border,
+   so <pre>'s own margins collapse through it unchanged. */
+.xedown-code-block { position: relative; }
+
+.xedown-copy {
+  position: absolute;
+  top: .5em;
+  right: .5em;
+  /* Wide enough for the longest label, so confirming a copy cannot
+     resize the button. */
+  min-width: 7em;
+  padding: .15em .6em;
+  font: inherit;
+  font-size: .8em;
+  color: var(--xedown-fg);
+  background: var(--xedown-code-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  /* Never part of a selection: a select-all, or a drag across the page,
+     must not pull the word "Copy" into what the reader copies. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* opacity rather than display or visibility, so the button stays in the
+   tab order; the focus rule is what makes it visible once reached. */
+.xedown-code-block:hover > .xedown-copy,
+.xedown-copy:focus-visible { opacity: 1; }
+
+.xedown-copy:focus-visible {
+  outline: 2px solid var(--xedown-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Without a pointer there is nothing to hover, and the button would be
+   reachable only by tabbing to it. */
+@media (hover: none) {
+  .xedown-copy { opacity: 1; }
+}
+
 .xedown-table-scroll { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; }
+
+/* `width: 100%` capped the table at the container, so a table with more
+   columns than fit was compressed rather than allowed to overflow -- and
+   the wrapper above it never had anything to scroll. `auto` lets the table
+   take the width it needs; `min-width` keeps a narrow one filling the
+   column exactly as it did in v0.1. */
+table { border-collapse: collapse; width: auto; min-width: 100%; }
+
+/* A floor under a column. Auto table layout will otherwise wrap prose down
+   to a few characters per column in a narrow window, which is the
+   "squashed into unreadable columns" this brief exists to stop. Cells still
+   wrap; only the squeezing stops. */
+th, td { min-width: 8ch; }
+
+/* The cue that a table continues past the edge. Inset shadows paint on the
+   container's own box and do not scroll with its content, so this stays put
+   at the visible edge; preview.js toggles the classes from the live scroll
+   position, so a shadow only ever appears on a side that has more to show. */
+.xedown-table-scroll.xedown-more-left {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-right {
+  box-shadow: inset -14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-left.xedown-more-right {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow),
+              inset -14px 0 10px -12px var(--xedown-shadow);
+}
 
 img { max-width: 100%; height: auto; }
+
+/* A long screenshot should not run for several screens. With both
+   dimensions auto the browser's own constraint algorithm shrinks the image
+   proportionally, so the ratio is preserved by construction rather than by
+   a rule that has to be got right -- and `max-*` never enlarges, so a small
+   image keeps its natural size. An image the author sized by hand is
+   excluded by the selector: they already said what they wanted. */
+img:not([width]):not([height]) { max-height: 80vh; width: auto; }
+
+/* xedown speaking, not the document: the author's alt text, shown in place
+   of an image that cannot be displayed. Distinguishable from real prose on
+   purpose. */
+.xedown-image-alt {
+  font-style: italic;
+  color: var(--xedown-muted);
+}

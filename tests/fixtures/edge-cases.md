@@ -15,8 +15,9 @@ the path, with no blank space left behind.
 
 ## Remote image, never fetched
 
-Expected: a placeholder naming the blocked address. Nothing here is ever
-fetched over the network — check with a network monitor if in doubt.
+Expected: a placeholder naming the address, saying it was not fetched.
+Nothing here is ever fetched over the network — check with a network
+monitor if in doubt.
 
 ![Remote image](https://example.com/not-fetched.png)
 

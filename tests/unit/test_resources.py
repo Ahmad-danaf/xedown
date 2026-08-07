@@ -241,3 +241,155 @@ def test_the_notice_bar_cannot_push_the_page_sideways(preview_css):
     # It carries a filesystem path, which can be long and has no spaces.
     bodies = _rule_bodies_for(preview_css, ".xedown-notice")
     assert any("overflow-wrap" in body for body in bodies)
+
+
+def test_task_list_checkboxes_are_drawn_rather_than_native(preview_css):
+    bodies = _rule_bodies_for(preview_css, 'li.task-list-item > input[type="checkbox"]')
+    assert any("appearance" in body and "none" in body for body in bodies)
+    # A disabled control is dimmed and given a "no entry" cursor. These are
+    # read-only on purpose, not unavailable, and must not look broken.
+    assert any("opacity: 1" in body for body in bodies)
+    assert any("cursor: default" in body for body in bodies)
+
+
+def test_a_checked_task_item_is_distinguishable_without_the_tick(preview_css):
+    # The tick is drawn by a pseudo-element on a replaced element, which is
+    # the least certain rule in this stylesheet. The fill is what actually
+    # carries the state, so it must be declared independently of the tick.
+    bodies = _rule_bodies_for(
+        preview_css, 'li.task-list-item > input[type="checkbox"]:checked'
+    )
+    assert bodies, "no :checked rule"
+    assert any("background" in body for body in bodies)
+
+
+def test_no_checkbox_colour_is_hardcoded(preview_css):
+    for selector in (
+        'li.task-list-item > input[type="checkbox"]',
+        'li.task-list-item > input[type="checkbox"]:checked',
+    ):
+        for body in _rule_bodies_for(preview_css, selector):
+            assert "#" not in body, f"{selector} declares a colour literal"
+
+
+def test_a_wide_table_overflows_rather_than_compresses(preview_css):
+    bodies = _rule_bodies_for(preview_css, "table")
+    # width: 100% would cap the table at the container and force the
+    # browser to squeeze columns instead of letting the wrapper scroll.
+    assert any("width: auto" in body for body in bodies)
+    assert any("min-width: 100%" in body for body in bodies)
+
+
+def test_table_cells_have_a_width_floor(preview_css):
+    for selector in ("th", "td"):
+        assert any(
+            "min-width" in body for body in _rule_bodies_for(preview_css, selector)
+        ), f"{selector} has no minimum width"
+
+
+def test_the_table_edge_cue_is_an_inset_shadow_from_the_theme(preview_css):
+    # Inset shadows paint on the container's own box and do not scroll with
+    # its content, which is what makes this an edge marker rather than a
+    # stripe that slides out of view.
+    for selector in (
+        ".xedown-table-scroll.xedown-more-left",
+        ".xedown-table-scroll.xedown-more-right",
+    ):
+        bodies = _rule_bodies_for(preview_css, selector)
+        assert bodies, f"no rule for {selector}"
+        for body in bodies:
+            assert "inset" in body
+            assert "var(--xedown-shadow)" in body
+
+
+def test_the_script_keeps_the_table_cue_in_step_with_scrolling(preview_js):
+    assert "xedown-more-left" in preview_js
+    assert "xedown-more-right" in preview_js
+    assert "scrollLeft" in preview_js
+    assert "ResizeObserver" in preview_js
+
+
+def test_a_tall_image_is_capped_without_losing_its_ratio(preview_css):
+    bodies = _rule_bodies_for(preview_css, "img:not([width]):not([height])")
+    assert bodies, "no cap for images the author did not size"
+    for body in bodies:
+        assert "max-height" in body
+        # Both dimensions auto is what makes the browser's own constraint
+        # algorithm shrink the image proportionally. Capping height while
+        # width stays fixed is exactly how an aspect ratio gets broken.
+        assert "width: auto" in body
+
+
+def test_the_cap_leaves_an_author_sized_image_alone(preview_css):
+    # The selector, not a second rule, is what excludes them: an author who
+    # wrote width= or height= already said what size they wanted.
+    assert ":not([width]):not([height])" in preview_css
+
+
+def test_images_are_never_enlarged(preview_css):
+    # img:not([width]):not([height]) is the rule that could plausibly
+    # acquire a min-height (it already caps max-height for tall images), so
+    # it needs the same check as the bare `img` selector.
+    for selector in ("img", "img:not([width]):not([height])"):
+        for body in _rule_bodies_for(preview_css, selector):
+            assert "min-width" not in body
+            assert "min-height" not in body
+
+
+def test_alt_text_shown_in_place_of_an_image_is_visibly_not_the_document(preview_css):
+    bodies = _rule_bodies_for(preview_css, ".xedown-image-alt")
+    assert bodies, "no rule for alt-only placeholders"
+    for body in bodies:
+        assert "italic" in body
+        assert "var(--xedown-muted)" in body
+
+
+def test_the_script_exposes_the_two_new_host_entry_points(preview_js):
+    for symbol in ("setConfig", "copyResult", "xedownConfig"):
+        assert symbol in preview_js
+
+
+def test_the_copy_button_can_never_join_a_selection(preview_css):
+    bodies = _rule_bodies_for(preview_css, ".xedown-copy")
+    assert bodies, "no rule for the copy button"
+    assert any("user-select: none" in body for body in bodies)
+
+
+def test_showing_the_copy_button_cannot_move_the_code_block(preview_css):
+    # Absolutely positioned inside a relatively positioned wrapper: it is
+    # out of flow, so revealing it changes no layout at all.
+    assert any(
+        "position: relative" in body
+        for body in _rule_bodies_for(preview_css, ".xedown-code-block")
+    )
+    assert any(
+        "position: absolute" in body
+        for body in _rule_bodies_for(preview_css, ".xedown-copy")
+    )
+
+
+def test_the_copy_button_is_reachable_by_keyboard(preview_css):
+    # opacity, not display or visibility: those would take it out of the tab
+    # order entirely. The focus rule is what makes it visible once reached.
+    assert ".xedown-copy:focus-visible" in preview_css
+    assert any(
+        "opacity: 0" in body for body in _rule_bodies_for(preview_css, ".xedown-copy")
+    )
+
+
+def test_the_copy_button_reports_a_failure_rather_than_pretending(preview_js):
+    assert "Copy failed" in preview_js
+    assert "Copied" in preview_js
+    # The host may be absent entirely -- post() no-ops then -- so a click
+    # with no answer has to resolve by itself.
+    assert "setTimeout" in preview_js
+
+
+def test_the_copied_text_is_captured_before_highlighting(preview_js):
+    # highlight() rewrites each block's innerHTML, so capturing after it
+    # would copy whatever the highlighter left behind rather than what the
+    # author wrote. What matters is the order of the CALLS inside
+    # decorate() -- not the order the functions happen to be defined in,
+    # which is what a naive search of the whole file measures instead.
+    body = preview_js[preview_js.index("function decorate(") :]
+    assert body.index("captureSources(root)") < body.index("highlight(root)")

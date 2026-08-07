@@ -8,10 +8,11 @@ jobs.
 Every construct in this file renders correctly: headings, text formatting,
 lists, task lists, a blockquote, a horizontal rule, a table, fenced code in
 two bundled languages, a working local image, a working external link, a
-working relative link, an in-page anchor, and a footnote. There is no error
-placeholder anywhere in it. Use it for a screenshot or a first look at
-Preview mode — anything that shows a broken reference here is a real
-regression.
+working relative link, an in-page anchor, and a footnote. It also carries a
+table wider than the reading column, a tall image, and a small one, to
+exercise the reading-polish CSS. There is no error placeholder anywhere in
+it. Use it for a screenshot or a first look at Preview mode — anything that
+shows a broken reference here is a real regression.
 
 ## `edge-cases.md` — does this fail well
 
@@ -35,6 +36,11 @@ stay left-to-right.
 addresses.** They are what the missing-image and dead-link rows of the
 manual smoke test check against; supplying them would silently delete that
 coverage, not repair anything.
+
+There is deliberately **no unreadable-image fixture**. "Could not be read"
+means a file that exists and cannot be opened, and git carries no mode-000
+file, so that case is covered by `tests/unit/test_images.py` instead. Do not
+"repair" the apparent gap by adding a file.
 
 ## `linked.md` and `pics/sample.png`
 

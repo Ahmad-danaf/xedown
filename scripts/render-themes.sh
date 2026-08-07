@@ -65,6 +65,24 @@ for w in (width.minimum, width.default, width.maximum):
         )
         rows.append(f'<li><a href="{name}">{name}</a></li>')
 
+# The three ways a blocked or missing image can be presented, so all three
+# get looked at in every theme rather than asserted.
+edge = root / "tests" / "fixtures" / "edge-cases.md"
+for display in ("placeholder", "alt", "hidden"):
+    for theme in themes.THEMES:
+        name = f"images-{display}-{theme.identifier}.html"
+        (out / name).write_text(
+            renderer.render_document(
+                edge.read_text(encoding="utf-8"),
+                base_dir=str(edge.parent),
+                dark=False,
+                style=stylesheets.PreviewStyle(theme=theme.identifier),
+                image_display=display,
+            ),
+            encoding="utf-8",
+        )
+        rows.append(f'<li><a href="{name}">{name}</a></li>')
+
 (out / "index.html").write_text(
     "<!DOCTYPE html><meta charset=utf-8><title>xedown themes</title>"
     "<ul>" + "".join(rows) + "</ul>",

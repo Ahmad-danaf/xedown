@@ -20,6 +20,7 @@
   --xedown-error-bg: #fff1f0;
   --xedown-error-fg: #b3261e;
   --xedown-error-border: #f5c2c0;
+  --xedown-shadow: rgba(31, 35, 40, .22);
   --xedown-measure-scale: 1;
   --xedown-text-scale: 1;
 }
@@ -36,6 +37,7 @@ body.dark {
   --xedown-error-bg: #3a2222;
   --xedown-error-fg: #ff9d94;
   --xedown-error-border: #5c3333;
+  --xedown-shadow: rgba(0, 0, 0, .55);
 }
 
 body {

@@ -67,7 +67,7 @@ a Python fence with Arabic comments that must stay left-to-right) and its
 demonstration of the known GFM paragraph/list gap tracked in `docs/known-issues.md`
 — neither has its own numbered row, but both are real content in that file and
 worth a look while it is on screen. Rows 32–34 also need a scratch stylesheet at
-`~/.config/xedown/mine.css`, which row 36 removes.
+`~/.config/xedown/mine.css`, which row 46 removes.
 
 | # | Step | Expected |
 | --- | --- | --- |
@@ -106,7 +106,17 @@ worth a look while it is on screen. Rows 32–34 also need a scratch stylesheet 
 | 33 | With that preview still open, open `mine.css` in xed itself, change the colour to `#201810` and save | The open preview changes colour within a moment. No restart, no reopening the document, no flicker of the wrong content |
 | 34 | Delete `mine.css` from a terminal while the preview is still open | Within a moment the preview returns to the built-in theme, with a bar at the top of the page naming `mine.css` and saying it was not found. The document is still fully rendered below the bar |
 | 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
-| 36 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem` and `text_size_px` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
+| 36 | Hover a code block in `tests/fixtures/showcase.md` | A **Copy** button fades in at the corner. The code does not move or resize as it appears |
+| 37 | Click it, then paste somewhere | The code arrives exactly as written, including indentation. The button says **Copied** for a moment, then goes back to **Copy** |
+| 38 | Tab to the copy button instead of hovering | It becomes visible with a clear focus ring, and <kbd>Enter</kbd> copies |
+| 39 | Select the whole preview (<kbd>Ctrl</kbd>+<kbd>A</kbd>) and copy | The word "Copy" is nowhere in what you pasted |
+| 40 | Copy from the Python fence with Arabic comments in `tests/fixtures/edge-cases.md` | The pasted code is left-to-right and byte-identical, comments included |
+| 41 | Set `"code_copy_buttons": false` while a preview is open | Every button disappears at once, in every open tab, with no reload and no scroll jump |
+| 42 | Open `tests/fixtures/showcase.md` and look at the task list, in each theme, light and dark | Checked and unchecked boxes are obviously different and obviously part of the theme. Clicking one does nothing and does not look broken |
+| 43 | Scroll the wide table in `tests/fixtures/showcase.md` sideways | A shadow marks the side with more content and swaps as you reach each end |
+| 44 | Look at the tall and small images in `tests/fixtures/showcase.md` | The tall one fits the window without distortion; the small one is its own size, not stretched |
+| 45 | Set `"remote_images": "alt"`, then `"hidden"`, with `tests/fixtures/edge-cases.md` open | Alt text alone, then nothing at all. Both apply immediately. A network monitor shows no request in any mode |
+| 46 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images` and `code_copy_buttons` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

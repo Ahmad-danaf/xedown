@@ -100,8 +100,10 @@ and viewing never changes the file.
   is showing; switch to Markdown mode to use them.
 - There is no scroll synchronisation between Preview and Markdown modes —
   each mode keeps its own independent scroll position.
-- Remote images do not load. This is by design, not a bug: xedown never
-  fetches anything from the network.
+- **Remote images are never fetched.** A `https://` image shows a
+  placeholder naming the address. No setting changes this — the preview's
+  content security policy blocks the request whatever the settings say.
+  `remote_images` only chooses whether there is a placeholder, and how it looks.
 - In a document that has never been saved, relative links cannot be resolved:
   they render as inert text with no click target and no on-page message.
   Relative images in the same situation do get an explanatory placeholder.
