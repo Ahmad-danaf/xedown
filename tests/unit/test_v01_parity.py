@@ -62,6 +62,11 @@ ADDITIONS = {
     ".xedown-table-scroll.xedown-more-left.xedown-more-right",
     # Emitted only in alt-only mode, which v0.1 had no setting for.
     ".xedown-image-alt",
+    ".xedown-code-block",
+    ".xedown-copy",
+    ".xedown-code-block:hover > .xedown-copy",
+    ".xedown-copy:focus-visible",
+    "@media (hover: none) .xedown-copy",
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --

@@ -146,6 +146,50 @@ pre code.hljs {
   background: none;
 }
 
+/* The copy button lives beside <pre>, not inside it, and out of flow: the
+   block scrolls horizontally, and showing or hiding a button must not move
+   or resize the code it belongs to. The wrapper adds no padding or border,
+   so <pre>'s own margins collapse through it unchanged. */
+.xedown-code-block { position: relative; }
+
+.xedown-copy {
+  position: absolute;
+  top: .5em;
+  right: .5em;
+  /* Wide enough for the longest label, so confirming a copy cannot
+     resize the button. */
+  min-width: 7em;
+  padding: .15em .6em;
+  font: inherit;
+  font-size: .8em;
+  color: var(--xedown-fg);
+  background: var(--xedown-code-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  /* Never part of a selection: a select-all, or a drag across the page,
+     must not pull the word "Copy" into what the reader copies. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* opacity rather than display or visibility, so the button stays in the
+   tab order; the focus rule is what makes it visible once reached. */
+.xedown-code-block:hover > .xedown-copy,
+.xedown-copy:focus-visible { opacity: 1; }
+
+.xedown-copy:focus-visible {
+  outline: 2px solid var(--xedown-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Without a pointer there is nothing to hover, and the button would be
+   reachable only by tabbing to it. */
+@media (hover: none) {
+  .xedown-copy { opacity: 1; }
+}
+
 .xedown-table-scroll { overflow-x: auto; }
 
 /* `width: 100%` capped the table at the container, so a table with more

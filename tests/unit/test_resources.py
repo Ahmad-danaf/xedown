@@ -338,3 +338,50 @@ def test_alt_text_shown_in_place_of_an_image_is_visibly_not_the_document(preview
     for body in bodies:
         assert "italic" in body
         assert "var(--xedown-muted)" in body
+
+
+def test_the_script_exposes_the_two_new_host_entry_points(preview_js):
+    for symbol in ("setConfig", "copyResult", "xedownConfig"):
+        assert symbol in preview_js
+
+
+def test_the_copy_button_can_never_join_a_selection(preview_css):
+    bodies = _rule_bodies_for(preview_css, ".xedown-copy")
+    assert bodies, "no rule for the copy button"
+    assert any("user-select: none" in body for body in bodies)
+
+
+def test_showing_the_copy_button_cannot_move_the_code_block(preview_css):
+    # Absolutely positioned inside a relatively positioned wrapper: it is
+    # out of flow, so revealing it changes no layout at all.
+    assert any(
+        "position: relative" in body
+        for body in _rule_bodies_for(preview_css, ".xedown-code-block")
+    )
+    assert any(
+        "position: absolute" in body
+        for body in _rule_bodies_for(preview_css, ".xedown-copy")
+    )
+
+
+def test_the_copy_button_is_reachable_by_keyboard(preview_css):
+    # opacity, not display or visibility: those would take it out of the tab
+    # order entirely. The focus rule is what makes it visible once reached.
+    assert ".xedown-copy:focus-visible" in preview_css
+    assert any(
+        "opacity: 0" in body for body in _rule_bodies_for(preview_css, ".xedown-copy")
+    )
+
+
+def test_the_copy_button_reports_a_failure_rather_than_pretending(preview_js):
+    assert "Copy failed" in preview_js
+    assert "Copied" in preview_js
+    # The host may be absent entirely -- post() no-ops then -- so a click
+    # with no answer has to resolve by itself.
+    assert "setTimeout" in preview_js
+
+
+def test_the_copied_text_is_captured_before_highlighting(preview_js):
+    capture = preview_js.index("captureSources(")
+    highlight = preview_js.index("highlight(root)")
+    assert capture < highlight, "highlight() would be copied instead of the source"
