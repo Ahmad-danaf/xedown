@@ -3,7 +3,7 @@
 import json
 import secrets
 
-from . import errors, images, stylesheets, themes, vendoring
+from . import errors, images, settings, stylesheets, themes, vendoring
 from .links import resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
@@ -123,6 +123,15 @@ def render_document(
     token = nonce or secrets.token_urlsafe(16)
     style = style if style is not None else stylesheets.PreviewStyle()
     display = images.coerce_display(image_display)
+    # Coerced the same way `display` is, and for the same reason:
+    # render_document is called directly by the render script and by the
+    # tests, not only through the settings store, so a bad argument here
+    # (not just a bad stored value) must still produce a page rather than
+    # let `json.dumps`/`bool()` raise past the try below. Mirrors
+    # `stylesheets._in_range`'s use of the descriptor for the same purpose.
+    copy_buttons, _ = settings.by_name(settings.CODE_COPY_BUTTONS).coerce(
+        code_copy_buttons
+    )
     try:
         body = render_fragment(text, base_dir=base_dir, image_display=display)
         stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
@@ -164,9 +173,7 @@ def render_document(
         notice=notice,
         body=body,
         stylesheet=stylesheet,
-        config=json.dumps(
-            {"codeCopy": bool(code_copy_buttons), "imageDisplay": display}
-        ),
+        config=json.dumps({"codeCopy": copy_buttons, "imageDisplay": display}),
         preview_js=preview_js,
         highlight_js=highlight_js,
     )

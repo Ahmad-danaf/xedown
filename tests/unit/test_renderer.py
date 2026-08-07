@@ -424,10 +424,25 @@ def test_no_display_mode_ever_emits_a_remote_source(tmp_path):
 
 
 def test_an_unusable_display_value_renders_the_default(tmp_path):
+    # Weak on its own: images.placeholder_for's unconditional `else` treats
+    # any unrecognised display value as the placeholder case, so this passes
+    # identically whether or not render_fragment ever coerces image_display
+    # at all. It only pins that a bad value still renders something instead
+    # of crashing -- the actual coercion claim is
+    # test_an_unusable_display_value_never_reaches_the_page below.
     html = renderer.render_fragment(
         "![A](pics/gone.png)", base_dir=str(tmp_path), image_display="nonsense"
     )
     assert "xedown-image-error" in html
+
+
+def test_an_unusable_display_value_never_reaches_the_page():
+    # The body is not the only consumer: preview.js reads the display mode
+    # out of the config block, so a value that was coerced for the body and
+    # not for the config would leave the two disagreeing.
+    html = renderer.render_document("![A](pics/gone.png)", image_display="nonsense")
+    assert '"imageDisplay": "placeholder"' in html
+    assert "nonsense" not in html
 
 
 def test_the_page_carries_its_config():
