@@ -83,3 +83,24 @@ This sentence carries a footnote reference[^1], which should scroll to the
 note below and back again.
 
 [^1]: This is the footnote text, reached by clicking the reference above.
+
+## A table wider than the column
+
+| Feature | Status | Owner | Since | Notes | Ticket | Reviewed by | Follow-up |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Preview | Ready | ahmad | 0.1.0 | In-tab, no extra window | #1 | ahmad | none |
+| Themes | Ready | ahmad | 0.2.0 | Four complete designs | #12 | ahmad | none |
+| Copy buttons | Ready | ahmad | 0.2.0 | Host writes the clipboard | #31 | ahmad | none |
+
+## A very tall image
+
+It should fit the window rather than running for several screens, and it
+should keep its proportions while doing so.
+
+![A tall test image](pics/tall.png)
+
+## A very small image
+
+It must stay its own size. Nothing here should stretch it.
+
+![A small test image](pics/tiny.png)

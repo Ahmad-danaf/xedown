@@ -130,3 +130,15 @@ def test_neither_fixture_emits_a_script_tag():
     )
     assert "<script" not in showcase_body
     assert "<script" not in edge_cases_body
+
+
+def test_the_showcase_exercises_the_reading_polish():
+    # A table wide enough to overflow a 46rem column, an image taller than
+    # the window, and one small enough that stretching it would show.
+    body = renderer.render_fragment(SHOWCASE_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<table>" in body
+    assert "tall.png" in body
+    assert "tiny.png" in body
+    # And it still renders cleanly: both new images must resolve, or this
+    # fixture stops being the "does this look good" half of the pair.
+    assert "xedown-image-error" not in body
