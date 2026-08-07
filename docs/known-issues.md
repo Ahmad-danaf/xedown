@@ -153,3 +153,9 @@ Backticks make it code, which xedown already isolates. `<bdi>` — or
 `<span dir="ltr">…</span>` — isolates it without styling it as code. Both are
 kept by the preview. A path used as a **link's** text needs nothing: xedown
 isolates every link already.
+
+**Status:** permanent. There is no element around unmarked prose for CSS to
+target, and xedown deliberately does not guess which runs are paths — that
+guess would also wrap `either/or`, `9/10` and `a.b` in every document it
+ever rendered. This is not tracked for a future fix; the markup above is
+the fix.
