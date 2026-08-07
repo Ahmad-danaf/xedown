@@ -19,9 +19,9 @@ shows a broken reference here is a real regression.
 The document behind the manual smoke test's failure-handling checks
 (`docs/manual-smoke-test.md`, rows 16–17). It exercises unbundled and
 languageless fenced code, the known GFM paragraph/list gap
-(`docs/known-issues.md`), and basic bidirectional text correctness for
-Arabic content — including a Python fence with Arabic comments that must
-stay left-to-right.
+(`docs/known-issues.md`), and a left-to-right control case for the
+bidirectional-text handling — including a Python fence with Arabic comments
+that must stay left-to-right.
 
 **It also contains broken references on purpose:**
 
@@ -41,6 +41,29 @@ There is deliberately **no unreadable-image fixture**. "Could not be read"
 means a file that exists and cannot be opened, and git carries no mode-000
 file, so that case is covered by `tests/unit/test_images.py` instead. Do not
 "repair" the apparent gap by adding a file.
+
+## `rtl.md` — does an Arabic document read
+
+A wholly Arabic document, and a "does this look good" fixture like
+`showcase.md`: every reference in it resolves, and an error placeholder
+anywhere in it is a real regression. It exercises everything that has a
+*side* — bullets and their indentation, nested lists, the quote bar, table
+column order, the footnote marker and its back-reference, and the copy button
+— plus a Python fence with Arabic comments that must stay left-to-right, and
+an in-page anchor with an explicit ASCII id (`{#lists}`) so the link target
+does not depend on how Arabic headings happen to be slugified.
+
+## `mixed-direction.md` — do both directions read at once
+
+Deliberately Arabic-majority prose carrying English technical terms, a path,
+a URL used as link text, inline code, a whole English paragraph, a
+two-direction list and a two-direction table. It also carries one `<bdi>` and
+one `<span dir="ltr">`: those are the author's own escape hatch for a bare
+path, and this fixture is what keeps the sanitizer allowing them.
+
+If `tests/unit/test_fixtures.py` ever reports that this file no longer
+detects right-to-left, **add Arabic prose — do not delete the English**. The
+English is what the fixture is for.
 
 ## `linked.md` and `pics/sample.png`
 
