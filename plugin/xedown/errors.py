@@ -81,3 +81,36 @@ def local_image_unresolved_text(uri):
     against.
     """
     return f"Image not found: {uri}. {UNSAVED_DOCUMENT_HINT}"
+
+
+# The ways a user's own stylesheet can fail to be usable. Named here, beside
+# every other piece of user-facing failure text, so `stylesheets.py` stays
+# free of copy and this module stays a leaf that imports nothing of ours.
+STYLESHEET_NOT_FOUND = "not-found"
+STYLESHEET_NOT_A_FILE = "not-a-file"
+STYLESHEET_UNREADABLE = "unreadable"
+STYLESHEET_NOT_UTF8 = "not-utf8"
+STYLESHEET_EMPTY = "empty"
+STYLESHEET_TOO_LARGE = "too-large"
+STYLESHEET_UNSAFE = "unsafe"
+
+_STYLESHEET_PHRASES = {
+    STYLESHEET_NOT_FOUND: "was not found",
+    STYLESHEET_NOT_A_FILE: "is not a file",
+    STYLESHEET_UNREADABLE: "could not be read",
+    STYLESHEET_NOT_UTF8: "is not valid UTF-8 text",
+    STYLESHEET_EMPTY: "is empty",
+    STYLESHEET_TOO_LARGE: "is larger than the 512 KiB limit",
+    STYLESHEET_UNSAFE: 'contains "</style", which cannot be embedded safely',
+}
+
+
+def stylesheet_problem_phrase(problem, detail=""):
+    """Why a custom stylesheet could not be used, as a sentence fragment.
+
+    Reads after the file's path: "<path> is empty." The fallback exists so a
+    problem this version does not know still produces a sentence rather than
+    a blank one.
+    """
+    phrase = _STYLESHEET_PHRASES.get(problem, "could not be used")
+    return f"{phrase} ({detail})" if detail else phrase
