@@ -753,7 +753,11 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             self._controller_for(self._move_view),
         ]
         controllers = [c for c in controllers if c is not None]
-        switched = [c for c in controllers if getattr(c, "_theme", None) == "focused"]
+        switched = [
+            c
+            for c in controllers
+            if getattr(getattr(c, "_style", None), "theme", None) == "focused"
+        ]
         record(
             "theme-every-open-tab-switched",
             len(controllers) == 3 and len(switched) == 3,
@@ -767,7 +771,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         preview = controller.preview if controller is not None else None
         if preview is None:
             record("theme-page-carries-the-theme-class", False, "no preview")
-            self._restore_settings()
+            self._schedule(300, self.step_metrics_live)
             return False
 
         def on_result(webview, result, _user_data):
@@ -781,9 +785,189 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 "xedown-theme-focused" in class_name,
                 f"body class: {class_name!r}",
             )
-            self._restore_settings()
+            self._schedule(300, self.step_metrics_live)
 
         preview.widget.run_javascript("document.body.className", None, on_result, None)
+        return False
+
+    # --- width and size reach the loaded page without a reload -------------
+    #
+    # The one thing that cannot be asserted from Python: whether WebKit's CSP
+    # lets a nonce-only style-src coexist with a programmatic CSSOM write.
+    # Reading the *computed* value back is the difference between observing
+    # that and merely claiming it.
+
+    def step_metrics_live(self):
+        store = xedown_settings.get_settings()
+        store.set(xedown_settings.CONTENT_WIDTH_REM, 72)
+        controllers = [
+            self._main_controller(),
+            self._controller_for(self._tab_b.get_view()),
+            self._controller_for(self._move_view),
+        ]
+        controllers = [c for c in controllers if c is not None]
+        applied = [
+            c
+            for c in controllers
+            if getattr(getattr(c, "_style", None), "content_width_rem", None) == 72
+        ]
+        record(
+            "metrics-every-open-tab-updated",
+            len(controllers) == 3 and len(applied) == 3,
+            f"{len(applied)} of {len(controllers)} controllers at 72rem",
+        )
+        self._schedule(600, self.step_metrics_check)
+        return False
+
+    def step_metrics_check(self):
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record("metrics-page-reflowed-without-a-reload", False, "no preview")
+            self._schedule(300, self.step_stylesheet_apply)
+            return False
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                computed = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                computed = f"<error: {exc}>"
+            record(
+                "metrics-page-reflowed-without-a-reload",
+                "72rem" in computed,
+                f"--xedown-content-width: {computed!r}",
+            )
+            self._schedule(300, self.step_stylesheet_apply)
+
+        preview.widget.run_javascript(
+            "getComputedStyle(document.documentElement)"
+            ".getPropertyValue('--xedown-content-width').trim()",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    # --- a custom stylesheet applies, re-applies on save, and fails safely --
+
+    def _probe_stylesheet_path(self):
+        store = xedown_settings.get_settings()
+        return store.path.parent / "probe.css"
+
+    def _write_probe_stylesheet(self, marker):
+        """Write the probe stylesheet the way an editor does: rename over it.
+
+        Most editors save by writing a temporary file and renaming it onto
+        the target, which replaces the inode. If the watcher only ever saw
+        writes in place, this is the case that would quietly stop working.
+        """
+        target = self._probe_stylesheet_path()
+        temp = target.with_name(target.name + ".tmp")
+        temp.write_text(
+            f".xedown-document {{ --xedown-probe: {marker}; }}\n", encoding="utf-8"
+        )
+        os.replace(temp, target)
+        return target
+
+    def step_stylesheet_apply(self):
+        target = self._write_probe_stylesheet("first")
+        store = xedown_settings.get_settings()
+        store.set(xedown_settings.CUSTOM_STYLESHEET, str(target))
+        self._schedule(800, self.step_stylesheet_check)
+        return False
+
+    def step_stylesheet_check(self):
+        self._read_probe_marker(
+            "stylesheet-applied-over-the-theme", "first", self.step_stylesheet_resave
+        )
+        return False
+
+    def step_stylesheet_resave(self):
+        self._write_probe_stylesheet("second")
+        # The watcher debounces 150ms, then reloads the page; load_html is
+        # itself asynchronous. This waits for both.
+        self._schedule(1200, self.step_stylesheet_resave_check)
+        return False
+
+    def step_stylesheet_resave_check(self):
+        self._read_probe_marker(
+            "stylesheet-resave-refreshed-the-preview",
+            "second",
+            self.step_stylesheet_delete,
+        )
+        return False
+
+    def _read_probe_marker(self, name, expected, next_step):
+        """Read --xedown-probe out of the live page, then continue."""
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record(name, False, "no preview")
+            self._schedule(300, next_step)
+            return
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                marker = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                marker = f"<error: {exc}>"
+            record(name, marker.strip() == expected, f"--xedown-probe: {marker!r}")
+            self._schedule(300, next_step)
+
+        preview.widget.run_javascript(
+            "getComputedStyle(document.getElementById('xedown-content'))"
+            ".getPropertyValue('--xedown-probe').trim()",
+            None,
+            on_result,
+            None,
+        )
+
+    def step_stylesheet_delete(self):
+        removed, detail = True, ""
+        try:
+            self._probe_stylesheet_path().unlink()
+        except OSError as exc:
+            removed, detail = False, str(exc)
+        # Recorded either way: a line that only appears on failure makes a
+        # green report and a step that never ran look identical.
+        record("stylesheet-probe-file-removed", removed, detail)
+        self._schedule(1200, self.step_stylesheet_deleted_check)
+        return False
+
+    def step_stylesheet_deleted_check(self):
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record("stylesheet-deletion-shows-a-notice", False, "no preview")
+            self._restore_settings()
+            return False
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                text = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                text = f"<error: {exc}>"
+            record(
+                "stylesheet-deletion-shows-a-notice",
+                "probe.css" in text and "not applied" in text,
+                f"notice: {text!r}",
+            )
+            record(
+                "stylesheet-deletion-leaves-the-document-rendered",
+                "<error:" not in text,
+                f"notice: {text!r}",
+            )
+            self._restore_settings()
+
+        preview.widget.run_javascript(
+            "(document.querySelector('.xedown-notice') || {}).textContent || ''",
+            None,
+            on_result,
+            None,
+        )
         return False
 
     def _restore_settings(self):
@@ -791,12 +975,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         store = xedown_settings.get_settings()
         store.reset()
         width = xedown_settings.CONTENT_WIDTH_REM
+        sheet = xedown_settings.CUSTOM_STYLESHEET
         record(
             "theme-settings-restored-to-defaults",
             store.get(xedown_settings.PREVIEW_THEME) == "repository"
-            and store.get(width) == xedown_settings.by_name(width).default,
+            and store.get(width) == xedown_settings.by_name(width).default
+            and store.get(sheet) is None,
             f"theme={store.get(xedown_settings.PREVIEW_THEME)!r} "
-            f"width={store.get(width)!r}",
+            f"width={store.get(width)!r} stylesheet={store.get(sheet)!r}",
         )
         self._schedule(300, self.step_txt_tab_open)
 
