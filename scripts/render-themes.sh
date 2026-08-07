@@ -27,7 +27,7 @@ root = pathlib.Path(sys.argv[1])
 out = pathlib.Path(sys.argv[2])
 sys.path.insert(0, str(root / "plugin"))
 
-from xedown import renderer, themes  # noqa: E402
+from xedown import renderer, stylesheets, themes  # noqa: E402
 
 rows = []
 for fixture in sorted((root / "tests" / "fixtures").glob("*.md")):
@@ -40,7 +40,7 @@ for fixture in sorted((root / "tests" / "fixtures").glob("*.md")):
                     fixture.read_text(encoding="utf-8"),
                     base_dir=str(fixture.parent),
                     dark=dark,
-                    theme=theme.identifier,
+                    style=stylesheets.PreviewStyle(theme=theme.identifier),
                 ),
                 encoding="utf-8",
             )

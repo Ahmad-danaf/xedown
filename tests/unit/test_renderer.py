@@ -2,7 +2,7 @@ import os
 import re
 
 import pytest
-from xedown import renderer, themes
+from xedown import errors, renderer, stylesheets, themes
 
 
 @pytest.fixture
@@ -165,15 +165,112 @@ def test_the_body_carries_both_the_appearance_and_the_theme():
 
 
 def test_a_named_theme_inlines_that_theme_stylesheet():
-    page = renderer.render_document("# Hi", nonce="n", theme="repository")
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(theme="repository")
+    )
     assert 'class="light xedown-theme-repository"' in page
     assert "--xedown-bg" in page
 
 
 def test_an_unknown_theme_falls_back_to_the_default_rather_than_failing():
-    page = renderer.render_document("# Hi", nonce="n", theme="no-such-theme")
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(theme="no-such-theme")
+    )
     assert f'xedown-theme-{themes.DEFAULT_THEME}"' in page
     assert "--xedown-bg" in page
+
+
+def test_the_metrics_the_user_chose_reach_the_page():
+    page = renderer.render_document(
+        "# Hi",
+        nonce="n",
+        style=stylesheets.PreviewStyle(content_width_rem=72, text_size_px=20),
+    )
+    assert "--xedown-content-width: 72rem;" in page
+    assert "--xedown-text-size: 20px;" in page
+
+
+def test_a_user_stylesheet_is_emitted_after_the_theme():
+    user = stylesheets.UserStylesheet(css="/*MINE*/", path="/x.css")
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(user=user)
+    )
+    style_block = page[page.index("<style") : page.index("</style>")]
+    assert "/*MINE*/" in style_block
+    # Last of the five layers, so it can override every one of them.
+    assert style_block.index("/*MINE*/") > style_block.rindex("--xedown-content-width")
+
+
+# Searched for as the emitted attribute, never as the bare string: the base
+# stylesheet's own `.xedown-notice` rule is inlined into every page, so
+# `"xedown-notice" not in page` is false even when no notice was emitted, and
+# a test written that way could never fail.
+NOTICE = 'class="xedown-notice"'
+
+
+def test_a_working_stylesheet_produces_no_notice():
+    user = stylesheets.UserStylesheet(css="/*MINE*/", path="/x.css")
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(user=user)
+    )
+    assert NOTICE not in page
+
+
+def test_an_unset_stylesheet_produces_no_notice():
+    assert NOTICE not in renderer.render_document("# Hi", nonce="n")
+
+
+def test_a_failed_stylesheet_produces_a_notice_and_a_working_page():
+    user = stylesheets.UserStylesheet(
+        path="/home/you/mine.css", problem=errors.STYLESHEET_EMPTY
+    )
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(user=user)
+    )
+    assert NOTICE in page
+    assert "/home/you/mine.css" in page
+    assert "is empty" in page
+    # Still a real document, not an error page.
+    assert f'id="{renderer.CONTENT_ELEMENT_ID}"' in page
+    assert "Cannot render this document" not in page
+
+
+def test_the_notice_names_the_theme_actually_being_shown():
+    user = stylesheets.UserStylesheet(
+        path="/x.css", problem=errors.STYLESHEET_NOT_FOUND
+    )
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(theme="minimal", user=user)
+    )
+    assert "Showing the Minimal theme." in page
+
+
+def test_the_notice_sits_outside_the_content_element():
+    # update_body replaces the content element's innerHTML with a fragment
+    # that knows nothing about the notice, so a notice inside it would vanish
+    # on the first keystroke.
+    user = stylesheets.UserStylesheet(
+        path="/x.css", problem=errors.STYLESHEET_NOT_FOUND
+    )
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(user=user)
+    )
+    assert page.index(NOTICE) < page.index(f'id="{renderer.CONTENT_ELEMENT_ID}"')
+
+
+def test_an_error_page_carries_neither_the_user_css_nor_the_notice(monkeypatch):
+    # An error page is not the document. A stylesheet that failed to load is
+    # the last thing that should be styling the message about it.
+    def explode(*args, **kwargs):
+        raise ValueError("boom")
+
+    monkeypatch.setattr(renderer, "render_fragment", explode)
+    user = stylesheets.UserStylesheet(css="/*MINE*/", path="/x.css")
+    page = renderer.render_document(
+        "# Hi", nonce="n", style=stylesheets.PreviewStyle(user=user)
+    )
+    assert "/*MINE*/" not in page
+    assert NOTICE not in page
 
 
 def test_highlight_theme_code_padding_wins_over_preview_css():

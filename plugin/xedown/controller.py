@@ -9,7 +9,7 @@ gi.require_version("Xed", "1.0")
 
 from gi.repository import GLib, Gtk, Xed
 
-from . import errors, renderer, settings
+from . import errors, renderer, settings, stylesheets
 from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path
 from .links import LinkAction, classify_link
@@ -300,7 +300,9 @@ class TabController:
                 self._buffer_text(),
                 base_dir=self._base_dir(),
                 dark=self._dark,
-                theme=self._theme,
+                # Task 8 replaces this with the controller's own PreviewStyle,
+                # which also carries the width, the size and the user's sheet.
+                style=stylesheets.PreviewStyle(theme=self._theme),
             )
         base_dir = self._base_dir()
         self.preview.load_document(

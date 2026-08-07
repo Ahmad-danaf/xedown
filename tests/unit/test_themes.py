@@ -158,7 +158,7 @@ def test_every_fixture_renders_in_every_theme(name, dark, theme):
         (FIXTURES / name).read_text(encoding="utf-8"),
         base_dir=str(FIXTURES),
         dark=dark,
-        theme=theme.identifier,
+        style=stylesheets.PreviewStyle(theme=theme.identifier),
         nonce="n",
     )
     assert f'xedown-theme-{theme.identifier}"' in page

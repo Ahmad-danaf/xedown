@@ -3,7 +3,7 @@
 import secrets
 import urllib.parse
 
-from . import errors, stylesheets, vendoring
+from . import errors, stylesheets, themes, vendoring
 from .links import REMOTE_SCHEMES, resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
@@ -36,7 +36,7 @@ _DOCUMENT = """<!DOCTYPE html>
 </style>
 </head>
 <body class="{appearance} xedown-theme-{theme}">
-<article class="xedown-document" id="{content_id}">
+{notice}<article class="xedown-document" id="{content_id}">
 {body}
 </article>
 <script nonce="{nonce}">
@@ -100,18 +100,27 @@ def render_fragment(text, base_dir=None):
     return sanitize(raw, resolve_uri=resolve, on_blocked_image=_on_blocked_image)
 
 
-def render_document(text, base_dir=None, dark=False, nonce=None, theme=None):
+def render_document(text, base_dir=None, dark=False, nonce=None, style=None):
     """Build the complete preview page. Never raises — failures become a page.
 
-    `theme` is a `themes` identifier. Anything unknown resolves to the
-    default rather than producing an unstyled page, and a theme whose own
-    stylesheet cannot be read falls back the same way; only a broken
-    *default* reaches the "Installation incomplete" page below.
+    `style` is a `stylesheets.PreviewStyle`: which theme, how wide, how large,
+    and the user's own stylesheet. `None` means every default, which is the
+    xedown 0.1.0 appearance exactly. A theme identifier the registry does not
+    know resolves to the default rather than producing an unstyled page, and a
+    theme whose own stylesheet cannot be read falls back the same way; only a
+    broken *default* reaches the "Installation incomplete" page below.
+
+    A user stylesheet that could not be loaded produces a notice bar above the
+    document rather than a blank or unstyled preview. Error pages get neither
+    the user's CSS nor the notice: an error page is not the document, and a
+    stylesheet that failed to load is the last thing that should style the
+    message saying so.
     """
     token = nonce or secrets.token_urlsafe(16)
+    style = style if style is not None else stylesheets.PreviewStyle()
     try:
         body = render_fragment(text, base_dir=base_dir)
-        stylesheet, theme_identifier = stylesheets.assemble_css(theme, dark=dark)
+        stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
@@ -129,12 +138,25 @@ def render_document(text, base_dir=None, dark=False, nonce=None, theme=None):
             nonce=token,
         )
 
+    notice = ""
+    if style.user.problem is not None:
+        notice = (
+            errors.user_stylesheet_notice(
+                style.user.problem,
+                style.user.path,
+                detail=style.user.detail,
+                theme_label=themes.resolve(theme_identifier).label,
+            )
+            + "\n"
+        )
+
     return _DOCUMENT.format(
         csp=_CSP.format(nonce=token),
         nonce=token,
         appearance="dark" if dark else "light",
         theme=theme_identifier,
         content_id=CONTENT_ELEMENT_ID,
+        notice=notice,
         body=body,
         stylesheet=stylesheet,
         preview_js=preview_js,
