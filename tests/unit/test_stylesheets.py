@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from xedown import errors, stylesheets, themes, vendoring
+from xedown import errors, settings, stylesheets, themes, vendoring
 
 
 @pytest.fixture(params=[t.identifier for t in themes.THEMES])
@@ -226,3 +226,92 @@ def test_the_size_phrase_names_the_actual_cap():
     # errors.py. Nothing but this test keeps the two from drifting.
     kib = stylesheets.MAX_STYLESHEET_BYTES // 1024
     assert f"{kib} KiB" in errors.stylesheet_problem_phrase(errors.STYLESHEET_TOO_LARGE)
+
+
+# --- the style a page is rendered with ---------------------------------------
+
+
+def test_a_default_style_reproduces_the_base_stylesheet_values():
+    # The v0.1 appearance, restated. preview.css declares the same two values
+    # as its own defaults, so an untouched install renders identically.
+    css = stylesheets.metrics_css(stylesheets.PreviewStyle())
+    assert "--xedown-content-width: 46rem;" in css
+    assert "--xedown-text-size: 16px;" in css
+
+
+def test_the_metrics_block_is_a_root_rule():
+    # On :root specifically. `rem` resolves against the root element, so a
+    # width set anywhere else would drift away from the text size.
+    css = stylesheets.metrics_css(stylesheets.PreviewStyle())
+    assert css.strip().startswith(":root {")
+
+
+def test_whole_numbers_are_not_written_with_a_trailing_zero():
+    css = stylesheets.metrics_css(
+        stylesheets.PreviewStyle(content_width_rem=62.0, text_size_px=18.0)
+    )
+    assert "62rem" in css and "62.0rem" not in css
+    assert "18px" in css and "18.0px" not in css
+
+
+def test_a_fractional_value_survives():
+    css = stylesheets.metrics_css(stylesheets.PreviewStyle(text_size_px=17.5))
+    assert "17.5px" in css
+
+
+@pytest.mark.parametrize(
+    ("width", "expected"),
+    [(5, 30.0), (5000, 100.0), ("wide", 46.0), (None, 46.0), (True, 46.0)],
+)
+def test_an_out_of_range_or_nonsense_width_is_brought_into_range(width, expected):
+    # render_document is called directly by the scripts and the tests, not
+    # only through the settings store, so a bad argument must still produce a
+    # sane page -- the precedent themes.resolve set.
+    assert stylesheets.PreviewStyle(content_width_rem=width).content_width_rem == (
+        expected
+    )
+
+
+def test_from_settings_reads_all_three_keys(tmp_path):
+    store = settings.Settings(tmp_path / "settings.json")
+    store.set_many(
+        {
+            settings.PREVIEW_THEME: "minimal",
+            settings.CONTENT_WIDTH_REM: 72,
+            settings.TEXT_SIZE_PX: 20,
+        }
+    )
+    user = stylesheets.UserStylesheet(css="body {}", path="/x.css")
+    style = stylesheets.PreviewStyle.from_settings(store, user=user)
+    assert style.theme == "minimal"
+    assert style.content_width_rem == 72.0
+    assert style.text_size_px == 20.0
+    assert style.user is user
+
+
+def test_assemble_puts_the_layers_in_order():
+    user = stylesheets.UserStylesheet(css="/*USER*/", path="/x.css")
+    style = stylesheets.PreviewStyle(theme="repository", user=user)
+    css, effective = stylesheets.assemble(style)
+    assert effective == "repository"
+
+    # Asserted as an exact composition, not by comparing substring positions.
+    # The base sheet declares --xedown-content-width itself, so a positional
+    # check would find the base sheet's occurrence rather than the metrics
+    # block and pass under either order -- the same trap test_themes.py
+    # records having fallen into once already.
+    theme_css, _ = stylesheets.assemble_css("repository")
+    assert css == theme_css + "\n" + stylesheets.metrics_css(style) + "\n/*USER*/"
+
+
+def test_assemble_emits_no_layer_for_an_unset_user_stylesheet():
+    style = stylesheets.PreviewStyle()
+    css, _ = stylesheets.assemble(style)
+    theme_css, _ = stylesheets.assemble_css(themes.DEFAULT_THEME)
+    assert css == theme_css + "\n" + stylesheets.metrics_css(style)
+
+
+def test_assemble_with_no_style_at_all_still_works():
+    css, effective = stylesheets.assemble()
+    assert effective == themes.DEFAULT_THEME
+    assert "--xedown-bg" in css

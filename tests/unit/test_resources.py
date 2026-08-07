@@ -190,3 +190,20 @@ def test_every_font_stack_ends_in_a_generic_family(name):
     for stack in re.findall(r"font-family\s*:([^;}]*)", css):
         last = stack.split(",")[-1].strip().strip("\"'")
         assert last in generics, f"{name}: {stack.strip()!r} ends in {last!r}"
+
+
+@pytest.mark.parametrize("name", OUR_STYLESHEETS)
+def test_no_stylesheet_pins_a_font_size_in_pixels(name):
+    # --xedown-text-size lands on the root font size, so every em and rem in
+    # every sheet follows the user's text size and the whole document scales
+    # together. One `font-size: 13px` anywhere would pin a single element
+    # while everything around it moved, and the hierarchy would come apart at
+    # the ends of the range. Border widths and corner radii in px are
+    # deliberately untouched: a 1px rule should stay 1px at every text size.
+    css = vendoring.read_resource(name)
+    offenders = [
+        declaration.strip()
+        for declaration in re.findall(r"font-size\s*:[^;}]*", css)
+        if re.search(r"\d\s*px", declaration)
+    ]
+    assert offenders == [], f"{name}: {offenders}"

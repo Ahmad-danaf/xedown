@@ -162,3 +162,85 @@ def _resolve(value, config_dir):
         return path
     base = pathlib.Path(config_dir) if config_dir else settings.default_config_dir()
     return base / path
+
+
+class PreviewStyle:
+    """Everything the settings say about how one preview should look.
+
+    A plain mutable holder, not a frozen value: the controller replaces or
+    updates fields as settings change, and rebuilds through `from_settings`
+    when it wants the numbers re-coerced.
+    """
+
+    def __init__(
+        self, theme=None, content_width_rem=None, text_size_px=None, user=None
+    ):
+        self.theme = theme
+        self.content_width_rem = _in_range(
+            settings.CONTENT_WIDTH_REM, content_width_rem
+        )
+        self.text_size_px = _in_range(settings.TEXT_SIZE_PX, text_size_px)
+        self.user = user if user is not None else UserStylesheet()
+
+    @classmethod
+    def from_settings(cls, store, user=None):
+        """Read all three appearance settings out of `store`."""
+        return cls(
+            theme=store.get(settings.PREVIEW_THEME),
+            content_width_rem=store.get(settings.CONTENT_WIDTH_REM),
+            text_size_px=store.get(settings.TEXT_SIZE_PX),
+            user=user,
+        )
+
+
+def _in_range(name, value):
+    """`value` clamped into `name`'s range, or that setting's default.
+
+    The settings store already clamps, but `render_document` is also called
+    directly by the two scripts and by the tests. `themes.resolve` set the
+    precedent: a bad argument produces a sane page, not a broken one.
+    """
+    setting = settings.by_name(name)
+    if value is None:
+        return setting.default
+    coerced, _ = setting.coerce(value)
+    return coerced
+
+
+def _number(value):
+    """`46.0` as `46`, so the emitted CSS reads like something a person wrote."""
+    text = f"{float(value):.4f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def metrics_css(style):
+    """The user's width and text size, as the two inputs the base sheet reads.
+
+    Declared on `:root` because `rem` resolves against the root element:
+    sizing text anywhere else while sizing the measure in `rem` lets the two
+    drift apart. Each theme's own `--xedown-measure-scale` and
+    `--xedown-text-scale` multiply these, so a theme stays proportionally
+    itself at any width or size the user picks.
+    """
+    return (
+        ":root {\n"
+        f"  --xedown-content-width: {_number(style.content_width_rem)}rem;\n"
+        f"  --xedown-text-size: {_number(style.text_size_px)}px;\n"
+        "}"
+    )
+
+
+def assemble(style=None, dark=False):
+    """`(css, effective_identifier)` — the complete stylesheet a page receives.
+
+    Five layers: syntax, base, theme, metrics, user. Metrics sit after the
+    theme so the user's explicit width and size beat anything a theme
+    declares; the user's own stylesheet is last so it can override every one
+    of them.
+    """
+    style = style if style is not None else PreviewStyle()
+    theme_css, effective = assemble_css(style.theme, dark=dark)
+    layers = [theme_css, metrics_css(style)]
+    if style.user.css:
+        layers.append(style.user.css)
+    return "\n".join(layers), effective
