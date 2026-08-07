@@ -31,6 +31,13 @@ SUBSTITUTIONS = {
         (".xedown-document", "max-width"),
         "calc(var(--xedown-content-width) * var(--xedown-measure-scale))",
     ),
+    # v0.1 asked the browser to tint a native checkbox. v0.2 draws the
+    # control instead, so the same token now fills the box directly. Same
+    # accent, same theme, applied by us.
+    ('li.task-list-item > input[type="checkbox"]', "accent-color"): (
+        ('li.task-list-item > input[type="checkbox"]:checked', "background"),
+        "var(--xedown-link)",
+    ),
 }
 
 # Selectors v0.2 introduces that v0.1 never had.
@@ -45,6 +52,52 @@ ADDITIONS = {
     # Emitted only when the user has set a custom stylesheet that could not
     # be used — and v0.1 had no such setting, so no v0.1 page contains one.
     ".xedown-notice",
+}
+
+# Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
+# so each one does change an upgrading user's preview, on purpose.
+#
+# This is the escape hatch ADDITIONS deliberately refuses to be, and it is
+# narrow for the same reason: an entry here is a design decision that
+# someone approved, and the reason has to be written down beside it. What
+# this guard exists to prevent is a preview moving *silently*, not a preview
+# moving at all.
+DELIBERATE_SELECTORS = {
+    'li.task-list-item > input[type="checkbox"]:checked': (
+        "brief 5: a drawn checkbox fills the box itself"
+    ),
+    'li.task-list-item > input[type="checkbox"]:checked::after': (
+        "brief 5: the tick inside a drawn checkbox"
+    ),
+}
+
+# Properties v0.2 adds to a selector v0.1 already declared. Same doctrine as
+# DELIBERATE_SELECTORS, at declaration rather than selector granularity.
+DELIBERATE_DECLARATIONS = {
+    ('li.task-list-item > input[type="checkbox"]', "position"): (
+        "brief 5: the tick is positioned against the box"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "-webkit-appearance"): (
+        "brief 5: drawn, not native"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "appearance"): (
+        "brief 5: drawn, not native"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "background"): (
+        "brief 5: the box's own surface"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "border"): (
+        "brief 5: the box's own outline"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "border-radius"): (
+        "brief 5: the box's own corners"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "opacity"): (
+        "brief 5: a read-only control must not be dimmed like a disabled one"
+    ),
+    ('li.task-list-item > input[type="checkbox"]', "cursor"): (
+        "brief 5: read-only, not unavailable"
+    ),
 }
 
 
@@ -89,10 +142,12 @@ def test_repository_is_the_v01_stylesheet():
     # reference is itself a value compared above -- so v0.2's added tokens are
     # allowed while every real declaration must match.
     for selector, props in shipped.items():
-        if selector in ADDITIONS:
+        if selector in ADDITIONS or selector in DELIBERATE_SELECTORS:
             continue
         for name, value in props.items():
             if name.startswith("--"):
+                continue
+            if (selector, name) in DELIBERATE_DECLARATIONS:
                 continue
             assert (
                 v01.get(selector, {}).get(name) == value
@@ -115,3 +170,20 @@ def test_every_addition_is_actually_shipped():
         assert (
             selector in shipped
         ), f"{selector} is in ADDITIONS but nothing declares it"
+
+
+def test_every_deliberate_selector_is_actually_shipped():
+    shipped, _ = _shipped()
+    for selector in DELIBERATE_SELECTORS:
+        assert (
+            selector in shipped
+        ), f"{selector} is in DELIBERATE_SELECTORS but nothing declares it"
+
+
+def test_every_deliberate_declaration_is_actually_shipped():
+    shipped, _ = _shipped()
+    for selector, name in DELIBERATE_DECLARATIONS:
+        assert name in shipped.get(selector, {}), (
+            f"{selector} {{ {name} }} is in DELIBERATE_DECLARATIONS "
+            "but nothing declares it"
+        )

@@ -85,12 +85,49 @@ a:focus-visible {
 
 ul.task-list { list-style: none; padding-left: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
+
+/* Drawn rather than native, so a checkbox belongs to the selected theme
+   instead of to the browser. Colour comes from --xedown-link on
+   --xedown-bg, a pair test_contrast.py already gates at 4.5:1, so this
+   needs no new token and no new contrast row. */
 li.task-list-item > input[type="checkbox"] {
   margin: .45em 0 0;
   width: .95em;
   height: .95em;
   flex: none;
-  accent-color: var(--xedown-link);
+  position: relative;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--xedown-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: .2em;
+  /* A disabled control is dimmed and given a "no entry" cursor by the
+     browser. Both read as broken. These are read-only by design -- the
+     plugin never writes to the buffer -- so they must look deliberate. */
+  opacity: 1;
+  cursor: default;
+}
+
+li.task-list-item > input[type="checkbox"]:checked {
+  background: var(--xedown-link);
+  border-color: var(--xedown-link);
+}
+
+/* The tick is a refinement, not the signal. A pseudo-element on a replaced
+   element is the least certain rule here, and a filled box against an
+   empty one already distinguishes the two states in every theme -- so this
+   failing to render would not make a checked item unreadable. */
+li.task-list-item > input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: .2em;
+  height: .42em;
+  margin: -.26em 0 0 -.1em;
+  border: solid var(--xedown-bg);
+  border-width: 0 .13em .13em 0;
+  transform: rotate(45deg);
 }
 
 pre { overflow-x: auto; }          /* the block scrolls, never the page */

@@ -241,3 +241,32 @@ def test_the_notice_bar_cannot_push_the_page_sideways(preview_css):
     # It carries a filesystem path, which can be long and has no spaces.
     bodies = _rule_bodies_for(preview_css, ".xedown-notice")
     assert any("overflow-wrap" in body for body in bodies)
+
+
+def test_task_list_checkboxes_are_drawn_rather_than_native(preview_css):
+    bodies = _rule_bodies_for(preview_css, 'li.task-list-item > input[type="checkbox"]')
+    assert any("appearance" in body and "none" in body for body in bodies)
+    # A disabled control is dimmed and given a "no entry" cursor. These are
+    # read-only on purpose, not unavailable, and must not look broken.
+    assert any("opacity: 1" in body for body in bodies)
+    assert any("cursor: default" in body for body in bodies)
+
+
+def test_a_checked_task_item_is_distinguishable_without_the_tick(preview_css):
+    # The tick is drawn by a pseudo-element on a replaced element, which is
+    # the least certain rule in this stylesheet. The fill is what actually
+    # carries the state, so it must be declared independently of the tick.
+    bodies = _rule_bodies_for(
+        preview_css, 'li.task-list-item > input[type="checkbox"]:checked'
+    )
+    assert bodies, "no :checked rule"
+    assert any("background" in body for body in bodies)
+
+
+def test_no_checkbox_colour_is_hardcoded(preview_css):
+    for selector in (
+        'li.task-list-item > input[type="checkbox"]',
+        'li.task-list-item > input[type="checkbox"]:checked',
+    ):
+        for body in _rule_bodies_for(preview_css, selector):
+            assert "#" not in body, f"{selector} declares a colour literal"
