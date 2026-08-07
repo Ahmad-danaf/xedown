@@ -62,7 +62,7 @@ def is_dangerous_path(path):
     return os.path.splitext(path or "")[1].lower() in DANGEROUS_SUFFIXES
 
 
-def _normalized_local_path(reference, base_dir):
+def resolve_to_path(reference, base_dir):
     """Resolve `reference` against `base_dir` into a normalized absolute path.
 
     Returns None when `reference` is relative and there is no base directory
@@ -87,6 +87,17 @@ def _normalized_local_path(reference, base_dir):
         return None
 
 
+def uri_for_path(path):
+    """A `file://` URI for an absolute local path.
+
+    One encoder, used by both callers: `resolve_to_uri` returns this, and
+    `images.classify_image` needs the same URI for a path it has already
+    resolved and stat-ed. Two implementations of one mapping is how they
+    drift apart.
+    """
+    return "file://" + urllib.parse.quote(path)
+
+
 def resolve_to_uri(reference, base_dir):
     """Return an absolute URI for `reference`, or None when it cannot resolve.
 
@@ -102,15 +113,15 @@ def resolve_to_uri(reference, base_dir):
     except ValueError:
         # e.g. an unbalanced IPv6-literal bracket in the authority.
         # Malformed input fails closed instead of propagating, the same way
-        # `_normalized_local_path` already does for other malformed input
+        # `resolve_to_path` already does for other malformed input
         # (bad percent escapes, embedded NUL bytes) below.
         return None
     if scheme in REMOTE_SCHEMES or scheme == "data":
         return reference
-    path = _normalized_local_path(reference, base_dir)
+    path = resolve_to_path(reference, base_dir)
     if path is None:
         return None
-    return "file://" + urllib.parse.quote(path)
+    return uri_for_path(path)
 
 
 def classify_link(uri, base_dir):
@@ -134,7 +145,7 @@ def classify_link(uri, base_dir):
             LinkAction.REFUSE, reason=f"unsupported link type: {scheme}:"
         )
 
-    path = _normalized_local_path(uri, base_dir)
+    path = resolve_to_path(uri, base_dir)
     if path is None:
         return LinkDecision(
             LinkAction.REFUSE,
@@ -148,7 +159,7 @@ def classify_link(uri, base_dir):
             LinkAction.REFUSE, reason=f"cannot open “{uri}”: the file does not exist"
         )
 
-    target = "file://" + urllib.parse.quote(path)
+    target = uri_for_path(path)
     if is_markdown_path(path):
         return LinkDecision(LinkAction.OPEN_IN_XED, target=target)
     if is_dangerous_path(path) or (os.path.isfile(path) and os.access(path, os.X_OK)):
