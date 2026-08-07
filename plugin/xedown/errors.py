@@ -17,7 +17,7 @@ style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'">
 <style nonce="{nonce}">
 body {{ margin: 0; padding: 3rem 2rem; font-family: system-ui, sans-serif;
         background: {background}; color: {foreground}; }}
-.box {{ max-width: 40rem; margin: 0 auto; border-left: 3px solid {accent};
+.box {{ max-width: 40rem; margin: 0 auto; border-inline-start: 3px solid {accent};
         padding: 1rem 1.25rem; background: {panel}; border-radius: 4px; }}
 h1 {{ font-size: 1.1rem; margin: 0 0 .5rem; }}
 p {{ margin: 0; line-height: 1.6; white-space: pre-wrap; }}
