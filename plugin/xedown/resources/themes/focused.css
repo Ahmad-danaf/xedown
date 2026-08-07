@@ -94,15 +94,16 @@ a { color: var(--xedown-link); text-decoration: none; }
 a:hover { text-decoration: underline; }
 a:focus-visible { border-radius: 2px; }
 
-ul, ol { margin: 0 0 1.05em; padding-left: 1.6em; }
+ul, ol { margin: 0 0 1.05em; padding-inline-start: 1.6em; }
 li { margin: .25em 0; }
 li > ul, li > ol { margin: .25em 0; }
 
 /* Quoted prose stays body-coloured: it is text to read, not an aside. */
 blockquote {
   margin: 0 0 1.05em;
-  padding: .1em 0 .1em .9em;
-  border-left: 2px solid var(--xedown-quote-border);
+  padding: .1em 0;
+  padding-inline-start: .9em;
+  border-inline-start: 2px solid var(--xedown-quote-border);
 }
 
 hr { height: 1px; margin: 2em 0; border: 0; background: var(--xedown-border); }

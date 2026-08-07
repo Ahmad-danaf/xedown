@@ -80,14 +80,15 @@ a:hover { text-decoration: underline; }
    style choice, so only it lives here. */
 a:focus-visible { border-radius: 2px; }
 
-ul, ol { margin: 0 0 1.1em; padding-left: 1.7em; }
+ul, ol { margin: 0 0 1.1em; padding-inline-start: 1.7em; }
 li { margin: .3em 0; }
 li > ul, li > ol { margin: .3em 0; }
 
 blockquote {
   margin: 0 0 1.1em;
-  padding: .1em 0 .1em 1em;
-  border-left: .25em solid var(--xedown-quote-border);
+  padding: .1em 0;
+  padding-inline-start: 1em;
+  border-inline-start: .25em solid var(--xedown-quote-border);
   color: var(--xedown-muted);
 }
 

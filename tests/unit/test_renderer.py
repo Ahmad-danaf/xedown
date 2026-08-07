@@ -462,8 +462,14 @@ ENGLISH_DOC = "# Title\n\nAn ordinary English paragraph.\n"
 
 
 def _article_tag(page):
-    match = re.search(r"<article[^>]*>", page)
-    assert match, "no <article> in the page"
+    # Anchored on an actual `dir="..."` attribute (equals sign and quotes),
+    # not just the word "article" followed by "dir": brief 7's preview.css
+    # comment names the `<article dir>` attribute in backticks, and that
+    # literal text is inlined into the page inside the <style> block, ahead
+    # of the real element. A bare `<article[^>]*>` search matches that
+    # comment text first and never reaches the actual tag.
+    match = re.search(r'<article\b[^>]*\sdir="[^"]*"[^>]*>', page)
+    assert match, 'no <article dir="..."> in the page'
     return match.group(0)
 
 
