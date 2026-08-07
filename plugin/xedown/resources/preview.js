@@ -101,13 +101,13 @@
       var text = blocks[i].textContent || "";
       /* The newline before a closing fence is a delimiter, not code. */
       if (text.charAt(text.length - 1) === "\n") { text = text.slice(0, -1); }
-      /* textContent can never contain "\r": the HTML parser normalises
-         "\r\n" and lone "\r" to "\n" before the DOM exists, and the text
-         reaching the renderer already came from a GtkTextBuffer, which
-         holds "\n" regardless of the file's line endings and restores the
-         original ending on save. So this always matches what selecting and
-         copying in the source view would return -- there is no CRLF to
-         preserve at this layer. */
+      /* textContent can never contain "\r": the text reaching the renderer
+         already came from a GtkTextBuffer, which holds "\n" regardless of
+         the file's line endings and restores the original ending on save,
+         and Python-Markdown strips any carriage return that survives that
+         while building the HTML, so none ever reaches the page. So this
+         always matches what selecting and copying in the source view would
+         return -- there is no CRLF to preserve at this layer. */
       sources.set(blocks[i], text);
     }
   }
