@@ -137,6 +137,18 @@ def test_a_file_that_is_not_utf8_is_refused(tmp_path):
     assert loaded.problem == errors.STYLESHEET_NOT_UTF8
 
 
+def test_a_leading_byte_order_mark_is_stripped(tmp_path):
+    # Some editors write a BOM. U+FEFF is not whitespace to the CSS tokenizer,
+    # so left in place it would invalidate the user's first rule -- silently,
+    # because xedown deliberately does not validate CSS.
+    target = tmp_path / "bom.css"
+    target.write_bytes(b"\xef\xbb\xbfbody { color: red; }\n")
+    loaded = stylesheets.load_user_stylesheet(str(target))
+    assert loaded.problem is None
+    assert loaded.css.startswith("body")
+    assert "﻿" not in loaded.css
+
+
 def test_an_empty_or_whitespace_only_file_is_refused(tmp_path):
     for text in ("", "\n\n   \t\n"):
         target = write(tmp_path, text)
@@ -219,6 +231,13 @@ def test_every_problem_has_a_phrase():
     assert len(set(problems)) == len(problems)
     for problem in problems:
         assert errors.stylesheet_problem_phrase(problem).strip()
+        # The bare truthiness check above cannot fail: every known problem
+        # AND every unrecognised one produce a non-empty phrase, because
+        # stylesheet_problem_phrase's fallback ("could not be used") is
+        # itself a truthy string. Pin that a real, problem-specific phrase is
+        # registered for each of these -- not merely that some phrase came
+        # back.
+        assert errors.stylesheet_problem_phrase(problem) != "could not be used"
 
 
 def test_the_size_phrase_names_the_actual_cap():

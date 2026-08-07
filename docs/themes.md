@@ -117,7 +117,7 @@ xedown never touches the network, and the preview's content security policy
 enforces it rather than trusting the stylesheet. This is the part that
 surprises people, so it is spelled out:
 
-| In your stylesheet | |
+| In your stylesheet | Result |
 | --- | --- |
 | `font-family: "Iosevka"` — a font installed on this machine | **works** |
 | `background-image: url(file:///home/you/paper.png)` | **works** |
@@ -138,7 +138,7 @@ menus, tabs or editor.
 The preview still renders, using the selected built-in theme, and a bar at the
 top of the page says which file is at fault and why:
 
-| | |
+| Condition | What the bar says |
 | --- | --- |
 | the file does not exist | *was not found* |
 | it is a folder, a device, or a pipe | *is not a file* |
@@ -146,7 +146,7 @@ top of the page says which file is at fault and why:
 | it is not UTF-8 text | *is not valid UTF-8 text* |
 | it is empty, or only whitespace | *is empty* |
 | it is over 512 KiB | *is larger than the 512 KiB limit* |
-| it contains the text `</style` | *cannot be embedded safely* |
+| it contains the text `</style` | *contains "</style", which cannot be embedded safely* |
 
 That last one is refused rather than patched around: the sequence would end
 the preview's stylesheet early and put the rest of your file into the page as
@@ -171,7 +171,7 @@ xedown 0.1.0 exactly.
 Content width is the reading measure. Roughly what each part of the range
 suits, at the default text size:
 
-| `content_width_rem` | ≈ characters per line | |
+| `content_width_rem` | ≈ characters per line | Suits |
 | --- | --- | --- |
 | 30 | ~52 | a focused, narrow column |
 | 38 | ~68 | the classic ideal measure |

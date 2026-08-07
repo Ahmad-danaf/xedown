@@ -126,7 +126,14 @@ def load_user_stylesheet(value, config_dir=None):
     # handler above entirely. That exact escape broke settings.py twice; see
     # the comment in its `_load`.
     try:
-        css = raw.decode("utf-8")
+        # utf-8-sig, not utf-8: a leading byte-order mark decodes as U+FEFF,
+        # which is not whitespace to the CSS tokenizer and would sit in the
+        # assembled sheet right after the theme layer, invalidating the
+        # user's first rule with no message at all (xedown deliberately does
+        # not validate CSS). utf-8-sig strips a leading BOM if present and is
+        # otherwise identical to utf-8 -- this is about that silent papercut,
+        # not about encoding detection.
+        css = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         return UserStylesheet(path=display, problem=errors.STYLESHEET_NOT_UTF8)
 

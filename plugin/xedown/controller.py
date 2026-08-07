@@ -367,9 +367,13 @@ class TabController:
 
         `CUSTOM_STYLESHEET` is deliberately absent. Both routes to a
         different user stylesheet — the setting moving, or the file changing —
-        arrive through `stylewatcher` instead, so this handler never has to
-        run before or after the watcher's own settings listener. Delivery
-        order between listeners is not depended on anywhere.
+        arrive through `stylewatcher` instead, so this handler never handles
+        that key itself. And because both this handler and
+        `_on_user_stylesheet_changed` rebuild `self._style` from the store
+        rather than patching a single field, neither depends on arriving
+        before the other: whichever runs second still rebuilds from current
+        settings, so a single broadcast that moves several keys at once
+        cannot leave a reload carrying stale metrics.
 
         A theme change needs the whole page again, because the stylesheet is
         inlined in <head> and `update_body` only swaps the article. Width and
@@ -412,7 +416,13 @@ class TabController:
         """
         if self._style is None:
             return
-        self._style.user = user
+        # Rebuilt rather than patched, so a reload this triggers carries
+        # current metrics even when this delivery races a settings broadcast
+        # that also moved CONTENT_WIDTH_REM or TEXT_SIZE_PX (see
+        # _on_settings_changed's docstring).
+        self._style = stylesheets.PreviewStyle.from_settings(
+            settings.get_settings(), user=user
+        )
         self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())

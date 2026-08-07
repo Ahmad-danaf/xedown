@@ -140,6 +140,22 @@ def test_document_carries_a_strict_csp_with_the_nonce():
     assert "'nonce-test-nonce'" in page
 
 
+def test_the_csp_is_exactly_what_the_documentation_promises():
+    # docs/themes.md tells users that a custom stylesheet's @font-face and
+    # @import do nothing, while url(file://) and url(data:) backgrounds work.
+    # Every one of those promises is a consequence of this policy and nothing
+    # else -- there is no font-src, so @font-face falls back to default-src
+    # 'none'. A later change that widens the policy must break this test
+    # rather than silently make the documentation wrong.
+    page = renderer.render_document("# Hi", nonce="n")
+    assert "img-src file: data:" in page
+    assert "style-src 'nonce-n'" in page
+    assert "script-src 'nonce-n'" in page
+    assert "font-src" not in page
+    assert "unsafe-inline" not in page
+    assert "unsafe-eval" not in page
+
+
 def test_document_has_no_base_element():
     # base-uri 'none' would block it; URIs are pre-resolved instead.
     assert "<base" not in renderer.render_document("# Hi", nonce="n")

@@ -39,7 +39,13 @@ class StylesheetWatcher:
         self._current = stylesheets.UserStylesheet()
 
     def current(self):
-        """The stylesheet as of the last load. Never None."""
+        """The stylesheet as of the last load. Never None.
+
+        No load happens until the first `connect()` — that call is what
+        performs it, via `_start()` -> `_retarget()`. Calling `current()`
+        before any `connect()` returns the unset default, not the live
+        setting.
+        """
         return self._current
 
     def connect(self, callback):
