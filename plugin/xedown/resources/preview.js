@@ -124,6 +124,24 @@
     window.scrollTo(0, Math.round(maxScroll() * Math.min(value, 1)));
   }
 
+  /* Content width and text size are two custom properties the base
+     stylesheet already reads, so writing them here reflows the document
+     without re-parsing the Markdown or re-running highlight.js — and the
+     browser keeps its own pixel scroll offset rather than us restoring an
+     approximate fraction. A full reload still carries the same two values in
+     its emitted stylesheet, so the two paths agree. */
+  function setMetrics(widthRem, sizePx) {
+    var root = document.documentElement.style;
+    var width = Number(widthRem);
+    var size = Number(sizePx);
+    if (isFinite(width) && width > 0) {
+      root.setProperty("--xedown-content-width", width + "rem");
+    }
+    if (isFinite(size) && size > 0) {
+      root.setProperty("--xedown-text-size", size + "px");
+    }
+  }
+
   function replaceBody(html) {
     var target = content();
     if (!target) { return; }
@@ -165,7 +183,8 @@
     replaceBody: replaceBody,
     setScroll: setScroll,
     getScroll: getScroll,
-    scrollToAnchor: scrollToAnchor
+    scrollToAnchor: scrollToAnchor,
+    setMetrics: setMetrics
   };
 
   if (document.readyState === "loading") {

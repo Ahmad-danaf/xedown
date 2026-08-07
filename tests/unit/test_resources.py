@@ -130,9 +130,20 @@ def test_script_exposes_the_host_interface(preview_js):
         "setScroll",
         "getScroll",
         "scrollToAnchor",
+        "setMetrics",
         "window.xedown",
     ):
         assert symbol in preview_js
+
+
+def test_the_metrics_setter_writes_the_two_variables_the_base_sheet_reads(preview_js):
+    # Poked through the CSSOM rather than re-rendered: these are two custom
+    # properties, so the page reflows without re-parsing the Markdown or
+    # re-running highlight.js. The names must match preview.css exactly or
+    # the poke lands on nothing and fails silently.
+    assert "--xedown-content-width" in preview_js
+    assert "--xedown-text-size" in preview_js
+    assert "documentElement" in preview_js
 
 
 def test_script_guards_unknown_highlight_languages(preview_js):

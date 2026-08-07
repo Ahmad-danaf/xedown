@@ -79,6 +79,24 @@ class PreviewView:
             f"if (window.xedown) {{ window.xedown.setScroll({json.dumps(fraction)}); }}"
         )
 
+    def set_metrics(self, width_rem, size_px):
+        """Apply a content width and text size to the loaded page, in place.
+
+        No reload: these are two custom properties the stylesheet already
+        reads. CSP's `style-src` governs inline styles the HTML parser
+        encounters, not programmatic CSSOM writes, so the nonce-only policy
+        permits this — the integration probe reads the computed value back
+        out of the page to keep that an observation rather than a claim.
+        """
+        script = (
+            "if (window.xedown) { window.xedown.setMetrics("
+            + json.dumps(float(width_rem))
+            + ", "
+            + json.dumps(float(size_px))
+            + "); }"
+        )
+        self._run(script)
+
     def scroll_to_anchor(self, anchor):
         self._run(
             f"if (window.xedown) {{ window.xedown.scrollToAnchor({json.dumps(anchor)}); }}"
