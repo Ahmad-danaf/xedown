@@ -455,3 +455,65 @@ def test_the_config_defaults_reproduce_v01_behaviour():
     html = renderer.render_document("# x")
     assert '"codeCopy": true' in html
     assert '"imageDisplay": "placeholder"' in html
+
+
+ARABIC_DOC = "# عنوان\n\nهذه فقرة باللغة العربية تُقرأ من اليمين إلى اليسار.\n"
+ENGLISH_DOC = "# Title\n\nAn ordinary English paragraph.\n"
+
+
+def _article_tag(page):
+    match = re.search(r"<article[^>]*>", page)
+    assert match, "no <article> in the page"
+    return match.group(0)
+
+
+def test_the_article_carries_the_detected_direction():
+    assert 'dir="rtl"' in _article_tag(renderer.render_document(ARABIC_DOC))
+    assert 'dir="ltr"' in _article_tag(renderer.render_document(ENGLISH_DOC))
+
+
+def test_a_forced_direction_beats_the_detected_one():
+    page = renderer.render_document(ARABIC_DOC, text_direction="ltr")
+    assert 'dir="ltr"' in _article_tag(page)
+    page = renderer.render_document(ENGLISH_DOC, text_direction="rtl")
+    assert 'dir="rtl"' in _article_tag(page)
+
+
+def test_an_unusable_text_direction_still_produces_a_page():
+    # render_document is called directly by the render script and by the
+    # tests, so a bad argument must not escape as an exception.
+    for value in ("nonsense", None, 7, True, [], {}):
+        page = renderer.render_document(ARABIC_DOC, text_direction=value)
+        assert page.startswith("<!DOCTYPE html>")
+        assert "Cannot render this document" not in page
+        assert 'dir="rtl"' in _article_tag(page)
+
+
+def test_the_page_carries_the_desktop_direction_independently_of_the_document():
+    # An English document on an Arabic desktop: chrome mirrors, content does
+    # not. This is the whole reason there are two attributes and not one.
+    page = renderer.render_document(ENGLISH_DOC, ui_direction="rtl")
+    assert '<html dir="rtl">' in page
+    assert 'dir="ltr"' in _article_tag(page)
+
+
+def test_the_desktop_direction_defaults_to_left_to_right():
+    assert '<html dir="ltr">' in renderer.render_document(ENGLISH_DOC)
+
+
+def test_an_unusable_ui_direction_still_produces_a_page():
+    for value in ("nonsense", None, 7, object()):
+        page = renderer.render_document(ENGLISH_DOC, ui_direction=value)
+        assert '<html dir="ltr">' in page
+
+
+def test_a_render_failure_page_still_carries_the_desktop_direction(monkeypatch):
+    # The ui direction is resolved before the try, precisely so the two
+    # except branches can use it.
+    def boom(*_args, **_kwargs):
+        raise ValueError("x")
+
+    monkeypatch.setattr(renderer, "render_fragment", boom)
+    page = renderer.render_document(ENGLISH_DOC, ui_direction="rtl")
+    assert "Cannot render this document" in page
+    assert '<html dir="rtl">' in page

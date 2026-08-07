@@ -155,3 +155,16 @@ def test_the_stylesheet_notice_escapes_a_phrase_containing_markup():
     assert html_text.endswith("</div>")
     assert "cannot be embedded safely" in html_text
     assert "Showing the Repository theme." in html_text
+
+
+def test_an_error_page_carries_the_desktop_direction():
+    # An error page is xedown speaking, not the document, so it follows the
+    # desktop and never a detected direction — there is no document to detect.
+    assert '<html dir="rtl">' in errors.error_page("t", "d", ui_direction="rtl")
+    assert '<html dir="ltr">' in errors.error_page("t", "d", ui_direction="ltr")
+
+
+def test_an_error_page_defaults_to_left_to_right_and_never_raises():
+    assert '<html dir="ltr">' in errors.error_page("t", "d")
+    for value in ("nonsense", None, 7, object()):
+        assert '<html dir="ltr">' in errors.error_page("t", "d", ui_direction=value)

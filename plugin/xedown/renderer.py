@@ -3,7 +3,7 @@
 import json
 import secrets
 
-from . import errors, images, settings, stylesheets, themes, vendoring
+from . import direction, errors, images, settings, stylesheets, themes, vendoring
 from .links import resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
@@ -27,7 +27,7 @@ _CSP = (
 # above `pre code.hljs` in preview.css for why that ordering, and not just
 # the extra rule, is what makes the override actually win.
 _DOCUMENT = """<!DOCTYPE html>
-<html>
+<html dir="{ui_direction}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{csp}">
@@ -36,7 +36,7 @@ _DOCUMENT = """<!DOCTYPE html>
 </style>
 </head>
 <body class="{appearance} xedown-theme-{theme}">
-{notice}<article class="xedown-document" id="{content_id}">
+{notice}<article class="xedown-document" id="{content_id}" dir="{doc_direction}">
 {body}
 </article>
 <script nonce="{nonce}">
@@ -98,6 +98,8 @@ def render_document(
     style=None,
     image_display=images.DISPLAY_PLACEHOLDER,
     code_copy_buttons=True,
+    text_direction=direction.AUTO,
+    ui_direction=direction.LTR,
 ):
     """Build the complete preview page. Never raises — failures become a page.
 
@@ -119,6 +121,13 @@ def render_document(
     arguments and not fields of `PreviewStyle`. Both are also emitted as a
     `window.xedownConfig` object, so a loaded page can be told about a
     change without being reloaded and a fresh page needs no telling.
+
+    `text_direction` and `ui_direction` are two different things and both are
+    needed. The first is the *document's*, from the setting of the same name,
+    and lands on the article; `auto` means it is detected from the text. The
+    second is the *desktop's*, and lands on `<html>`, so xedown's own chrome —
+    the stylesheet notice, and the error pages — follows GTK rather than
+    whatever language the document happens to be in.
     """
     token = nonce or secrets.token_urlsafe(16)
     style = style if style is not None else stylesheets.PreviewStyle()
@@ -132,7 +141,12 @@ def render_document(
     copy_buttons, _ = settings.by_name(settings.CODE_COPY_BUTTONS).coerce(
         code_copy_buttons
     )
+    # Resolved before the try, because both except branches build an error
+    # page and need it. The document's own direction is resolved inside the
+    # try instead: it reads the text, so it belongs with the render.
+    ui = direction.coerce_ui(ui_direction)
     try:
+        doc_direction = direction.resolve(text_direction, text)
         body = render_fragment(text, base_dir=base_dir, image_display=display)
         stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
@@ -143,6 +157,7 @@ def render_document(
             errors.missing_vendor_detail(exc),
             dark=dark,
             nonce=token,
+            ui_direction=ui,
         )
     except Exception as exc:  # noqa: BLE001 - a blank pane is never acceptable
         return errors.error_page(
@@ -150,6 +165,7 @@ def render_document(
             errors.render_failure_detail(exc),
             dark=dark,
             nonce=token,
+            ui_direction=ui,
         )
 
     notice = ""
@@ -176,4 +192,6 @@ def render_document(
         config=json.dumps({"codeCopy": copy_buttons, "imageDisplay": display}),
         preview_js=preview_js,
         highlight_js=highlight_js,
+        ui_direction=ui,
+        doc_direction=doc_direction,
     )
