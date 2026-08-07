@@ -108,7 +108,7 @@ p { margin: 0 0 1.15em; }
 a { color: var(--xedown-link); text-decoration: underline; }
 a:hover { text-decoration: none; }
 
-ul, ol { margin: 0 0 1.15em; padding-left: 1.6em; }
+ul, ol { margin: 0 0 1.15em; padding-inline-start: 1.6em; }
 li { margin: .3em 0; }
 li > ul, li > ol { margin: .3em 0; }
 

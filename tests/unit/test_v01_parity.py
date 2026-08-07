@@ -41,6 +41,26 @@ SUBSTITUTIONS = {
     # v0.1 capped every table at the container width, which meant a wide
     # table was compressed instead of scrolling inside its own wrapper.
     ("table", "width"): (("table", "width"), "auto"),
+    # Brief 7: the list indent is start-relative, so bullets and their
+    # indentation move to the right side of a right-to-left document. Every
+    # substitution below is computed-identical for a left-to-right one --
+    # which is what keeps "repository renders identically to 0.1.0" true.
+    ("ul", "padding-left"): (("ul", "padding-inline-start"), "1.7em"),
+    ("ol", "padding-left"): (("ol", "padding-inline-start"), "1.7em"),
+    ("ul.task-list", "padding-left"): (
+        ("ul.task-list", "padding-inline-start"),
+        "1.2em",
+    ),
+    # Brief 7: v0.1's four-value shorthand said left and right separately,
+    # which is the one shorthand form that cannot mirror. Split into a
+    # symmetric block-axis pair plus a logical inline start.
+    ("blockquote", "padding"): (("blockquote", "padding"), ".1em 0"),
+    # Brief 7: the quote bar moves to the right side of a right-to-left
+    # document.
+    ("blockquote", "border-left"): (
+        ("blockquote", "border-inline-start"),
+        ".25em solid var(--xedown-quote-border)",
+    ),
 }
 
 # Selectors v0.2 introduces that v0.1 never had.
@@ -67,6 +87,9 @@ ADDITIONS = {
     ".xedown-code-block:hover > .xedown-copy",
     ".xedown-copy:focus-visible",
     "@media (hover: none) .xedown-copy",
+    # v0.1 emitted no `dir` attribute anywhere, so a rule scoped to
+    # .xedown-document[dir="rtl"] cannot match anything a v0.1 page produced.
+    '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]',
 }
 
 # Selectors v0.2 introduces that CAN match markup a v0.1 page contained --
@@ -121,6 +144,13 @@ DELIBERATE_DECLARATIONS = {
     ),
     ("th", "min-width"): ("brief 5: a floor under column width"),
     ("td", "min-width"): ("brief 5: a floor under column width"),
+    ("blockquote", "padding-inline-start"): (
+        "brief 7: the quote's indent, split out of v0.1's four-value padding"
+    ),
+    ("a", "unicode-bidi"): (
+        "brief 7: a link's text is its own bidi run, so a URL used as link "
+        "text stops dragging the sentence's neutrals around"
+    ),
 }
 
 

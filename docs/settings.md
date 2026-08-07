@@ -4,10 +4,10 @@ xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
 **Some of these values have no consumer yet.** `preview_theme`,
-`custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images` and
-`code_copy_buttons` are read as of v0.2 — see [themes.md](themes.md). The rest
-exist so that the features that use them, and the settings window that will
-edit them, have one place to look.
+`custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images`,
+`code_copy_buttons` and `text_direction` are read as of v0.2 — see
+[themes.md](themes.md). The rest exist so that the features that use them, and
+the settings window that will edit them, have one place to look.
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -63,6 +63,24 @@ setting. `hidden` hides the message, not the reason for it.
 `code_copy_buttons` shows a copy button in the corner of every code block.
 Set it to `false` and the buttons vanish from every open preview
 immediately — no restart, no reopening the file.
+
+`text_direction` decides which way the **document** lays out. `auto`, the
+default, counts the strong right-to-left and left-to-right characters in the
+document — ignoring code and URLs — and picks the winner, so a document that
+opens with an English heading but is Arabic throughout still lays out
+right-to-left. Set it to `ltr` or `rtl` to decide for yourself. xedown reads
+`settings.json` when it starts, so restart xed after editing the file.
+
+Forcing a direction sets the **layout** — bullets and their indentation,
+quote bars, table column order, footnote markers, the copy button — and not
+each block. Every paragraph, heading, list item and table cell still picks
+its own reading direction from its own content, so `"text_direction": "rtl"`
+does not left-align your English paragraphs and `"ltr"` does not misplace the
+punctuation in your Arabic ones.
+
+This setting says nothing about xedown's own interface. The Preview/Markdown
+bar, the stylesheet notice and the error pages follow your **desktop's**
+direction, whatever the document is written in.
 
 ## Editing the file by hand
 

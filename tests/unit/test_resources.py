@@ -5,6 +5,8 @@ import subprocess
 import pytest
 from xedown import themes, vendoring
 
+from .cssparse import declarations
+
 # Text-bearing blocks that must pick up their own base direction and
 # start-relative alignment. `unicode-bidi` is not inherited, so this must be
 # declared on each of these individually, not once on a shared ancestor.
@@ -393,3 +395,154 @@ def test_the_copied_text_is_captured_before_highlighting(preview_js):
     # which is what a naive search of the whole file measures instead.
     body = preview_js[preview_js.index("function decorate(") :]
     assert body.index("captureSources(root)") < body.index("highlight(root)")
+
+
+# Properties that position something by a physical side. In a right-to-left
+# document every one of them mirrors wrongly, so the logical counterpart is
+# used instead: padding-inline-start, border-inline-start, inset-inline-end,
+# and so on.
+_PHYSICAL_PROPERTIES = frozenset(
+    {
+        "padding-left",
+        "padding-right",
+        "margin-left",
+        "margin-right",
+        "border-left",
+        "border-right",
+        "inset-left",
+        "inset-right",
+        "left",
+        "right",
+    }
+)
+
+# The only shorthand form whose two inline sides can differ. Two values means
+# "block, inline"; three means "block-start, inline, block-end"; only four
+# can say left and right separately -- which is exactly how
+# `blockquote { padding: .1em 0 .1em 1em }` hid from a property-name check
+# until brief 7 went looking for it.
+_FOUR_VALUE_SHORTHANDS = frozenset({"padding", "margin", "inset", "border-width"})
+
+# (selector, property) -> why this one may stay physical. Every entry is a
+# square box being drawn, not a layout being aligned to a side.
+_PHYSICAL_BY_DESIGN = {
+    ('li.task-list-item > input[type="checkbox"]:checked::after', "left"): (
+        "the tick is centred inside a square box, not aligned to either side"
+    ),
+    ('li.task-list-item > input[type="checkbox"]:checked::after', "margin"): (
+        "the tick's own offset from that centre"
+    ),
+    ('li.task-list-item > input[type="checkbox"]:checked::after', "border-width"): (
+        "two of the four borders are the checkmark's two strokes"
+    ),
+}
+
+
+def _physical_declarations(name):
+    parsed, _ = declarations(vendoring.read_resource(name))
+    found = []
+    for selector, properties in parsed.items():
+        for prop, value in properties.items():
+            if (selector, prop) in _PHYSICAL_BY_DESIGN:
+                continue
+            physical = (
+                prop in _PHYSICAL_PROPERTIES
+                or (prop in _FOUR_VALUE_SHORTHANDS and len(value.split()) == 4)
+                or (prop == "text-align" and value in ("left", "right"))
+            )
+            if physical:
+                found.append(f"{selector} {{ {prop}: {value} }}")
+    return found
+
+
+@pytest.mark.parametrize("name", OUR_STYLESHEETS)
+def test_no_stylesheet_positions_anything_by_a_physical_side(name):
+    # A right-to-left document mirrors only if every inline-axis property is
+    # logical. One `padding-left` left behind puts a bullet, a quote bar or a
+    # copy button on the wrong side, and nothing else in the suite would say
+    # so -- the computed output for a left-to-right document is identical
+    # either way, which is what makes this a gate rather than a test.
+    assert _physical_declarations(name) == []
+
+
+def test_every_physical_exception_is_actually_shipped():
+    # A stale entry would leave the gate permanently relaxed for a
+    # declaration nothing declares any more.
+    shipped = set()
+    for name in OUR_STYLESHEETS:
+        parsed, _ = declarations(vendoring.read_resource(name))
+        for selector, properties in parsed.items():
+            for prop in properties:
+                shipped.add((selector, prop))
+    for key, reason in _PHYSICAL_BY_DESIGN.items():
+        assert key in shipped, f"{key} is exempted for {reason!r} but is not declared"
+
+
+def test_the_copy_button_sits_at_the_documents_own_end(preview_css):
+    # The gate above only proves `right` is gone. Deleting the offset
+    # altogether would also satisfy it, and would drop the button into the
+    # corner of the block in both directions -- so the logical property has
+    # to be asserted present, not merely the physical one absent.
+    bodies = _rule_bodies_for(preview_css, ".xedown-copy")
+    assert any("inset-inline-end" in body for body in bodies)
+
+
+def test_the_list_indent_is_start_relative_in_every_theme():
+    for theme in themes.THEMES:
+        css = vendoring.read_resource(theme.stylesheet)
+        assert "padding-inline-start" in css, f"{theme.identifier} indents no list"
+
+
+def test_a_links_text_is_its_own_bidi_run(preview_css):
+    # A URL or a path used as link text inside an Arabic sentence would
+    # otherwise drag the sentence's neutrals -- its slashes, dots and colons
+    # -- to the wrong end. `plaintext` rather than `isolate`: `isolate` takes
+    # its base direction from the inherited `direction` property, so it would
+    # read Arabic link text left-to-right inside a left-to-right document.
+    # `plaintext` takes it from the link's own content, which is right in
+    # both directions.
+    bodies = _rule_bodies_for(preview_css, "a")
+    assert any(
+        "unicode-bidi" in body and "plaintext" in body for body in bodies
+    ), "a must declare unicode-bidi: plaintext"
+    assert not any("isolate" in body for body in bodies)
+
+
+def test_the_footnote_backref_turns_around_in_a_right_to_left_document(preview_css):
+    # U+21A9 is not a mirrored character, so the glyph has to be flipped
+    # rather than left to the bidi algorithm. Targeted by href, not by class:
+    # `class` is not an allowed attribute on `a`, so `footnote-backref` does
+    # not survive the sanitizer -- but an in-page anchor passes through
+    # resolve_uri untouched. Scoped to `.xedown-document[dir="rtl"]`, not bare
+    # `[dir="rtl"]`: the bare form also matches an English article nested
+    # inside `<html dir="rtl">` on a right-to-left desktop, which would
+    # mirror the arrow for a document that isn't right-to-left at all.
+    selector = '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]'
+    bodies = _rule_bodies_for(preview_css, selector)
+    assert bodies, f"no rule for {selector}"
+    assert any("scaleX(-1)" in body for body in bodies)
+    # A transform does nothing to an inline box.
+    assert any("inline-block" in body for body in bodies)
+
+
+def test_a_body_swap_carries_the_documents_direction(preview_js):
+    # Under `auto` the direction is a function of the content, so typing
+    # Arabic into an empty document has to flip the layout on the next
+    # debounce -- without a page reload, which is what replaceBody exists to
+    # avoid. Applied to the content element, which is what carries dir.
+    body = preview_js[preview_js.index("function replaceBody(") :]
+    assert "setAttribute" in body
+    assert '"dir"' in body
+    # Only the two real values, so a bad host call cannot write junk into the
+    # attribute.
+    assert '"rtl"' in body and '"ltr"' in body
+
+
+def test_the_table_cue_reads_the_containers_own_direction(preview_js):
+    # scrollLeft runs negative from a resting 0 in a right-to-left container,
+    # so both cues would be wrong from the first frame: a wide Arabic table
+    # would show "more content" against the edge that has none.
+    body = preview_js[preview_js.index("function updateTableCue(") :]
+    assert "Math.abs" in body
+    assert "getComputedStyle" in preview_js
+    assert "xedown-more-left" in body and "xedown-more-right" in body

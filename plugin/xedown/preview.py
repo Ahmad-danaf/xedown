@@ -74,9 +74,21 @@ class PreviewView:
         self._pending_scroll = restore_scroll
         self.widget.load_html(html, base_uri)
 
-    def update_body(self, fragment_html):
-        """Swap the body in place, preserving scroll, without a reload."""
-        script = f"if (window.xedown) {{ window.xedown.replaceBody({json.dumps(fragment_html)}); }}"
+    def update_body(self, fragment_html, text_direction=None):
+        """Swap the body in place, preserving scroll, without a reload.
+
+        The direction travels with the fragment rather than through a setter
+        of its own: under `auto` it is decided by the content, so a body that
+        changes can change it, and the two must never be applied a frame
+        apart. `None` leaves the loaded page's own direction alone.
+        """
+        script = (
+            "if (window.xedown) { window.xedown.replaceBody("
+            + json.dumps(fragment_html)
+            + ", "
+            + json.dumps(text_direction)
+            + "); }"
+        )
         self._run(script)
 
     def set_scroll(self, fraction):

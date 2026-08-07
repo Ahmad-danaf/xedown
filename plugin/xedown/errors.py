@@ -8,7 +8,7 @@ UNSAVED_DOCUMENT_HINT = (
 )
 
 _ERROR_PAGE = """<!DOCTYPE html>
-<html>
+<html dir="{ui_direction}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; \
@@ -17,7 +17,7 @@ style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'">
 <style nonce="{nonce}">
 body {{ margin: 0; padding: 3rem 2rem; font-family: system-ui, sans-serif;
         background: {background}; color: {foreground}; }}
-.box {{ max-width: 40rem; margin: 0 auto; border-left: 3px solid {accent};
+.box {{ max-width: 40rem; margin: 0 auto; border-inline-start: 3px solid {accent};
         padding: 1rem 1.25rem; background: {panel}; border-radius: 4px; }}
 h1 {{ font-size: 1.1rem; margin: 0 0 .5rem; }}
 p {{ margin: 0; line-height: 1.6; white-space: pre-wrap; }}
@@ -30,8 +30,17 @@ p {{ margin: 0; line-height: 1.6; white-space: pre-wrap; }}
 """
 
 
-def error_page(title, detail, dark=False, nonce="xedown-error"):
-    """A complete, self-contained HTML page describing a failure."""
+def error_page(title, detail, dark=False, nonce="xedown-error", ui_direction="ltr"):
+    """A complete, self-contained HTML page describing a failure.
+
+    `ui_direction` is the *desktop's* text direction, not a document's: an
+    error page is xedown speaking, and there is no document to detect one
+    from. Coerced inline rather than through `direction.coerce_ui`, because
+    this module is deliberately a leaf that imports nothing of ours — which
+    is what lets every other module use it without a cycle. One line is a
+    cheaper price than that property.
+    """
+    ui = "rtl" if ui_direction == "rtl" else "ltr"
     palette = (
         {
             "background": "#1e1e1e",
@@ -54,6 +63,7 @@ def error_page(title, detail, dark=False, nonce="xedown-error"):
         detail=escaped_detail,
         theme="dark" if dark else "light",
         nonce=nonce,
+        ui_direction=ui,
         **palette,
     )
 

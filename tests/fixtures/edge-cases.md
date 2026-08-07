@@ -63,8 +63,11 @@ A paragraph immediately followed by a list, with no blank line before it.
 
 ## Bidirectional text
 
-Basic bidirectional text correctness, not full right-to-left support: each
-block below picks its own base direction from its first strong character.
+This document is English, and stays English: it is the control case for
+right-to-left support, not an example of it. Each block below picks its own
+base direction from its own content, inside a left-to-right document. For a
+document that is Arabic throughout, see [rtl.md](rtl.md); for one that mixes
+the two on purpose, see [mixed-direction.md](mixed-direction.md).
 
 ### Arabic paragraph
 
@@ -118,4 +121,5 @@ def total(items):
 ```
 
 If this code block reads right-to-left, or its lines start from the right
-edge, that is a bug in the bidirectional-text handling.
+edge, that is a bug in the bidirectional-text handling — and it would be one
+in an Arabic document too, where code must still read left to right.

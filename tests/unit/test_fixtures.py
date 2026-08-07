@@ -10,7 +10,7 @@ should both fail these tests.
 
 import pathlib
 
-from xedown import renderer
+from xedown import direction, renderer
 
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent.parent / "fixtures"
 SHOWCASE_PATH = FIXTURES_DIR / "showcase.md"
@@ -142,3 +142,79 @@ def test_the_showcase_exercises_the_reading_polish():
     # And it still renders cleanly: both new images must resolve, or this
     # fixture stops being the "does this look good" half of the pair.
     assert "xedown-image-error" not in body
+
+
+RTL_PATH = FIXTURES_DIR / "rtl.md"
+MIXED_PATH = FIXTURES_DIR / "mixed-direction.md"
+
+RTL_TEXT = RTL_PATH.read_text(encoding="utf-8")
+MIXED_TEXT = MIXED_PATH.read_text(encoding="utf-8")
+
+
+def test_the_direction_fixtures_are_present_and_non_empty():
+    assert RTL_TEXT.strip()
+    assert MIXED_TEXT.strip()
+
+
+def test_both_direction_fixtures_detect_right_to_left():
+    assert direction.detect(RTL_TEXT) == direction.RTL
+    # Arabic-majority on purpose: the English in it is content to lay out,
+    # not a vote. If this ever fails, add Arabic prose — do not delete the
+    # English, which is the entire point of the fixture.
+    assert direction.detect(MIXED_TEXT) == direction.RTL
+
+
+def test_the_left_to_right_fixtures_still_detect_left_to_right():
+    # This is "must not regress any left-to-right document", made checkable.
+    # edge-cases.md carries a substantial Arabic section and is still an
+    # English document.
+    assert direction.detect(SHOWCASE_TEXT) == direction.LTR
+    assert direction.detect(EDGE_CASES_TEXT) == direction.LTR
+
+
+def test_the_direction_fixtures_render_complete_documents():
+    for text, marker, nonce in (
+        (RTL_TEXT, "دليل xedown بالعربية", "test-rtl"),
+        (MIXED_TEXT, "اتجاهان في مستند واحد", "test-mixed"),
+    ):
+        page = renderer.render_document(text, base_dir=str(FIXTURES_DIR), nonce=nonce)
+        assert page.startswith("<!DOCTYPE html>")
+        assert marker in page
+        assert 'dir="rtl"' in page
+        assert "Cannot render this document" not in page
+        assert "Installation incomplete" not in page
+
+
+def test_neither_direction_fixture_has_an_error_placeholder():
+    # Both are "does this look good" fixtures, like showcase.md. A broken
+    # reference in either is a real regression, not a deliberate case.
+    for text in (RTL_TEXT, MIXED_TEXT):
+        body = renderer.render_fragment(text, base_dir=str(FIXTURES_DIR))
+        assert "xedown-image-error" not in body
+
+
+def test_the_rtl_fixture_exercises_everything_with_a_side():
+    body = renderer.render_fragment(RTL_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<table>" in body  # column order
+    assert "<blockquote>" in body  # the quote bar
+    assert "<input" in body  # a task list
+    assert 'id="fnref:' in body  # a footnote marker
+    assert 'class="language-python"' in body  # a fence that must stay LTR
+    assert body.count("<ul>") >= 2, "the nested list did not nest"
+    assert 'id="lists"' in body, "the explicit anchor id did not survive"
+    assert "sample.png" in body
+
+
+def test_the_mixed_fixture_carries_both_escape_hatches():
+    # The author's own way to mark a run the renderer cannot infer. If the
+    # sanitizer ever stops allowing these, this fixture stops covering them.
+    body = renderer.render_fragment(MIXED_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<bdi>" in body
+    assert 'dir="ltr"' in body
+
+
+def test_the_edge_cases_fixture_no_longer_claims_rtl_is_unsupported():
+    # Corrected by brief 7. The sentence was true when it was written and is
+    # not any more; leaving it would make the fixture document a limitation
+    # the plugin no longer has.
+    assert "not full right-to-left support" not in EDGE_CASES_TEXT

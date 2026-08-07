@@ -118,3 +118,44 @@ deferred rather than attempted in a final fix wave with no second review pass.
 tracked there; until then, xedown documents itself as supporting selected
 GitHub-flavored Markdown features (tables, task lists, strikethrough, fenced code,
 and footnotes), not full GFM compatibility.
+
+## A bare path or URL in right-to-left prose can break at its edges
+
+**What you see:** a file path or URL typed straight into an Arabic or Hebrew
+sentence, with no backticks and no markup, reads correctly letter by letter —
+but its leading slash, or a trailing dot or colon, appears at the wrong end
+of it:
+
+```markdown
+افتح /usr/local/share ثم تابع.
+```
+
+**Why:** a slash, a dot and a colon are *neutral* characters to the Unicode
+bidirectional algorithm. A neutral between two runs of different direction
+takes the paragraph's direction, so in a right-to-left paragraph the path's
+leading slash is pulled to the right-hand end of the run.
+
+**Whose bug it is:** nobody's, quite. The algorithm is doing what it is
+specified to do. Fixing it needs an *element* around the run, and there is no
+element around unmarked text — CSS cannot reach it. xedown deliberately does
+not guess which runs are paths: that guess would also wrap `either/or`,
+`9/10` and `a.b` in every document it ever rendered.
+
+**What to do about it:** mark the run, with either of two one-character
+changes.
+
+```markdown
+افتح `/usr/local/share` ثم تابع.
+افتح <bdi>/usr/local/share</bdi> ثم تابع.
+```
+
+Backticks make it code, which xedown already isolates. `<bdi>` — or
+`<span dir="ltr">…</span>` — isolates it without styling it as code. Both are
+kept by the preview. A path used as a **link's** text needs nothing: xedown
+isolates every link already.
+
+**Status:** permanent. There is no element around unmarked prose for CSS to
+target, and xedown deliberately does not guess which runs are paths — that
+guess would also wrap `either/or`, `9/10` and `a.b` in every document it
+ever rendered. This is not tracked for a future fix; the markup above is
+the fix.

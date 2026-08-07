@@ -46,12 +46,17 @@ Markdown modes inside the same tab.
   image, while a relative link is rendered inert — see the limitations below.
 - Remote images are never fetched. A visible placeholder is shown in their
   place instead. Nothing xedown does ever reaches out to the network.
-- Basic bidirectional text correctness: paragraphs, headings, list items,
-  table cells, and blockquote text automatically pick up the correct base
-  direction for content such as Arabic or Hebrew, block by block, while
-  code stays left-to-right regardless of surrounding text. This is
-  automatic per-block direction detection, not a right-to-left interface —
-  full right-to-left support is planned for a later version.
+- Right-to-left documents: Arabic and Hebrew lay out as well as they read.
+  Bullets, indentation, quote bars, table columns, footnote markers and the
+  copy button all move to the correct side, while each paragraph, heading,
+  list item and table cell still picks its own direction from its own
+  content — so mixed documents read correctly in both directions. Code stays
+  left-to-right whatever surrounds it. Override the automatic choice for a
+  whole document with `text_direction` in
+  [docs/settings.md](docs/settings.md). One limitation remains: a bare,
+  unmarked file path or URL typed straight into right-to-left prose can put
+  its leading slash on the wrong end — wrap it in backticks or in
+  `<bdi>…</bdi>`.
 
 ## Requirements
 

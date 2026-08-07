@@ -20,19 +20,23 @@
 
 * { box-sizing: border-box; }
 
-/* Basic bidirectional text correctness: a document containing Arabic,
-   Hebrew, or similar needs each text-bearing block to pick its own base
-   direction from its own first strong character, and to align using
-   logical (start-relative) rather than hardcoded physical alignment.
-   Without this, right-to-left text still shapes correctly glyph-by-glyph,
-   but the block starts on the wrong side and reads in the wrong order.
-   `unicode-bidi` is NOT inherited, so this is declared on every
-   text-bearing block individually rather than once on a container — a
-   structural wrapper (ul, ol, table, the article root, ...) would get no
-   benefit from it and is deliberately left alone. This is automatic
-   per-block direction detection, not a right-to-left interface: full RTL
-   support (mirrored layout, an RTL-aware chrome) is tracked for a later
-   version. */
+/* Two directions live on one page and they are not the same thing. `<html
+   dir>` carries the DESKTOP's, so xedown's own chrome — the notice bar, the
+   error pages — follows GTK. `<article dir>` carries the DOCUMENT's, from
+   its own content or from the `text_direction` setting, and is what makes
+   the layout below mirror.
+
+   On top of that, each text-bearing block still picks its own base direction
+   from its own first strong character, so an English paragraph inside an
+   Arabic document reads and aligns left-to-right while the list it sits in
+   keeps the document's direction. `unicode-bidi` is NOT inherited, so this
+   is declared on every text-bearing block individually rather than once on a
+   container — a structural wrapper (ul, ol, table, the article root, ...)
+   would get no benefit from it and is deliberately left alone.
+
+   `text-align: start` rather than `left`: under `plaintext` the used
+   alignment follows each block's own resolved base direction, which is the
+   whole point. */
 p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th {
   unicode-bidi: plaintext;
   text-align: start;
@@ -50,6 +54,40 @@ p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th {
 pre, code {
   direction: ltr;
   unicode-bidi: isolate;
+}
+
+/* A link's text is its own run. A URL or a path used as link text inside an
+   Arabic sentence would otherwise drag the sentence's neutrals — its
+   slashes, dots and colons — to the wrong end of it.
+
+   `plaintext`, not `isolate`: `isolate` takes its base direction from the
+   inherited `direction` property, so it would read Arabic link text
+   left-to-right inside a left-to-right document. `plaintext` takes it from
+   the link's own content, which is correct in both directions and changes
+   nothing for a link whose text matches the prose around it. */
+a { unicode-bidi: plaintext; }
+
+/* The footnote back-reference means "go back", and back is the other way in
+   a right-to-left document. U+21A9 is not a mirrored character, so the glyph
+   is flipped rather than left to the bidi algorithm — and `inline-block`
+   because a transform does nothing to an inline box.
+
+   Targeted by href rather than by class: `class` is not an allowed attribute
+   on `a`, so Python-Markdown's `footnote-backref` does not survive the
+   sanitizer. The href does — an in-page anchor is passed through
+   `resolve_uri` unchanged — and `div.footnote` keeps its own class.
+
+   Scoped to `.xedown-document[dir="rtl"]`, not bare `[dir="rtl"]`: a
+   descendant combinator does not stop at the article, so the bare form also
+   matched an English article sitting inside `<html dir="rtl">` on an Arabic
+   desktop — mirroring a left-to-right document's footnote arrow for a
+   reason that has nothing to do with the document. `dir` is emitted on the
+   very element that carries `class="xedown-document"` (see `_DOCUMENT` in
+   renderer.py), so this matches exactly when the *document* is
+   right-to-left. */
+.xedown-document[dir="rtl"] .footnote a[href^="#fnref"] {
+  display: inline-block;
+  transform: scaleX(-1);
 }
 
 .xedown-document {
@@ -83,7 +121,7 @@ a:focus-visible {
   overflow-wrap: break-word;
 }
 
-ul.task-list { list-style: none; padding-left: 1.2em; }
+ul.task-list { list-style: none; padding-inline-start: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
 
 /* Drawn rather than native, so a checkbox belongs to the selected theme
@@ -157,13 +195,18 @@ pre code.hljs {
 /* The copy button lives beside <pre>, not inside it, and out of flow: the
    block scrolls horizontally, and showing or hiding a button must not move
    or resize the code it belongs to. The wrapper adds no padding or border,
-   so <pre>'s own margins collapse through it unchanged. */
+   so <pre>'s own margins collapse through it unchanged.
+
+   The wrapper inherits the ARTICLE's direction, not `<html>`'s, so
+   `inset-inline-end` puts the button on the left of a code block in an
+   Arabic document. It belongs to the document it sits in, even though the
+   <pre> inside it is pinned left-to-right. */
 .xedown-code-block { position: relative; }
 
 .xedown-copy {
   position: absolute;
   top: .5em;
-  right: .5em;
+  inset-inline-end: .5em;
   /* Wide enough for the longest label, so confirming a copy cannot
      resize the button. */
   min-width: 7em;

@@ -92,7 +92,7 @@ p { margin: 0 0 1.5em; }
 a { color: var(--xedown-link); text-decoration: underline; }
 a:hover { text-decoration: none; }
 
-ul, ol { margin: 0 0 1.5em; padding-left: 1.5em; }
+ul, ol { margin: 0 0 1.5em; padding-inline-start: 1.5em; }
 li { margin: .45em 0; }
 li > ul, li > ol { margin: .45em 0; }
 li::marker { color: var(--xedown-muted); }
@@ -100,8 +100,9 @@ li::marker { color: var(--xedown-muted); }
 /* The quietest thing that still reads as a quote. */
 blockquote {
   margin: 0 0 1.5em;
-  padding: .1em 0 .1em 1.2em;
-  border-left: 1px solid var(--xedown-quote-border);
+  padding: .1em 0;
+  padding-inline-start: 1.2em;
+  border-inline-start: 1px solid var(--xedown-quote-border);
   color: var(--xedown-muted);
 }
 

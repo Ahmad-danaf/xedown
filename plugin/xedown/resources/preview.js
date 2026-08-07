@@ -250,11 +250,29 @@
      sides have more, so both classes are set at once -- preview.css's
      combined ".xedown-more-left.xedown-more-right" selector is what paints
      that state. The 1px slack absorbs sub-pixel layout, which would
-     otherwise leave a shadow showing at a hard stop. */
+     otherwise leave a shadow showing at a hard stop.
+
+     The class names are physical because the shadow is. Which physical side
+     has more content is not: in a right-to-left container the resting
+     position is 0 with the content overflowing to the LEFT, and scrollLeft
+     runs negative from there. So the distance travelled is the magnitude,
+     and the container's own direction decides which side that uncovers. */
+  function isRightToLeft(element) {
+    try {
+      return window.getComputedStyle(element).direction === "rtl";
+    } catch (e) {
+      return false;
+    }
+  }
+
   function updateTableCue(wrapper) {
     var limit = wrapper.scrollWidth - wrapper.clientWidth;
-    toggleClass(wrapper, "xedown-more-left", wrapper.scrollLeft > 1);
-    toggleClass(wrapper, "xedown-more-right", wrapper.scrollLeft < limit - 1);
+    var travelled = Math.abs(wrapper.scrollLeft);
+    var rtl = isRightToLeft(wrapper);
+    var moreBehind = travelled > 1;
+    var moreAhead = travelled < limit - 1;
+    toggleClass(wrapper, "xedown-more-left", rtl ? moreAhead : moreBehind);
+    toggleClass(wrapper, "xedown-more-right", rtl ? moreBehind : moreAhead);
   }
 
   function watchTable(wrapper) {
@@ -324,10 +342,16 @@
     }
   }
 
-  function replaceBody(html) {
+  /* The direction rides along with every body swap rather than having an
+     entry point of its own: under `auto` it is a function of the content, so
+     the two always change together. Anything that is not one of the two real
+     values is ignored, so a bad host call leaves the attribute as it was
+     instead of writing junk into it. */
+  function replaceBody(html, dir) {
     var target = content();
     if (!target) { return; }
     var previous = getScroll();
+    if (dir === "ltr" || dir === "rtl") { target.setAttribute("dir", dir); }
     target.innerHTML = html;
     decorate(target);
     setScroll(previous);

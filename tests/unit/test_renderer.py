@@ -455,3 +455,77 @@ def test_the_config_defaults_reproduce_v01_behaviour():
     html = renderer.render_document("# x")
     assert '"codeCopy": true' in html
     assert '"imageDisplay": "placeholder"' in html
+
+
+ARABIC_DOC = "# عنوان\n\nهذه فقرة باللغة العربية تُقرأ من اليمين إلى اليسار.\n"
+ENGLISH_DOC = "# Title\n\nAn ordinary English paragraph.\n"
+
+
+def _article_tag(page):
+    # Anchored on the content element's id, not on `dir="..."` itself: the
+    # four tests below use this helper to assert about `dir`, so anchoring
+    # the *lookup* on that same attribute would let it match a comment
+    # instead of the real element -- preview.css already names `<article
+    # dir>` in a comment once, which is why this had to be tightened before,
+    # and any future comment in preview.css, preview.js or an error template
+    # containing the literal text `<article dir="rtl">` would do it again.
+    # `CONTENT_ELEMENT_ID` is emitted unconditionally by the single
+    # template, so finding the element this way is decoupled from asserting
+    # anything about its direction.
+    match = re.search(
+        rf'<article\b[^>]*\bid="{renderer.CONTENT_ELEMENT_ID}"[^>]*>', page
+    )
+    assert match, f'no <article id="{renderer.CONTENT_ELEMENT_ID}"> in the page'
+    return match.group(0)
+
+
+def test_the_article_carries_the_detected_direction():
+    assert 'dir="rtl"' in _article_tag(renderer.render_document(ARABIC_DOC))
+    assert 'dir="ltr"' in _article_tag(renderer.render_document(ENGLISH_DOC))
+
+
+def test_a_forced_direction_beats_the_detected_one():
+    page = renderer.render_document(ARABIC_DOC, text_direction="ltr")
+    assert 'dir="ltr"' in _article_tag(page)
+    page = renderer.render_document(ENGLISH_DOC, text_direction="rtl")
+    assert 'dir="rtl"' in _article_tag(page)
+
+
+def test_an_unusable_text_direction_still_produces_a_page():
+    # render_document is called directly by the render script and by the
+    # tests, so a bad argument must not escape as an exception.
+    for value in ("nonsense", None, 7, True, [], {}):
+        page = renderer.render_document(ARABIC_DOC, text_direction=value)
+        assert page.startswith("<!DOCTYPE html>")
+        assert "Cannot render this document" not in page
+        assert 'dir="rtl"' in _article_tag(page)
+
+
+def test_the_page_carries_the_desktop_direction_independently_of_the_document():
+    # An English document on an Arabic desktop: chrome mirrors, content does
+    # not. This is the whole reason there are two attributes and not one.
+    page = renderer.render_document(ENGLISH_DOC, ui_direction="rtl")
+    assert '<html dir="rtl">' in page
+    assert 'dir="ltr"' in _article_tag(page)
+
+
+def test_the_desktop_direction_defaults_to_left_to_right():
+    assert '<html dir="ltr">' in renderer.render_document(ENGLISH_DOC)
+
+
+def test_an_unusable_ui_direction_still_produces_a_page():
+    for value in ("nonsense", None, 7, object()):
+        page = renderer.render_document(ENGLISH_DOC, ui_direction=value)
+        assert '<html dir="ltr">' in page
+
+
+def test_a_render_failure_page_still_carries_the_desktop_direction(monkeypatch):
+    # The ui direction is resolved before the try, precisely so the two
+    # except branches can use it.
+    def boom(*_args, **_kwargs):
+        raise ValueError("x")
+
+    monkeypatch.setattr(renderer, "render_fragment", boom)
+    page = renderer.render_document(ENGLISH_DOC, ui_direction="rtl")
+    assert "Cannot render this document" in page
+    assert '<html dir="rtl">' in page

@@ -291,3 +291,48 @@ def test_content_cannot_spoof_the_image_error_placeholder_class():
     # content can never produce that class itself.
     result = sanitize('<span class="xedown-image-error">fake</span>')
     assert "xedown-image-error" not in result
+
+
+def test_dir_survives_with_each_of_its_three_valid_values():
+    for value in ("ltr", "rtl", "auto"):
+        result = sanitize(f'<p dir="{value}">text</p>')
+        assert f'dir="{value}"' in result
+
+
+def test_dir_is_matched_ignoring_case_and_surrounding_space():
+    assert 'dir="rtl"' in sanitize('<p dir=" RTL ">text</p>')
+
+
+def test_any_other_dir_value_is_dropped_along_with_the_attribute():
+    # A value allowlist, not a denylist: anything unrecognised leaves no
+    # attribute behind at all.
+    for value in ("", "auto ltr", "inherit", "rtl;", "javascript:", "1"):
+        result = sanitize(f'<p dir="{value}">text</p>')
+        assert "dir=" not in result, value
+        assert "text" in result
+
+
+def test_dir_is_allowed_on_every_element_that_survives():
+    for tag in ("span", "div", "li", "td", "blockquote", "h2"):
+        assert 'dir="ltr"' in sanitize(f'<{tag} dir="ltr">x</{tag}>')
+
+
+def test_dir_goes_with_an_element_that_is_dropped():
+    assert "dir=" not in sanitize('<marquee dir="rtl">x</marquee>')
+    assert "dir=" not in sanitize('<script dir="rtl">x</script>')
+
+
+def test_bdi_survives_and_keeps_its_text():
+    result = sanitize("<p>افتح <bdi>/usr/local/share</bdi> ثم تابع.</p>")
+    assert "<bdi>" in result and "</bdi>" in result
+    assert "/usr/local/share" in result
+
+
+def test_bdi_carries_dir_like_anything_else():
+    assert 'dir="ltr"' in sanitize('<bdi dir="ltr">/usr/local</bdi>')
+
+
+def test_bdi_gains_no_other_attribute():
+    result = sanitize('<bdi class="hljs" onclick="evil()">x</bdi>')
+    assert "onclick" not in result
+    assert "class" not in result
