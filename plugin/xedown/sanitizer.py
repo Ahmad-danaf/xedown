@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 ALLOWED_ELEMENTS = frozenset(
     {
         "a",
+        "bdi",
         "blockquote",
         "br",
         "code",
@@ -50,7 +51,14 @@ _DROP_CONTENT_ELEMENTS = frozenset({"script", "style", "svg", "math", "template"
 
 _VOID_ELEMENTS = frozenset({"br", "hr", "img", "input"})
 
-_GLOBAL_ATTRIBUTES = frozenset({"id", "title"})
+# `dir` is here rather than per-element because it is meaningful on any of
+# them: it is how a document says "this run reads the other way" for a case
+# the renderer cannot infer, such as a bare path inside Arabic prose. It is
+# inert presentational HTML — no scheme, no script surface — and its value is
+# filtered to an allowlist below.
+_GLOBAL_ATTRIBUTES = frozenset({"dir", "id", "title"})
+
+_ALLOWED_DIR_VALUES = frozenset({"ltr", "rtl", "auto"})
 
 ALLOWED_ATTRIBUTES = {
     "a": frozenset({"href", "name"}),
@@ -123,6 +131,19 @@ def _filter_class(value):
         if any(cls.startswith(prefix) for prefix in _ALLOWED_CLASS_PREFIXES)
     ]
     return " ".join(kept)
+
+
+def _filter_dir(value):
+    """`dir`, or the empty string when it is not one of the three real values.
+
+    An allowlist of values, not a denylist, and the same shape as
+    `_filter_class`: an unrecognised value produces no attribute at all
+    rather than one the browser will quietly ignore. Forgiving about case and
+    surrounding space, like `settings.ChoiceSetting` is, since both read
+    something a person typed.
+    """
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in _ALLOWED_DIR_VALUES else ""
 
 
 class ImagePlaceholder:
@@ -221,6 +242,10 @@ class _Sanitizer(HTMLParser):
                 value = _filter_class(value)
                 if not value:
                     continue
+            elif name == "dir":
+                value = _filter_dir(value)
+                if not value:
+                    continue
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
         if tag == "input":
             # Task-list checkboxes are display only; never interactive.
@@ -256,6 +281,10 @@ class _Sanitizer(HTMLParser):
                 continue
             if name == "class":
                 value = _filter_class(value)
+                if not value:
+                    continue
+            if name == "dir":
+                value = _filter_dir(value)
                 if not value:
                     continue
             if name == "alt":
