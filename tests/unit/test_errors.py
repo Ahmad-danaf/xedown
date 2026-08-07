@@ -1,3 +1,5 @@
+import re
+
 from xedown import errors
 
 
@@ -50,13 +52,52 @@ def test_unsaved_hint_explains_relative_paths():
     assert "save" in errors.UNSAVED_DOCUMENT_HINT.lower()
 
 
-def test_remote_image_blocked_text_contains_uri_and_blocked():
-    uri = "https://example.com/image.png"
-    text = errors.remote_image_blocked_text(uri)
+def test_remote_image_text_names_the_uri_and_states_a_fact():
+    uri = "https://example.com/a.png"
+    text = errors.remote_image_text(uri)
     assert uri in text
-    assert "blocked" in text.lower()
-    assert "<" not in text
-    assert ">" not in text
+    assert "not fetched" in text
+
+
+def test_local_image_missing_text_names_the_path():
+    assert "/tmp/gone.png" in errors.local_image_missing_text("/tmp/gone.png")
+    assert "not found" in errors.local_image_missing_text("/tmp/gone.png")
+
+
+def test_local_image_unreadable_text_carries_the_reason_when_there_is_one():
+    with_detail = errors.local_image_unreadable_text("/tmp/a.png", "Permission denied")
+    assert "Permission denied" in with_detail
+    assert "could not be read" in with_detail
+    # A missing reason must not leave an empty bracket dangling.
+    assert errors.local_image_unreadable_text("/tmp/a.png") == (
+        "Image could not be read: /tmp/a.png"
+    )
+
+
+def test_with_alt_appends_the_authors_words_only_when_there_are_any():
+    result = errors.with_alt("Image not found: a.png", "Company logo")
+    # em dash (U+2014) and curly quotes (U+201C, U+201D)
+    expected = 'Image not found: a.png — "Company logo"'
+    assert result == expected
+    assert errors.with_alt("x", "") == "x"
+    assert errors.with_alt("x", None) == "x"
+    assert errors.with_alt("x", "   ") == "x"
+
+
+# xedown never fetches remote images and no setting changes that, so no
+# placeholder may hint at one. This is a rule from the brief, enforced here
+# rather than left to review.
+_IMPLIES_A_TOGGLE = re.compile(r"enable|allow|turn on|unblock|permit", re.IGNORECASE)
+
+
+def test_no_image_wording_implies_remote_images_can_be_switched_on():
+    for text in (
+        errors.remote_image_text("https://example.com/a.png"),
+        errors.local_image_missing_text("/tmp/a.png"),
+        errors.local_image_unreadable_text("/tmp/a.png", "Permission denied"),
+        errors.local_image_unresolved_text("a.png"),
+    ):
+        assert not _IMPLIES_A_TOGGLE.search(text), text
 
 
 def test_local_image_unresolved_text_contains_uri_and_the_unsaved_hint():

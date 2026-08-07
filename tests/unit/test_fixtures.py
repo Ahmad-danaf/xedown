@@ -74,7 +74,7 @@ def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
     # this is deterministic real behaviour, not a fixture-specific quirk.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
     assert "xedown-image-error" in body
-    assert "Remote image blocked: https://example.com/not-fetched.png" in body
+    assert "Remote image, not fetched: https://example.com/not-fetched.png" in body
 
 
 def test_edge_cases_missing_local_image_becomes_a_placeholder_when_unresolvable():

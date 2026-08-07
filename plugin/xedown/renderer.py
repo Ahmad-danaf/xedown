@@ -75,7 +75,7 @@ def _on_blocked_image(uri):
         # "unresolved local" wording rather than crashing the render.
         scheme = ""
     if scheme in REMOTE_SCHEMES:
-        return errors.remote_image_blocked_text(uri)
+        return errors.remote_image_text(uri)
     return errors.local_image_unresolved_text(uri)
 
 
