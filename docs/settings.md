@@ -3,10 +3,11 @@
 xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
-**Most of these values have no consumer yet.** `preview_theme`,
-`custom_stylesheet`, `content_width_rem` and `text_size_px` are read as of
-v0.2 — see [themes.md](themes.md). The rest exist so that the features that use
-them, and the settings window that will edit them, have one place to look.
+**Some of these values have no consumer yet.** `preview_theme`,
+`custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images` and
+`code_copy_buttons` are read as of v0.2 — see [themes.md](themes.md). The rest
+exist so that the features that use them, and the settings window that will
+edit them, have one place to look.
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -40,11 +41,28 @@ itself is watched: saving an edit to it updates every open preview.
 [themes.md](themes.md) covers what a custom stylesheet can and cannot do —
 in particular that nothing in it can reach the network.
 
-Three have no v0.1 equivalent, because the capability did not exist in v0.1 —
-`code_copy_buttons`, `remember_mode_per_file` and `watch_external_changes`.
-Each ships **On**, so when the features that read them arrive later in v0.2
-they will be active without you doing anything. Set any of them to `false`
-here to opt out.
+Two have no v0.1 equivalent, because the capability did not exist in v0.1 —
+`remember_mode_per_file` and `watch_external_changes`. Each ships **On**, so
+when the features that read them arrive later in v0.2 they will be active
+without you doing anything. Set either of them to `false` here to opt out.
+
+`remote_images` decides how **any** image that cannot be displayed appears —
+not only a remote one. Its name is older than its job:
+
+| Value | What you see |
+| --- | --- |
+| `placeholder` | why the image is not there, plus your alt text |
+| `alt` | your alt text alone, when there is any |
+| `hidden` | nothing at all |
+
+All three are about presentation. **None of them fetches anything**, and
+there is no value that would: xedown does not reach the network, and the
+preview's content security policy enforces that rather than trusting the
+setting. `hidden` hides the message, not the reason for it.
+
+`code_copy_buttons` shows a copy button in the corner of every code block.
+Set it to `false` and the buttons vanish from every open preview
+immediately — no restart, no reopening the file.
 
 ## Editing the file by hand
 

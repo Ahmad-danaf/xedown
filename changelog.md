@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A copy button on every code block, revealed on hover and reachable by
+  keyboard. It copies exactly what the author wrote, confirms briefly, and
+  says so when a copy fails rather than pretending it worked. Turn it off
+  with `"code_copy_buttons": false` and it disappears from every open
+  preview at once.
+- Task-list checkboxes drawn from the selected theme instead of the
+  browser's default control, in both light and dark. They remain read-only:
+  xedown never writes to your file.
+- Wide tables now scroll inside their own area, with a shadow at whichever
+  edge has more to show, instead of being squeezed into unreadable columns.
+  The page itself never scrolls sideways.
+- Images fit the reading column, and a very tall one now fits the window
+  too, keeping its proportions. A small image keeps its own size, and an
+  image you sized yourself in HTML is left alone.
+- An image that cannot be shown now says which of four things happened: not
+  found, could not be read, remote and never fetched, or unresolvable
+  because the document has not been saved. Your alt text is shown alongside.
+  `"remote_images"` chooses how they all appear — `placeholder`, `alt` or
+  `hidden`. All three are presentation only; xedown still fetches nothing.
 - Your own stylesheet on top of the built-in theme. Point `custom_stylesheet`
   at a CSS file in `~/.config/xedown/settings.json`; saving an edit to that
   file updates every open preview. If the file is missing, unreadable, empty,
