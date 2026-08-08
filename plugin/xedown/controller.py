@@ -13,13 +13,14 @@ from . import (
     direction,
     errors,
     images,
+    modestore,
     renderer,
     settings,
     stylesheets,
     stylewatcher,
 )
 from .appearance import AppearanceWatcher
-from .document_state import DocumentState, Mode, is_markdown_path
+from .document_state import DocumentState, Mode, is_markdown_path, mode_from_setting
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
@@ -59,6 +60,9 @@ class TabController:
         self._ui_direction = direction.LTR
         self._stylesheet_token = None
         self._info_bar = None
+        # The path this tab's remembered mode is filed under. Compared on
+        # save, so a Save As moves the entry instead of stranding it.
+        self._remembered_path = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -189,7 +193,8 @@ class TabController:
         self._connect(self.document, "changed", self._on_buffer_changed)
 
         self._built = True
-        self.set_mode(Mode.PREVIEW)  # preview is the default
+        self._remembered_path = self._document_path()
+        self.set_mode(self._initial_mode(), initial=True)
         return False
 
     # --- mode switching ----------------------------------------------------
@@ -197,12 +202,52 @@ class TabController:
     def toggle(self):
         self.set_mode(Mode.SOURCE if self.state.mode is Mode.PREVIEW else Mode.PREVIEW)
 
-    def set_mode(self, mode):
+    def _initial_mode(self):
+        """The mode this file opens in.
+
+        A remembered mode wins when remembering is on; otherwise the default.
+        Anything unusable falls back silently -- the brief's rule is that a
+        mode which cannot be determined must not interrupt the user.
+        """
+        store = settings.get_settings()
+        if store.get(settings.REMEMBER_MODE_PER_FILE):
+            remembered = modestore.get_store().get(self._document_path())
+            if remembered is not None:
+                return remembered
+        return mode_from_setting(store.get(settings.DEFAULT_MODE)) or Mode.PREVIEW
+
+    def _remember_mode(self, mode):
+        """File this tab's mode under its path, when remembering is on."""
+        if not settings.get_settings().get(settings.REMEMBER_MODE_PER_FILE):
+            return
+        modestore.get_store().remember(self._document_path(), mode)
+
+    def set_mode(self, mode, initial=False):
+        """Show `mode`. `initial` is the build-time call, which is different.
+
+        Going to the mode you are already in does nothing: the brief says so,
+        and re-running the branches below would re-grab focus and re-file the
+        mode for no reason. The build-time call is exempt, because that is
+        the call that first makes one of the two widgets visible.
+
+        `initial` also suppresses three things that would each be a
+        regression on a file opening in Markdown mode: restoring the source
+        scroll (which applies fraction 0.0 and would scroll over the position
+        xed just restored), grabbing focus (xed opens several tabs at once,
+        and grabbing focus in a notebook page that is not current moves the
+        window's focus off the tab the user is looking at), and writing to
+        the mode store (opening a file must not rewrite the memory it was
+        just read from).
+        """
         if not self._built:
+            return
+        if mode is self.state.mode and not initial:
             return
         self._remember_scroll(self.state.mode)
         self.state.mode = mode
         self.modebar.set_mode(mode)
+        if not initial:
+            self._remember_mode(mode)
 
         if mode is Mode.PREVIEW:
             if self.state.preview_stale:
@@ -226,8 +271,9 @@ class TabController:
             self.preview.widget.hide()
             self.frame.set_no_show_all(False)
             self.frame.show()
-            self._restore_source_scroll()
-            self.view.grab_focus()
+            if not initial:
+                self._restore_source_scroll()
+                self.view.grab_focus()
         self._update_refresh_cue()
 
     def refresh_now(self):
@@ -422,6 +468,15 @@ class TabController:
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
+        path = self._document_path()
+        if path != self._remembered_path:
+            # A Save As. Follow the file rather than leaving an entry keyed
+            # to a path it no longer has.
+            if self._remembered_path and settings.get_settings().get(
+                settings.REMEMBER_MODE_PER_FILE
+            ):
+                modestore.get_store().rename(self._remembered_path, path)
+            self._remembered_path = path
         if self.state.preview_stale and self.state.mode is Mode.PREVIEW:
             self._refresh_body_now()
 
@@ -545,6 +600,13 @@ class TabController:
             # wait for a change that may never come.
             self._refresh_body_now()
             refreshed = True
+
+        if settings.REMEMBER_MODE_PER_FILE in changed and store.get(
+            settings.REMEMBER_MODE_PER_FILE
+        ):
+            # Switched on: make it true of the tabs already open, not only of
+            # ones opened later.
+            self._remember_mode(self.state.mode)
         self._update_refresh_cue()
 
         if reloaded:

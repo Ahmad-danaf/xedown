@@ -1375,7 +1375,96 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "refresh-button-hidden-when-auto-is-on",
             bar is not None and not bar._refresh_button.get_visible(),
         )
-        self._schedule(400, self.step_disable_prep_infobar)
+        self._schedule(400, self.step_remember_mode_setup)
+        return False
+
+    # --- the mode a file opens in ------------------------------------------
+
+    def step_remember_mode_setup(self):
+        path = os.path.join(self._tmpdir, "remembered.md")
+        with open(path, "w") as handle:
+            handle.write("# Remembered\n\nA file with a mode to remember.\n")
+        self._remember_path = path
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1200, self.step_remember_mode_set)
+        return False
+
+    def step_remember_mode_set(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "remembered-file-opens-in-the-default",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        controller.set_mode(Mode.SOURCE)
+        self.window.close_tab(self._remember_tab)
+        self._schedule(900, self.step_remember_mode_reopen)
+        return False
+
+    def step_remember_mode_reopen(self):
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._remember_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_remember_mode_check)
+        return False
+
+    def step_remember_mode_check(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "reopened-file-restores-its-mode",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        self.window.close_tab(self._remember_tab)
+        xedown_settings.get_settings().set(
+            xedown_settings.REMEMBER_MODE_PER_FILE, False
+        )
+        self._schedule(900, self.step_remember_off_reopen)
+        return False
+
+    def step_remember_off_reopen(self):
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._remember_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_remember_off_check)
+        return False
+
+    def step_remember_off_check(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "remembering-off-uses-the-default-mode",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        self.window.close_tab(self._remember_tab)
+        xedown_settings.get_settings().set(xedown_settings.REMEMBER_MODE_PER_FILE, True)
+        self._schedule(700, self.step_default_mode_setup)
+        return False
+
+    def step_default_mode_setup(self):
+        # A file never opened before, so nothing is remembered for it and the
+        # default is the only thing that can decide.
+        xedown_settings.get_settings().set(xedown_settings.DEFAULT_MODE, "markdown")
+        path = os.path.join(self._tmpdir, "fresh.md")
+        with open(path, "w") as handle:
+            handle.write("# Fresh\n\nNever opened before.\n")
+        self._fresh_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_default_mode_check)
+        return False
+
+    def step_default_mode_check(self):
+        controller = getattr(self._fresh_tab.get_view(), "_xedown_controller", None)
+        record(
+            "default-mode-decides-a-new-file",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        # The source view must be the visible one, not merely the recorded one.
+        frame = self._fresh_tab.get_children()[0]
+        record("default-markdown-shows-the-source", frame.get_visible())
+        self.window.close_tab(self._fresh_tab)
+        xedown_settings.get_settings().set(xedown_settings.DEFAULT_MODE, "preview")
+        self._schedule(700, self.step_disable_prep_infobar)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
