@@ -1775,9 +1775,18 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_preview_focus_check(self):
         controller = self._main_controller()
+        # is_focus(), not has_focus(): the claim here is that entering
+        # Preview moves the TAB's focus to the WebView, which is exactly
+        # "is this widget its toplevel's focus widget" -- independent of
+        # which window the window manager currently considers active.
+        # has_focus() also requires real X11 input focus on the toplevel,
+        # which anything can hold at the moment this step runs (in this
+        # harness, the move-tab test's own second window; in ordinary use,
+        # literally anything else on the desktop) -- a check built on it is
+        # flaky by construction, not a stronger assertion.
         record(
             "entering-preview-focuses-the-preview",
-            controller.preview.widget.has_focus(),
+            controller.preview.widget.is_focus(),
         )
         self._schedule(400, self.step_disable_prep_infobar)
         return False
