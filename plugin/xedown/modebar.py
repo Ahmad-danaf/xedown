@@ -20,6 +20,10 @@ _STYLE = b"""
   padding: 2px 12px;
   font-size: 0.9em;
 }
+.xedown-modebar .xedown-stale-dot {
+  font-size: .8em;
+  padding: 0 .3em;
+}
 """
 
 _provider_installed = False
@@ -52,7 +56,8 @@ class ModeBar(Gtk.Box):
     __gtype_name__ = "XedownModeBar"
 
     __gsignals__: ClassVar = {
-        "mode-selected": (GObject.SignalFlags.RUN_FIRST, None, (str,))
+        "mode-selected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
+        "refresh-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self):
@@ -77,6 +82,24 @@ class ModeBar(Gtk.Box):
             self._buttons[mode] = button
 
         self.pack_start(segments, False, False, 0)
+
+        # Packed from the trailing edge inward, so the button sits at the end
+        # of the bar and the dot immediately before it. Both are
+        # set_no_show_all so a show_all() on the tab cannot reveal either --
+        # the same mitigation the controller applies to the source frame and
+        # the WebView, for the same reason.
+        self._refresh_button = Gtk.Button()
+        self._refresh_button.add(self._make_content("Refresh", "view-refresh-symbolic"))
+        self._refresh_button.set_no_show_all(True)
+        self._refresh_button.set_tooltip_text("Refresh the preview (Ctrl+Shift+R)")
+        self._refresh_button.connect("clicked", self._on_refresh_clicked)
+        self.pack_end(self._refresh_button, False, False, 0)
+
+        self._stale_dot = Gtk.Label(label="●")
+        self._stale_dot.get_style_context().add_class("xedown-stale-dot")
+        self._stale_dot.set_no_show_all(True)
+        self.pack_end(self._stale_dot, False, False, 0)
+
         self.set_mode(Mode.PREVIEW)
 
     @staticmethod
@@ -99,6 +122,30 @@ class ModeBar(Gtk.Box):
         for candidate, button in self._buttons.items():
             button.set_active(candidate is mode)
         self._updating = False
+
+    def set_refresh_visible(self, visible):
+        """Show the manual refresh control. Only ever true with auto off."""
+        self._refresh_button.set_visible(visible)
+        if not visible:
+            self._stale_dot.set_visible(False)
+
+    def set_stale(self, stale):
+        """Mark the preview as behind the document, or caught up.
+
+        The dot never appears without the button: with automatic refresh on,
+        staleness is a state that lasts a quarter of a second and is not
+        worth telling anyone about.
+        """
+        showing = bool(stale) and self._refresh_button.get_visible()
+        self._stale_dot.set_visible(showing)
+        self._refresh_button.set_tooltip_text(
+            "The preview is out of date — refresh it (Ctrl+Shift+R)"
+            if showing
+            else "Refresh the preview (Ctrl+Shift+R)"
+        )
+
+    def _on_refresh_clicked(self, _button):
+        self.emit("refresh-requested")
 
     def _on_toggled(self, button, mode):
         if self._updating:

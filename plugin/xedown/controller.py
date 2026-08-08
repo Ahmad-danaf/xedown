@@ -24,8 +24,6 @@ from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
 
-REFRESH_DELAY_MS = 250
-
 
 class TabController:
     """One per view. Owns and disconnects everything it creates."""
@@ -55,6 +53,8 @@ class TabController:
         self._style = None
         self._image_display = images.DISPLAY_PLACEHOLDER
         self._copy_buttons = True
+        self._auto_refresh = True
+        self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
         self._stylesheet_token = None
@@ -161,6 +161,8 @@ class TabController:
         self._settings_token = store.connect(self._on_settings_changed)
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
+        self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
         # The desktop's own direction, which xedown's chrome inside the page
         # follows -- the mode bar already gets this free from GTK. Read once:
@@ -177,6 +179,7 @@ class TabController:
         self.tab.reorder_child(self.modebar, 0)
         self.modebar.show_all()
         self._connect(self.modebar, "mode-selected", self._on_mode_selected)
+        self._connect(self.modebar, "refresh-requested", self._on_refresh_requested)
 
         self.preview = PreviewView(
             on_link=self._on_link_activated, on_image_error=self._on_image_error
@@ -225,6 +228,7 @@ class TabController:
             self.frame.show()
             self._restore_source_scroll()
             self.view.grab_focus()
+        self._update_refresh_cue()
 
     def refresh_now(self):
         """Re-render the preview from the document as it is now.
@@ -237,6 +241,16 @@ class TabController:
             return
         self._cancel_refresh()
         self._refresh_body_now()
+
+    def _update_refresh_cue(self):
+        """Keep the bar's refresh control telling the truth."""
+        if self.modebar is None:
+            return
+        self.modebar.set_refresh_visible(not self._auto_refresh)
+        self.modebar.set_stale(self.state.preview_stale)
+
+    def _on_refresh_requested(self, _bar):
+        self.refresh_now()
 
     def _current_preview_scroll(self):
         """The scroll fraction to preserve across a reload while previewing.
@@ -305,10 +319,15 @@ class TabController:
 
     def _on_buffer_changed(self, *_args):
         self.state.preview_stale = True
-        if self.state.mode is not Mode.PREVIEW:
-            return  # no hidden rendering while the user types in source mode
+        self._update_refresh_cue()
+        if self.state.mode is not Mode.PREVIEW or not self._auto_refresh:
+            # No hidden rendering while the user types in source mode, and
+            # nothing at all when the user has asked for manual refresh.
+            return
         self._cancel_refresh()
-        self._refresh_source_id = GLib.timeout_add(REFRESH_DELAY_MS, self._do_refresh)
+        self._refresh_source_id = GLib.timeout_add(
+            self._refresh_delay_ms, self._do_refresh
+        )
 
     def _cancel_refresh(self):
         if self._refresh_source_id:
@@ -352,6 +371,7 @@ class TabController:
             return
         self.preview.update_body(fragment, resolved)
         self.state.preview_stale = False
+        self._update_refresh_cue()
 
     def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
@@ -386,6 +406,7 @@ class TabController:
         # and returned an error page of its own.
         self._page_is_document = not errors.is_error_page(html)
         self.state.preview_stale = False
+        self._update_refresh_cue()
 
     def _buffer_text(self):
         start, end = self.document.get_bounds()
@@ -456,6 +477,13 @@ class TabController:
         <head> to rebuild. It costs one re-render of the Markdown, which is
         the right price for a setting nobody changes twice a day and reuses
         machinery that is already correct about mode and staleness.
+
+        `AUTO_REFRESH` and `REFRESH_DELAY_MS` are cached rather than read at
+        use time so the debounce path stays a timer schedule and nothing
+        more. The delay is read when a change is scheduled, which is what
+        makes a new value reach a tab that is already open; a timer already
+        in flight keeps the delay it was scheduled with, and the observable
+        difference is one render.
         """
         if self._style is None:
             return
@@ -469,6 +497,9 @@ class TabController:
         previous_direction = self._text_direction
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        was_auto = self._auto_refresh
+        self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
+        self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
 
         reloaded = False
@@ -488,6 +519,22 @@ class TabController:
             self.preview.set_metrics(
                 self._style.content_width_rem, self._style.text_size_px
             )
+
+        if not self._auto_refresh:
+            # A timer already in flight would render after the user asked for
+            # manual refresh only.
+            self._cancel_refresh()
+        elif (
+            not was_auto
+            and not reloaded
+            and self.state.preview_stale
+            and self._built
+            and self.state.mode is Mode.PREVIEW
+        ):
+            # Switched back on over a stale preview: catch up now rather than
+            # wait for a change that may never come.
+            self._refresh_body_now()
+        self._update_refresh_cue()
 
         if reloaded:
             # The reload already carried both values in its own config block

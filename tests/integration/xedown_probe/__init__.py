@@ -1300,11 +1300,82 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             record(
                 "error-page-recovers-on-refresh", found == "true", f"content: {found}"
             )
-            self._schedule(400, self.step_disable_prep_infobar)
+            self._schedule(400, self.step_manual_refresh_setup)
 
         preview.widget.run_javascript(
             "String(!!document.getElementById('xedown-content'))", None, on_result, None
         )
+        return False
+
+    # --- automatic refresh off: the button, the dot, and the manual path ---
+
+    def step_manual_refresh_setup(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, False)
+        self._schedule(500, self.step_manual_refresh_bar)
+        return False
+
+    def step_manual_refresh_bar(self):
+        bar = self._main_controller().modebar
+        record(
+            "refresh-button-appears-when-auto-is-off",
+            bar is not None and bar._refresh_button.get_visible(),
+        )
+        # A buffer change while the preview is showing is exactly what
+        # automatic refresh would have picked up.
+        document = self._main_controller().document
+        document.insert(document.get_end_iter(), "\n\nmanual refresh marker\n")
+        self._schedule(700, self.step_manual_refresh_stale)
+        return False
+
+    def step_manual_refresh_stale(self):
+        controller = self._main_controller()
+        bar = controller.modebar
+        record("stale-dot-shows-when-behind", bar._stale_dot.get_visible())
+        # With automatic refresh off, nothing rendered it.
+        record("no-render-while-auto-is-off", controller.state.preview_stale)
+        controller.refresh_now()
+        self._schedule(900, self.step_manual_refresh_check)
+        return False
+
+    def step_manual_refresh_check(self):
+        controller = self._main_controller()
+        preview = controller.preview
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            record(
+                "manual-refresh-updates-the-page", found == "true", f"found: {found}"
+            )
+            record(
+                "stale-dot-clears-after-refresh",
+                not controller.modebar._stale_dot.get_visible(),
+            )
+            # Restore the default before anything later renders against it.
+            xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, True)
+            self._schedule(500, self.step_refresh_button_hidden)
+
+        preview.widget.run_javascript(
+            "String(document.body.textContent.indexOf('manual refresh marker') >= 0)",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    def step_refresh_button_hidden(self):
+        bar = self._main_controller().modebar
+        record(
+            "refresh-button-hidden-when-auto-is-on",
+            bar is not None and not bar._refresh_button.get_visible(),
+        )
+        self._schedule(400, self.step_disable_prep_infobar)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
