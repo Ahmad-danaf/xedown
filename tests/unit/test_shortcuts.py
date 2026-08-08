@@ -1,3 +1,6 @@
+import json
+import pathlib
+
 import pytest
 from xedown import shortcuts
 
@@ -135,3 +138,37 @@ def test_capitalized_insert_does_not_match_because_the_caller_lowercases():
     # function to handle capitalised key names, they will see this test fail
     # and understand the intent.
     assert _route(key_name="Insert") is None
+
+
+FIXTURE = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "fixtures"
+    / "xed-accelerators.json"
+)
+
+
+def _xed():
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))
+
+
+def test_the_extract_is_substantial_enough_to_prove_anything():
+    # An empty or near-empty fixture would make the clash test below pass
+    # while checking nothing at all.
+    xed = _xed()
+    assert xed["xed_version"]
+    assert len(xed["accelerators"]) >= 20
+
+
+def test_the_extract_contains_the_accelerator_the_brief_names():
+    # Ctrl+R is xed's Toggle Word Wrap. If it is missing from the extract,
+    # the extract is not reading what it thinks it is reading.
+    taken = {shortcuts.parse_accelerator(a) for a in _xed()["accelerators"]}
+    assert shortcuts.parse_accelerator("<Control>R") in taken
+
+
+def test_no_xedown_accelerator_collides_with_one_of_xeds():
+    taken = {shortcuts.parse_accelerator(a) for a in _xed()["accelerators"]}
+    for action in shortcuts.ACTIONS:
+        assert (
+            shortcuts.parse_accelerator(action.accelerator) not in taken
+        ), f"{action.accelerator} ({action.name}) is already xed's"

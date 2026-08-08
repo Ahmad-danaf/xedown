@@ -110,3 +110,11 @@ It is covered only by row 16 of [manual-smoke-test.md](../../docs/manual-smoke-t
 which is why that row stays manual. Do not read the assertions above as
 proof that a broken local image still degrades gracefully — open
 `edge-cases.md` and look.
+
+## `xed-accelerators.json`
+
+Not a document fixture. It is xed's own keyboard accelerators, extracted from
+the installed application by `scripts/extract-xed-accelerators.sh`, and
+`tests/unit/test_shortcuts.py` uses it to prove none of xedown's four shortcuts
+collides with one of xed's — in CI, where no xed is installed. Regenerate it
+after upgrading xed; do not hand-edit it.
