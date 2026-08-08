@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Drives a real xed instance through the scenarios CI cannot reach.
 # Requires xed and an X display. Restores your plugin settings on exit.
+#
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.1.0.tar.gz scripts/run-integration-tests.sh
+#       ^ installs the release archive instead of the working tree, so the
+#         thing being probed is the artifact users download. Build it with
+#         scripts/build-release.sh first. Without this, the working tree is
+#         always installed, even over a copy of the archive placed there by
+#         hand beforehand.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,7 +63,23 @@ trap cleanup EXIT
 
 mkdir -p "$PLUGIN_DIR"
 rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
-cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
+  # Test the artifact users actually download, not the working tree it was
+  # built from. The two are supposed to be identical; this is how you find
+  # out when they are not.
+  if [ ! -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
+    echo "No such archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
+    exit 1
+  fi
+  echo "==> Installing from release archive: $XEDOWN_INSTALL_FROM_ARCHIVE"
+  tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
+  if [ ! -f "$PLUGIN_DIR/xedown.plugin" ] || [ ! -d "$PLUGIN_DIR/xedown" ]; then
+    echo "That archive did not unpack into a usable plugin." >&2
+    exit 1
+  fi
+else
+  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+fi
 cp -r "$ROOT/tests/integration/xedown_probe" \
       "$ROOT/tests/integration/xedown_probe.plugin" "$PLUGIN_DIR/"
 
