@@ -2,7 +2,7 @@ import os
 import re
 
 import pytest
-from xedown import errors, renderer, stylesheets, themes
+from xedown import errors, renderer, stylesheets, themes, vendoring
 
 
 @pytest.fixture
@@ -351,6 +351,25 @@ def test_render_failure_page_still_carries_the_fresh_nonce(monkeypatch):
     page = renderer.render_document("# Hi", nonce="a-specific-nonce")
     assert 'nonce="a-specific-nonce"' in page
     assert "xedown-error" not in page
+
+
+def test_a_successfully_rendered_document_is_not_an_error_page():
+    assert not errors.is_error_page(renderer.render_document("# Hi", nonce="n"))
+
+
+def test_an_internal_render_failure_is_recognisable_as_an_error_page(monkeypatch):
+    # Regression pin for the Task 6 finding: render_document never raises, so
+    # a caller cannot tell an error page from a document by asking whether it
+    # passed error= itself -- it has to ask the page. Nothing here raises
+    # past render_document (that is the whole point: render_document's own
+    # try/except is what catches it), so the old controller logic
+    # (`error is None`) would have called this a document.
+    def explode(_name):
+        raise vendoring.VendorError("bundled resource missing")
+
+    monkeypatch.setattr(vendoring, "read_resource", explode)
+    page = renderer.render_document("# Hi", nonce="n")
+    assert errors.is_error_page(page)
 
 
 def test_malformed_link_does_not_crash_the_render(base):

@@ -168,3 +168,20 @@ def test_an_error_page_defaults_to_left_to_right_and_never_raises():
     assert '<html dir="ltr">' in errors.error_page("t", "d")
     for value in ("nonsense", None, 7, object()):
         assert '<html dir="ltr">' in errors.error_page("t", "d", ui_direction=value)
+
+
+def test_is_error_page_recognises_an_error_page():
+    assert errors.is_error_page(errors.error_page("t", "d"))
+    assert errors.is_error_page(errors.error_page("t", "d", dark=True))
+
+
+def test_is_error_page_rejects_a_page_that_is_not_one():
+    # A stand-in for a real render_document page: same shape of body tag,
+    # none of the marker. If this predicate degraded to a bare substring
+    # search for the word "error", `xedown-image-error` below would trip it.
+    document = (
+        '<body class="light xedown-theme-repository">'
+        '<article class="xedown-image-error">broken</article>'
+        "</body>"
+    )
+    assert not errors.is_error_page(document)

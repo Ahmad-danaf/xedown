@@ -380,7 +380,11 @@ class TabController:
             ("file://" + base_dir + "/") if base_dir else None,
             restore_scroll=restore_scroll,
         )
-        self._page_is_document = error is None
+        # Asks the page actually being loaded, not the caller's own belief
+        # about which branch produced it: render_document never raises, so
+        # `error is None` is true even when it caught something internally
+        # and returned an error page of its own.
+        self._page_is_document = not errors.is_error_page(html)
         self.state.preview_stale = False
 
     def _buffer_text(self):
