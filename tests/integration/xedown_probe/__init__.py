@@ -1459,11 +1459,104 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "default-mode-decides-a-new-file",
             controller is not None and controller.state.mode is Mode.SOURCE,
         )
-        # The source view must be the visible one, not merely the recorded one.
-        frame = self._fresh_tab.get_children()[0]
-        record("default-markdown-shows-the-source", frame.get_visible())
+        # The source view must be the visible one, not merely the recorded
+        # one. `controller.frame` is captured in `__init__` before the
+        # ModeBar is packed, so it stays a correct reference to xed's own
+        # source-view container no matter how tab children are later
+        # reordered -- unlike `self._fresh_tab.get_children()[0]`, which is
+        # always the ModeBar once a tab is built (see modebar-at-index-0),
+        # and so is always visible regardless of mode.
+        record(
+            "default-markdown-shows-the-source",
+            controller is not None and controller.frame.get_visible(),
+        )
         self.window.close_tab(self._fresh_tab)
         xedown_settings.get_settings().set(xedown_settings.DEFAULT_MODE, "preview")
+        self._schedule(700, self.step_saveas_setup)
+        return False
+
+    # --- Save As moves the remembered entry; it does not copy it -----------
+    #
+    # `Xed.commands_save_document_as` opens a modal file chooser and cannot
+    # be driven from here without blocking on a dialog nothing in this probe
+    # may block on. `Xed.Document.set_location`, followed by the same
+    # `Xed.commands_save_document` step_save already uses for an ordinary
+    # save, is the actual non-interactive route this host exposes: confirmed
+    # by direct probing (not by reading the C source, which is not on this
+    # machine) that it writes to the new path with no dialog and no hang --
+    # exactly the mechanism `_on_document_saved` is written to react to,
+    # since it is keyed off `self._document_path()` changing underneath it,
+    # not off which xed command produced the change.
+
+    def step_saveas_setup(self):
+        path = os.path.join(self._tmpdir, "saveas-original.md")
+        with open(path, "w") as handle:
+            handle.write("# Save As Original\n\nStarts in Markdown mode.\n")
+        self._saveas_original_path = path
+        self._saveas_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1200, self.step_saveas_set_mode)
+        return False
+
+    def step_saveas_set_mode(self):
+        controller = getattr(self._saveas_tab.get_view(), "_xedown_controller", None)
+        # Files an entry under the ORIGINAL path -- this is what the rename
+        # on save has to move rather than strand.
+        controller.set_mode(Mode.SOURCE)
+        self._schedule(500, self.step_saveas_move)
+        return False
+
+    def step_saveas_move(self):
+        new_path = os.path.join(self._tmpdir, "saveas-moved.md")
+        self._saveas_new_path = new_path
+        document = self._saveas_tab.get_document()
+        document.set_location(Gio.File.new_for_path(new_path))
+        Xed.commands_save_document(self.window, document)
+        self._schedule(1500, self.step_saveas_close)
+        return False
+
+    def step_saveas_close(self):
+        self.window.close_tab(self._saveas_tab)
+        self._schedule(700, self.step_saveas_reopen_new)
+        return False
+
+    def step_saveas_reopen_new(self):
+        self._saveas_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._saveas_new_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_saveas_check_new)
+        return False
+
+    def step_saveas_check_new(self):
+        controller = getattr(self._saveas_tab.get_view(), "_xedown_controller", None)
+        record(
+            "saveas-new-path-opens-in-the-remembered-mode",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        self.window.close_tab(self._saveas_tab)
+        self._schedule(700, self.step_saveas_reopen_original)
+        return False
+
+    def step_saveas_reopen_original(self):
+        # The same file `step_saveas_setup` wrote and never touched again --
+        # still on disk under its original name, since a Save As does not
+        # delete the file it moved away from.
+        self._saveas_orig_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._saveas_original_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_saveas_check_original)
+        return False
+
+    def step_saveas_check_original(self):
+        controller = getattr(
+            self._saveas_orig_tab.get_view(), "_xedown_controller", None
+        )
+        record(
+            "saveas-original-path-uses-the-default-not-a-stale-entry",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        self.window.close_tab(self._saveas_orig_tab)
         self._schedule(700, self.step_disable_prep_infobar)
         return False
 
