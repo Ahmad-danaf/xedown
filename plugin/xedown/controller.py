@@ -483,7 +483,11 @@ class TabController:
         more. The delay is read when a change is scheduled, which is what
         makes a new value reach a tab that is already open; a timer already
         in flight keeps the delay it was scheduled with, and the observable
-        difference is one render.
+        difference is one render. Switching auto-refresh back on over a
+        stale preview is itself a body render, so it shares the same
+        multi-key-broadcast hazard as the theme reload above: a broadcast
+        that also moves `REMOTE_IMAGES` or `TEXT_DIRECTION` must not render
+        the body a second time for values the first render already carried.
         """
         if self._style is None:
             return
@@ -503,6 +507,12 @@ class TabController:
         self._text_direction = store.get(settings.TEXT_DIRECTION)
 
         reloaded = False
+        # Two independent branches below can each want a body render out of
+        # one broadcast (the auto-refresh catch-up here, and the
+        # image-display/direction branch further down) -- this flag is how
+        # the second one knows the first already happened, so one broadcast
+        # never renders the body twice.
+        refreshed = False
         if settings.PREVIEW_THEME in changed:
             self.state.preview_stale = True
             if self._built and self.state.mode is Mode.PREVIEW:
@@ -534,6 +544,7 @@ class TabController:
             # Switched back on over a stale preview: catch up now rather than
             # wait for a change that may never come.
             self._refresh_body_now()
+            refreshed = True
         self._update_refresh_cue()
 
         if reloaded:
@@ -550,10 +561,13 @@ class TabController:
         # The two settings that change the emitted body, and only the body:
         # the CSS for every image mode is already in the loaded page, and the
         # direction is one attribute on the article. Neither needs a reload.
+        # Skipped when the catch-up branch above already rendered: both
+        # values were re-read before it ran, so it already carries them, and
+        # a render here would only repeat that one for nothing.
         if (
             self._image_display != previous_display
             or self._text_direction != previous_direction
-        ):
+        ) and not refreshed:
             if self._built and self.state.mode is Mode.PREVIEW:
                 self._refresh_body_now()
             else:
