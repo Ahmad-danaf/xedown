@@ -579,3 +579,18 @@ def test_the_table_cue_reads_the_containers_own_direction(preview_js):
     assert "Math.abs" in body
     assert "getComputedStyle" in preview_js
     assert "xedown-more-left" in body and "xedown-more-right" in body
+
+
+def test_selection_is_themed_rather_than_left_to_the_engine(preview_css):
+    parsed, _ = declarations(preview_css)
+    rule = parsed.get("::selection", {})
+    assert rule.get("background") == "var(--xedown-selection-bg)"
+    assert rule.get("color") == "var(--xedown-selection-fg)"
+
+
+def test_the_notice_bar_is_not_part_of_the_document_selection(preview_css):
+    # A select-all in the preview selects the document, not xedown's own
+    # message about a stylesheet that could not be used.
+    parsed, _ = declarations(preview_css)
+    assert parsed[".xedown-notice"]["user-select"] == "none"
+    assert parsed[".xedown-notice"]["-webkit-user-select"] == "none"

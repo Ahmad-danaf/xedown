@@ -35,6 +35,8 @@
   --xedown-syn-addition-bg: #eef4ec;
   --xedown-syn-deletion-fg: #96301c;
   --xedown-syn-deletion-bg: #fbeeea;
+  --xedown-selection-bg: #d9c094;
+  --xedown-selection-fg: #23201c;
   --xedown-measure-scale: .8;
   --xedown-text-scale: 1.06;
 }
@@ -65,6 +67,8 @@ body.dark {
   --xedown-syn-addition-bg: #1e2a1c;
   --xedown-syn-deletion-fg: #f0aa96;
   --xedown-syn-deletion-bg: #322019;
+  --xedown-selection-bg: #523f2b;
+  --xedown-selection-fg: #e6e0d6;
 }
 
 body {

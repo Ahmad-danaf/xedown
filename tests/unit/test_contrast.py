@@ -15,6 +15,13 @@ pinned by "identical to v0.1". Its worst cases are 3.28:1 (light, built-in
 names and symbols) and 3.27:1 (dark, section headings). Changing that means
 changing what an upgrading user sees — a decision for a human, recorded in
 docs/themes.md rather than quietly made here.
+
+Selected text is held to 4.5:1 against its own highlight, like every other
+text pair here. The highlight against the page is held to 1.5:1, which is a
+floor chosen for "clearly visible" and deliberately not a WCAG claim: 1.4.11's
+3:1 would force a highlight far louder than any real one — GTK's own and every
+browser's sit near 1.5 — and inventing a requirement is exactly what the rest
+of this file refuses to do.
 """
 
 import re
@@ -35,6 +42,7 @@ SEMANTIC_PAIRS = (
     ("--xedown-muted", "--xedown-code-bg", 4.5),
     ("--xedown-error-fg", "--xedown-error-bg", 4.5),
     ("--xedown-focus-ring", "--xedown-bg", 3.0),
+    ("--xedown-selection-fg", "--xedown-selection-bg", 4.5),
 )
 
 # Checked only where a theme declares them.
@@ -168,3 +176,16 @@ def test_vendored_syntax_palettes_clear_the_readability_floor(theme, appearance)
             f"{theme.identifier}/{appearance}: {selector} ({colour}) is "
             f"{ratio:.2f}:1, below the {VENDORED_SYNTAX_FLOOR}:1 floor"
         )
+
+
+SELECTION_AGAINST_PAGE = 1.5
+
+
+@pytest.mark.parametrize("theme,appearance", list(cases()))
+def test_the_selection_highlight_is_visible_against_the_page(theme, appearance):
+    tokens = palette(theme, appearance)
+    ratio = wcag.contrast_ratio(tokens["--xedown-selection-bg"], tokens["--xedown-bg"])
+    assert ratio >= SELECTION_AGAINST_PAGE, (
+        f"{theme.identifier} {appearance}: selection sits at {ratio:.2f}:1 "
+        f"against the page"
+    )

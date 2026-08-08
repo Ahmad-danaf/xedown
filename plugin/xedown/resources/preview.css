@@ -116,6 +116,13 @@ a { unicode-bidi: plaintext; }
 }
 .xedown-document > :first-child { margin-top: 0; }
 
+/* Selected text is xedown's to colour: WebKit's default highlight is tuned
+   for a browser's own chrome, not for a theme that may be sepia or dark. */
+::selection {
+  background: var(--xedown-selection-bg);
+  color: var(--xedown-selection-fg);
+}
+
 /* Keyboard focus must always be visible; never suppress the outline. A
    theme may refine this rule, but the base always supplies one, coloured
    by whichever theme is loaded. */
@@ -139,6 +146,11 @@ a:focus-visible {
   background: var(--xedown-error-bg);
   border-bottom: 1px solid var(--xedown-error-border);
   overflow-wrap: break-word;
+  /* Never part of a selection: a select-all in the preview selects the
+     document, not xedown's own message about it. Same reason the copy
+     button is excluded. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 ul.task-list { list-style: none; padding-inline-start: 1.2em; }

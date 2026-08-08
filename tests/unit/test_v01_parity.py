@@ -131,6 +131,13 @@ DELIBERATE_SELECTORS = {
     "img:not([width]):not([height])": (
         "brief 5: very tall images are capped to the window"
     ),
+    "::selection": (
+        "brief 8: v0.1 left selected text to WebKit's default highlight, "
+        "which is tuned for browser chrome rather than for a theme that may "
+        "be sepia or dark. Copy in the preview only became reachable in "
+        "v0.2, so this is the first release in which the selection is "
+        "something a reader looks at rather than an accident"
+    ),
 }
 
 # Properties v0.2 adds to a selector v0.1 already declared. Same doctrine as
