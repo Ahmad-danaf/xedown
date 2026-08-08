@@ -115,3 +115,23 @@ def test_a_key_meant_for_something_the_user_types_into_is_left_alone():
 def test_nothing_is_taken_while_the_source_is_the_visible_surface():
     assert _route(key_name="c", previewing=False) is None
     assert _route(key_name="a", previewing=False) is None
+
+
+def test_every_handled_key_is_already_lowercase():
+    # The caller (the GTK layer) lowercases key names before passing to
+    # route_key, so this function assumes all entries in HANDLED_KEYS are
+    # already lowercase. This test ensures that a later contributor who adds
+    # a capitalised key to COPY_KEYS or SELECT_ALL_KEYS will see the contract
+    # broken loudly rather than silently.
+    for key in shortcuts.HANDLED_KEYS:
+        assert key == key.lower(), f"Key {key!r} is not lowercase"
+
+
+def test_capitalized_insert_does_not_match_because_the_caller_lowercases():
+    # GDK returns Gdk.keyval_name(Gdk.KEY_Insert) as "Insert" (capitalised).
+    # The GTK layer is responsible for lowercasing (via Gdk.keyval_to_lower)
+    # before calling route_key. This test exists to pin that contract: if
+    # someone removes the `.lower()` call in the GTK layer and expects this
+    # function to handle capitalised key names, they will see this test fail
+    # and understand the intent.
+    assert _route(key_name="Insert") is None

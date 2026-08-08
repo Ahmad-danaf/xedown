@@ -63,7 +63,9 @@ class KeyAction(enum.Enum):
 
 
 # `Insert` is copy's legacy alias. It costs one key name and is only ever
-# consulted while the preview is the visible surface.
+# consulted while the preview is the visible surface. GDK names this key
+# `Insert` (capitalised), but the GTK layer lowercases it before passing to
+# route_key, which is why the tuple holds "insert" (lowercase).
 COPY_KEYS = ("c", "insert")
 SELECT_ALL_KEYS = ("a",)
 HANDLED_KEYS = frozenset(COPY_KEYS + SELECT_ALL_KEYS)
@@ -76,6 +78,9 @@ def route_key(key_name, *, control_only, focus_is_editable, previewing):
     for everything else is what makes "no key is ever stolen while the user is
     editing text" a property of this function's shape rather than of care
     taken elsewhere.
+
+    `key_name` arrives already lowercased by the caller (the GTK layer applies
+    `Gdk.keyval_to_lower` before calling this function).
     """
     if not control_only:
         return None
