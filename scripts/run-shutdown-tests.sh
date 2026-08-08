@@ -94,7 +94,30 @@ if ! command -v wmctrl >/dev/null 2>&1; then
   exit 1
 fi
 
+# Does $1 hold exactly a usable xedown/xedown.plugin pair and nothing else at
+# its top level? Used to gate the install below, and again by cleanup() to
+# decide whether the staging directory it already validated is still safe to
+# fall back to -- so cleanup() never has to re-extract (and re-trust) an
+# archive on its own. Kept byte-for-byte identical to the copy in
+# run-integration-tests.sh; the two scripts are meant to stay in step here.
+plugin_staged_ok() {
+  local dir="$1"
+  [ -f "$dir/xedown.plugin" ] && [ -d "$dir/xedown" ] || return 1
+  local unexpected
+  unexpected="$(find "$dir" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
+  [ -z "$unexpected" ]
+}
+
 cleanup() {
+  # This trap must run to completion no matter what fails inside it. Under
+  # this script's own `set -e`, a single failing command in here would
+  # silently skip everything after it, including the XED_PID kill check and
+  # (worse) the gsettings restore. Disabling errexit for the rest of this
+  # function is the fix -- every step below already reports its own failure
+  # instead of relying on `set -e` to stop the script, the same `set +e`
+  # idiom this file already uses around `wait "$XED_PID"` in run_scenario()
+  # for the identical reason.
+  set +e
   local restore_failed=0
   if [ -n "$SAVED_PLUGINS" ]; then
     gsettings set org.x.editor.plugins active-plugins "$SAVED_PLUGINS"
@@ -109,23 +132,42 @@ cleanup() {
   fi
   rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" \
          "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
-  rm -rf "$STAGE"
-  # A control run deliberately uninstalls xedown. Put it back unconditionally:
-  # active-plugins still lists xedown (it is restored just above), so leaving
-  # the directory missing would hand back an editor configured to load a
-  # plugin that is no longer on disk.
+
+  # A control run deliberately uninstalls xedown for its scenarios. Put it
+  # back unconditionally: active-plugins still lists xedown (it is restored
+  # just above), so leaving the directory missing would hand back an editor
+  # configured to load a plugin that is no longer on disk.
   #
-  # Restore whichever copy was being tested. Getting this wrong is worse than
-  # it looks: the release checklist has you install the archive, run this
-  # harness, and then work through 24 manual rows by hand. If cleanup put the
-  # working tree back, every one of those rows would silently be testing the
-  # working tree rather than the artifact you are about to ship.
-  rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
-  if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ] && [ -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
-    tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
-  else
+  # Restore whichever copy was being tested -- but never at the cost of
+  # deleting a working install to make room for nothing. Preference order:
+  #   1. The copy this run already staged and validated in $STAGE (covers a
+  #      normal run, a control run's own reinstall, and one interrupted
+  #      after validation but before/during the copy into $PLUGIN_DIR).
+  #   2. The working tree, if $STAGE never held a valid copy -- e.g.
+  #      XEDOWN_INSTALL_FROM_ARCHIVE named a missing file, a corrupt
+  #      archive, or one with unexpected entries, so the run never got past
+  #      validation. Getting the release-archive case wrong is worse than it
+  #      looks: the release checklist has you install the archive, run this
+  #      harness, and then work through 24 manual rows by hand -- but a
+  #      run that never validated the archive has nothing safe to restore
+  #      from except the working tree anyway.
+  #   3. Neither: touch nothing. Deleting an install we cannot replace is
+  #      strictly worse than leaving whatever is there.
+  # Every branch confirms its source is good BEFORE removing the live copy,
+  # never the other way round.
+  if plugin_staged_ok "$STAGE"; then
+    rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+    cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
+  elif [ -d "$ROOT/plugin/xedown" ] && [ -f "$ROOT/plugin/xedown.plugin" ]; then
+    rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
     cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  else
+    echo "WARNING: no valid staged copy and no working-tree copy to fall" >&2
+    echo "  back to; leaving whatever is currently installed at" >&2
+    echo "  $PLUGIN_DIR/xedown untouched." >&2
   fi
+  rm -rf "$STAGE"
+
   if [ -n "$XED_PID" ] && kill -0 "$XED_PID" 2>/dev/null; then
     echo "xed (pid $XED_PID) is still running at exit; killing it." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
@@ -152,19 +194,22 @@ else
       exit 1
     fi
     echo "### Staging release archive: $XEDOWN_INSTALL_FROM_ARCHIVE ###"
-    tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$STAGE"
+    if ! tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$STAGE"; then
+      echo "That file is not a valid gzipped tar archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
+      exit 1
+    fi
   else
     cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$STAGE/"
   fi
 
   # Validate the staged copy before touching the live plugin directory at
   # all -- same stage/validate/commit shape as scripts/build-release.sh. A
-  # mistyped archive path, or one that doesn't unpack into a usable plugin,
-  # must never take down whatever is already installed there; the checks
-  # below run entirely against $STAGE, so nothing under $PLUGIN_DIR is
-  # touched until both pass. (cleanup()'s own reinstall-with-fallback below
-  # is a separate, smaller safety net for a run interrupted after this
-  # point, not a substitute for validating first.)
+  # mistyped archive path, one that isn't a valid archive at all, or one
+  # that doesn't unpack into a usable plugin, must never take down whatever
+  # is already installed there; the checks below run entirely against
+  # $STAGE, so nothing under $PLUGIN_DIR is touched until they pass.
+  # plugin_staged_ok() is the same check cleanup() uses above to decide
+  # whether this staged copy is still safe to fall back to.
   if [ ! -f "$STAGE/xedown.plugin" ] || [ ! -d "$STAGE/xedown" ]; then
     echo "That archive did not unpack into a usable plugin." >&2
     exit 1
