@@ -1265,7 +1265,46 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         action = self._find_action("XedownToggleAction")
         if action is not None:
             record("menu-sensitive-on-md", action.is_sensitive())
-        self._schedule(400, self.step_disable_prep_infobar)
+        self._schedule(400, self.step_error_page_setup)
+        return False
+
+    # --- an error page must be refreshable back into a document ------------
+
+    def step_error_page_setup(self):
+        controller = self._main_controller()
+        # A render failure the probe can cause on demand: the same call the
+        # controller makes when rendering actually raises.
+        controller._reload_preview(
+            error=RuntimeError("probe-forced failure"), restore_scroll=0.0
+        )
+        self._schedule(900, self.step_error_page_refresh)
+        return False
+
+    def step_error_page_refresh(self):
+        controller = self._main_controller()
+        controller.refresh_now()
+        self._schedule(900, self.step_error_page_check)
+        return False
+
+    def step_error_page_check(self):
+        preview = self._main_controller().preview
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            # Before the fix this stayed "false" for ever: update_body posts
+            # into a page with no window.xedown, and nothing reloads it.
+            record(
+                "error-page-recovers-on-refresh", found == "true", f"content: {found}"
+            )
+            self._schedule(400, self.step_disable_prep_infobar)
+
+        preview.widget.run_javascript(
+            "String(!!document.getElementById('xedown-content'))", None, on_result, None
+        )
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -

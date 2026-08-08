@@ -46,6 +46,10 @@ class TabController:
         self._handlers = []  # (gobject, handler_id)
         self._refresh_source_id = 0
         self._built = False
+        # False while an error page is loaded. `update_body` cannot reach one:
+        # errors.error_page carries no preview.js, so `window.xedown` does not
+        # exist in it and the script silently does nothing.
+        self._page_is_document = False
         self._active = False
         self._dark = False
         self._style = None
@@ -222,6 +226,18 @@ class TabController:
             self._restore_source_scroll()
             self.view.grab_focus()
 
+    def refresh_now(self):
+        """Re-render the preview from the document as it is now.
+
+        Nothing to do in Markdown mode: the preview is already stale and
+        switching to it renders. Rendering into a hidden WebView to reach the
+        same state would be the hidden re-rendering the brief forbids.
+        """
+        if not self._built or self.state.mode is not Mode.PREVIEW:
+            return
+        self._cancel_refresh()
+        self._refresh_body_now()
+
     def _current_preview_scroll(self):
         """The scroll fraction to preserve across a reload while previewing.
 
@@ -310,6 +326,14 @@ class TabController:
         """Re-render the body in place. Shared by the debounce timer and an
         immediate save-time refresh (see `_on_document_saved`) — neither
         case wants a full page reload."""
+        if not self._page_is_document:
+            # An error page is showing. Swapping the body would post into a
+            # page with no `window.xedown` and do nothing at all -- and the
+            # line at the end of this method would then mark the preview
+            # fresh, stranding the error page for good. A reload is the only
+            # route back to a document.
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
+            return
         text = self._buffer_text()
         try:
             fragment = renderer.render_fragment(
@@ -356,6 +380,7 @@ class TabController:
             ("file://" + base_dir + "/") if base_dir else None,
             restore_scroll=restore_scroll,
         )
+        self._page_is_document = error is None
         self.state.preview_stale = False
 
     def _buffer_text(self):
