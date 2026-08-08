@@ -272,6 +272,12 @@ class TabController:
             # show_all() is itself blocked by the flag while it is set.
             self.preview.widget.set_no_show_all(False)
             self.preview.widget.show_all()
+            if not initial:
+                # Required for the selection the user makes to be the one
+                # copy acts on, and it also fixes Page_Down scrolling a
+                # hidden text view. Skipped on the build-time call: see the
+                # docstring.
+                self.preview.widget.grab_focus()
         else:
             # Mirror the frame's mitigation on the other widget: without
             # this, a bare show_all() on the tab while in source mode would

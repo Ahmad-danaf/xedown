@@ -53,7 +53,7 @@ class PreviewView:
             "decide-policy", self._on_decide_policy
         )
         self._context_menu_handler_id = self.widget.connect(
-            "context-menu", lambda *_args: True
+            "context-menu", self._on_context_menu
         )
         self._load_changed_handler_id = self.widget.connect(
             "load-changed", self._on_load_changed
@@ -222,6 +222,28 @@ class PreviewView:
         if self.on_link is not None:
             self.on_link(self._as_link_target(uri))
         return True
+
+    def _on_context_menu(self, _view, menu, _event, hit_test):
+        """A reading menu, not a browser's.
+
+        Rebuilt from empty rather than filtered: WebKit's default menu grows
+        entries between versions, and a filter would quietly let a new one
+        through. Copy only when there is something selected to copy; nothing
+        for links, images, frames, navigation or developer tools.
+        """
+        menu.remove_all()
+        if hit_test.context_is_selection():
+            menu.append(
+                WebKit2.ContextMenuItem.new_from_stock_action(
+                    WebKit2.ContextMenuAction.COPY
+                )
+            )
+        menu.append(
+            WebKit2.ContextMenuItem.new_from_stock_action(
+                WebKit2.ContextMenuAction.SELECT_ALL
+            )
+        )
+        return False
 
     def _as_link_target(self, uri):
         """Recover a bare `#fragment` for an in-page anchor click.

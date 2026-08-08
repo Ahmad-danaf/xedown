@@ -1703,6 +1703,82 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 record(
                     f"menu-entry-sensitive-on-md-{action.name}", found.is_sensitive()
                 )
+        self._schedule(400, self.step_preview_copy_setup)
+        return False
+
+    # --- copy lands on the surface the user can see ------------------------
+
+    def step_preview_copy_setup(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        # The probe's document (`_long_markdown`) opens "# Scroll Test", so
+        # the rendered surface holds "Scroll Test" and the source holds
+        # "# Scroll Test". Whatever the clipboard ends up with, it came from
+        # one surface or the other and the two cannot be confused.
+        Gtk.Clipboard.get_default(self.window.get_display()).set_text("<none>", -1)
+        controller.preview.widget.grab_focus()
+        self._press(Gdk.KEY_a, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(500, self.step_preview_copy)
+        return False
+
+    def step_preview_copy(self):
+        self._press(Gdk.KEY_c, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(900, self.step_preview_copy_check)
+        return False
+
+    def step_preview_copy_check(self):
+        text = (
+            Gtk.Clipboard.get_default(self.window.get_display()).wait_for_text() or ""
+        )
+        record(
+            "preview-copy-produces-rendered-text",
+            "Scroll Test" in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        record(
+            "preview-copy-is-not-the-markdown-source",
+            "# " not in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        self._schedule(400, self.step_source_copy_setup)
+        return False
+
+    def step_source_copy_setup(self):
+        controller = self._main_controller()
+        controller.set_mode(Mode.SOURCE)
+        self.view.grab_focus()
+        Gtk.Clipboard.get_default(self.window.get_display()).set_text("<none>", -1)
+        self._schedule(500, self.step_source_copy)
+        return False
+
+    def step_source_copy(self):
+        self._press(Gdk.KEY_a, Gdk.ModifierType.CONTROL_MASK)
+        self._press(Gdk.KEY_c, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(900, self.step_source_copy_check)
+        return False
+
+    def step_source_copy_check(self):
+        text = (
+            Gtk.Clipboard.get_default(self.window.get_display()).wait_for_text() or ""
+        )
+        # Markdown mode keeps xed's own behaviour exactly: hashes and all.
+        record(
+            "markdown-copy-still-produces-source",
+            "# " in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        controller = self._main_controller()
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(600, self.step_preview_focus_check)
+        return False
+
+    def step_preview_focus_check(self):
+        controller = self._main_controller()
+        record(
+            "entering-preview-focuses-the-preview",
+            controller.preview.widget.has_focus(),
+        )
         self._schedule(400, self.step_disable_prep_infobar)
         return False
 
