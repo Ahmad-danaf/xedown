@@ -159,3 +159,23 @@ target, and xedown deliberately does not guess which runs are paths — that
 guess would also wrap `either/or`, `9/10` and `a.b` in every document it
 ever rendered. This is not tracked for a future fix; the markup above is
 the fix.
+
+## A new file can open in an old one's remembered mode
+
+**Status:** by design, bounded.
+
+xedown files a remembered mode under a file's path. When a file is renamed or
+moved *inside xed*, the entry follows it. When it is renamed in a file manager,
+or deleted, xedown never sees it happen and the entry stays keyed to a path
+that no longer has that file — so a *different* file created at that path later
+opens in the old one's mode.
+
+The alternative was recording each file's identity (device and inode) beside
+its path. xed saves by replacing the file, which changes the inode, so that
+would forget a file's mode after an ordinary save: a rare wrong mode traded for
+a frequent forgotten one.
+
+**Workaround:** switch mode once; the entry is rewritten. Entries also fall off
+the end of `~/.config/xedown/modes.json` once 200 more recent files have been
+opened, and deleting that file forgets all of them. `"remember_mode_per_file":
+false` turns the whole feature off.

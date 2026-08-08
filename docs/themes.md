@@ -108,6 +108,11 @@ body.dark p            { color: #ddd; }   /* only in a dark desktop */
 body.xedown-theme-document h1 { color: #333; }  /* only under Document */
 ```
 
+`--xedown-selection-bg` and `--xedown-selection-fg` colour selected text. Each
+built-in theme sets both for light and dark, and xedown's own tests hold them
+to 4.5:1 against each other and 1.5:1 against the page. A custom stylesheet
+overriding them is not held to anything — check your own contrast.
+
 Clear the setting — set it to `null` — and the preview goes back to the plain
 built-in theme.
 

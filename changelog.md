@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Four keyboard shortcuts, all of them also in the *View* menu with their keys
+  shown: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> switches between the
+  two modes, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> goes to Preview,
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> goes to Markdown, and
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> refreshes the preview now.
+  Going to the mode you are already in does nothing. They work whether focus
+  is in the editor or the preview, they are greyed out for files that are not
+  Markdown, and none of them takes a key xed already uses — checked against
+  the installed xed rather than assumed.
+- Copy and select-all now act on what you can see. While the preview is
+  showing, <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the rendered selection and
+  <kbd>Ctrl</kbd>+<kbd>A</kbd> selects the rendered document; right-clicking a
+  selection offers **Copy**, and the preview offers nothing else a browser
+  would. In Markdown mode every editing key behaves exactly as xed always
+  has. Selected text now has a colour each theme owns, legible in light and
+  dark.
+- `"default_mode": "markdown"` opens Markdown files in the source instead of
+  the preview, and `"remember_mode_per_file"` (on by default) reopens each
+  file in whichever mode you last left it in. Remembered modes live in
+  `~/.config/xedown/modes.json` and are capped at the 200 most recent files.
+- `"auto_refresh": false` stops the preview re-rendering by itself; the mode
+  bar then shows a **Refresh** button, marked when the preview is behind the
+  document. `"refresh_delay_ms"` sets how long xedown waits after a change,
+  and a new value reaches tabs that are already open.
 - Right-to-left documents now lay out as well as they read. In an Arabic or
   Hebrew document the list bullets and their indentation, the quote bar, the
   table's column order, the footnote marker and its back-reference, and the
@@ -63,9 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default and is identical to 0.1.0**, so upgrading changes nothing until you
   pick another. See [docs/themes.md](docs/themes.md).
 - A settings file at `~/.config/xedown/settings.json`, shared by every window
-  and applied everywhere the moment it changes. Some of these values have no
-  consumer yet — the settings window and the rest of the features that read
-  them come later in v0.2. See [docs/settings.md](docs/settings.md).
+  and applied everywhere the moment it changes. See
+  [docs/settings.md](docs/settings.md) for what each one does; the settings
+  window that will edit them, and `watch_external_changes`, are still to come
+  later in v0.2.
+
+### Fixed
+
+- A preview showing an error page could never be refreshed back into a
+  document: the swap-in-place path cannot reach an error page, and marked the
+  preview up to date anyway. It now reloads instead.
 
 ## [0.1.0] - 2026-08-05
 

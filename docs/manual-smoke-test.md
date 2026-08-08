@@ -138,6 +138,22 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 51 | Set `"text_direction": "ltr"` in `~/.config/xedown/settings.json`, restart xed, and reopen `tests/fixtures/rtl.md` | The layout is left-to-right — bullets and quote bars on the left — while every Arabic paragraph still reads right-to-left, stays right-aligned, and keeps its full stop on the left |
 | 52 | Remove `text_direction` from `~/.config/xedown/settings.json` (row 51 left it forced to `ltr`) and restart xed, then open a new empty file, save it as `scratch.md`, switch to Markdown and type a line of Arabic, switch to Preview, and press <kbd>Ctrl</kbd>+<kbd>Z</kbd> to undo the line and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> to redo it | About a quarter of a second after each key press the layout flips in place between left-to-right and right-to-left — no page reload, no flash, no lost scroll position |
 | 53 | Clean up: delete `scratch.md` | Your normal settings are restored |
+| 54 | With `tests/fixtures/showcase.md` open in Preview, press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd>, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> again | The first shows the Markdown source; the second does nothing at all |
+| 55 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd>, then click inside the rendered page and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | The preview returns, then the source — the shortcut works with focus inside the preview |
+| 56 | Open the *View* menu | Four xedown entries, each showing its own key combination |
+| 57 | Switch to a `.txt` tab and open *View* | All four xedown entries are visibly greyed out |
+| 58 | Back in Preview, drag-select a paragraph | The selection is clearly visible against the page |
+| 59 | Press <kbd>Ctrl</kbd>+<kbd>C</kbd> and paste into a new tab | The rendered text arrives — no `#`, no `*`, no Markdown syntax |
+| 60 | Press <kbd>Ctrl</kbd>+<kbd>A</kbd> in the preview, then <kbd>Ctrl</kbd>+<kbd>C</kbd>, and paste | The whole rendered document, without the copy buttons' word "Copy" and without any stylesheet notice |
+| 61 | Switch to Markdown, press <kbd>Ctrl</kbd>+<kbd>A</kbd> then <kbd>Ctrl</kbd>+<kbd>C</kbd>, and paste | The Markdown source, exactly as xed has always copied it. Undo, cut and paste all still behave normally |
+| 62 | Right-click a selection in the preview | **Copy** and **Select All**, and nothing else — no Back, no Reload, no Inspect |
+| 63 | Repeat rows 58 and 62 in each of the four themes, in both light and dark | The selection stays clearly visible and legible in all eight combinations |
+| 64 | Set `"auto_refresh": false`, restart xed, open a Markdown file, and press <kbd>Ctrl</kbd>+<kbd>Z</kbd> in Preview | The mode bar shows a **Refresh** button; a dot appears beside it and the page does not change |
+| 65 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | The page catches up, the dot disappears, and the scroll position is kept |
+| 66 | Set `"default_mode": "markdown"`, restart xed, and open a Markdown file you have never opened before | It opens in Markdown mode, scrolled and with the cursor where xed put it — not jumped to the top |
+| 67 | Switch it to Preview, close the tab, and reopen the same file | It opens in Preview: the remembered mode wins over the default |
+| 68 | Set `"remember_mode_per_file": false`, restart xed, and reopen that same file | It opens in Markdown again — the default decides once more |
+| 69 | Clean up: remove `default_mode`, `remember_mode_per_file` and `auto_refresh` from `~/.config/xedown/settings.json`, and delete `~/.config/xedown/modes.json` | Your normal settings are restored |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion
