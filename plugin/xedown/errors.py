@@ -7,6 +7,16 @@ UNSAVED_DOCUMENT_HINT = (
     "be resolved. Save the file to give them a location to resolve against."
 )
 
+# Carried in the body tag of every page this module produces, so a caller
+# holding only the loaded HTML -- not the boolean it computed a moment before
+# deciding to call render_document -- can ask the page itself what it is.
+# That distinction matters because render_document never raises: it can
+# return this same markup from deep inside its own try/except without ever
+# telling the caller, so "did I pass error=" is the wrong question and "is
+# this what's actually loaded" is the right one. Invisible to a reader: it
+# adds no visible text, only a class token.
+ERROR_PAGE_CLASS = "xedown-page-error"
+
 _ERROR_PAGE = """<!DOCTYPE html>
 <html dir="{ui_direction}">
 <head>
@@ -23,7 +33,7 @@ h1 {{ font-size: 1.1rem; margin: 0 0 .5rem; }}
 p {{ margin: 0; line-height: 1.6; white-space: pre-wrap; }}
 </style>
 </head>
-<body class="{theme}">
+<body class="{marker} {theme}">
 <div class="box"><h1>{title}</h1><p>{detail}</p></div>
 </body>
 </html>
@@ -62,10 +72,22 @@ def error_page(title, detail, dark=False, nonce="xedown-error", ui_direction="lt
         title=escaped_title,
         detail=escaped_detail,
         theme="dark" if dark else "light",
+        marker=ERROR_PAGE_CLASS,
         nonce=nonce,
         ui_direction=ui,
         **palette,
     )
+
+
+def is_error_page(html_text):
+    """Whether `html_text` is a page this module's `error_page` produced.
+
+    Anchored on the body tag's own class attribute, not a bare substring
+    search: escaping already keeps a document's own text from ever opening a
+    literal `<body class="...`, so this cannot be fooled by an author who
+    happens to type the marker word into their Markdown.
+    """
+    return f'<body class="{ERROR_PAGE_CLASS} ' in html_text
 
 
 def render_failure_detail(exc):

@@ -13,18 +13,17 @@ from . import (
     direction,
     errors,
     images,
+    modestore,
     renderer,
     settings,
     stylesheets,
     stylewatcher,
 )
 from .appearance import AppearanceWatcher
-from .document_state import DocumentState, Mode, is_markdown_path
+from .document_state import DocumentState, Mode, is_markdown_path, mode_from_setting
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
-
-REFRESH_DELAY_MS = 250
 
 
 class TabController:
@@ -46,15 +45,24 @@ class TabController:
         self._handlers = []  # (gobject, handler_id)
         self._refresh_source_id = 0
         self._built = False
+        # False while an error page is loaded. `update_body` cannot reach one:
+        # errors.error_page carries no preview.js, so `window.xedown` does not
+        # exist in it and the script silently does nothing.
+        self._page_is_document = False
         self._active = False
         self._dark = False
         self._style = None
         self._image_display = images.DISPLAY_PLACEHOLDER
         self._copy_buttons = True
+        self._auto_refresh = True
+        self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
         self._stylesheet_token = None
         self._info_bar = None
+        # The path this tab's remembered mode is filed under. Compared on
+        # save, so a Save As moves the entry instead of stranding it.
+        self._remembered_path = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -128,6 +136,16 @@ class TabController:
     def is_markdown(self):
         return is_markdown_path(self._document_path())
 
+    @property
+    def is_previewing(self):
+        """The preview is the surface the user is looking at, in this tab."""
+        return (
+            self._built
+            and self.preview is not None
+            and self.state.mode is Mode.PREVIEW
+            and self.is_markdown
+        )
+
     def _document_path(self):
         location = self.document.get_location()
         return location.get_path() if location is not None else None
@@ -157,6 +175,8 @@ class TabController:
         self._settings_token = store.connect(self._on_settings_changed)
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
+        self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
         # The desktop's own direction, which xedown's chrome inside the page
         # follows -- the mode bar already gets this free from GTK. Read once:
@@ -173,6 +193,7 @@ class TabController:
         self.tab.reorder_child(self.modebar, 0)
         self.modebar.show_all()
         self._connect(self.modebar, "mode-selected", self._on_mode_selected)
+        self._connect(self.modebar, "refresh-requested", self._on_refresh_requested)
 
         self.preview = PreviewView(
             on_link=self._on_link_activated, on_image_error=self._on_image_error
@@ -182,7 +203,8 @@ class TabController:
         self._connect(self.document, "changed", self._on_buffer_changed)
 
         self._built = True
-        self.set_mode(Mode.PREVIEW)  # preview is the default
+        self._remembered_path = self._document_path()
+        self.set_mode(self._initial_mode(), initial=True)
         return False
 
     # --- mode switching ----------------------------------------------------
@@ -190,12 +212,54 @@ class TabController:
     def toggle(self):
         self.set_mode(Mode.SOURCE if self.state.mode is Mode.PREVIEW else Mode.PREVIEW)
 
-    def set_mode(self, mode):
+    def _initial_mode(self):
+        """The mode this file opens in.
+
+        A remembered mode wins when remembering is on; otherwise the default.
+        Anything unusable falls back silently: which mode a file opens in is
+        not worth a dialog or a warning, so a value that cannot be determined
+        is treated the same as one that was never set, rather than stopping
+        the file from opening cleanly.
+        """
+        store = settings.get_settings()
+        if store.get(settings.REMEMBER_MODE_PER_FILE):
+            remembered = modestore.get_store().get(self._document_path())
+            if remembered is not None:
+                return remembered
+        return mode_from_setting(store.get(settings.DEFAULT_MODE)) or Mode.PREVIEW
+
+    def _remember_mode(self, mode):
+        """File this tab's mode under its path, when remembering is on."""
+        if not settings.get_settings().get(settings.REMEMBER_MODE_PER_FILE):
+            return
+        modestore.get_store().remember(self._document_path(), mode)
+
+    def set_mode(self, mode, initial=False):
+        """Show `mode`. `initial` is the build-time call, which is different.
+
+        Going to the mode you are already in does nothing: re-running the
+        branches below would re-grab focus and re-file the mode for no
+        change anyone would see. The build-time call is exempt, because that
+        is the call that first makes one of the two widgets visible.
+
+        `initial` also suppresses three things that would each be a
+        regression on a file opening in Markdown mode: restoring the source
+        scroll (which applies fraction 0.0 and would scroll over the position
+        xed just restored), grabbing focus (xed opens several tabs at once,
+        and grabbing focus in a notebook page that is not current moves the
+        window's focus off the tab the user is looking at), and writing to
+        the mode store (opening a file must not rewrite the memory it was
+        just read from).
+        """
         if not self._built:
+            return
+        if mode is self.state.mode and not initial:
             return
         self._remember_scroll(self.state.mode)
         self.state.mode = mode
         self.modebar.set_mode(mode)
+        if not initial:
+            self._remember_mode(mode)
 
         if mode is Mode.PREVIEW:
             if self.state.preview_stale:
@@ -210,6 +274,12 @@ class TabController:
             # show_all() is itself blocked by the flag while it is set.
             self.preview.widget.set_no_show_all(False)
             self.preview.widget.show_all()
+            if not initial:
+                # Required for the selection the user makes to be the one
+                # copy acts on, and it also fixes Page_Down scrolling a
+                # hidden text view. Skipped on the build-time call: see the
+                # docstring.
+                self.preview.widget.grab_focus()
         else:
             # Mirror the frame's mitigation on the other widget: without
             # this, a bare show_all() on the tab while in source mode would
@@ -219,8 +289,43 @@ class TabController:
             self.preview.widget.hide()
             self.frame.set_no_show_all(False)
             self.frame.show()
-            self._restore_source_scroll()
-            self.view.grab_focus()
+            if not initial:
+                self._restore_source_scroll()
+                self.view.grab_focus()
+        self._update_refresh_cue()
+
+    def refresh_now(self):
+        """Re-render the preview from the document as it is now.
+
+        Nothing to do in Markdown mode: the preview is already stale and
+        switching to it renders. Rendering into a hidden WebView to reach the
+        same state would be work the user cannot see happen -- exactly the
+        eager, unseen rendering that turning `auto_refresh` off is meant to
+        avoid, done anyway just with an extra step in front of it.
+        """
+        if not self._built or self.state.mode is not Mode.PREVIEW:
+            return
+        self._cancel_refresh()
+        self._refresh_body_now()
+
+    def _update_refresh_cue(self):
+        """Keep the bar's refresh control telling the truth.
+
+        Visible only where clicking it would do something: `refresh_now`
+        is a no-op outside Preview mode (typing in Markdown mode already
+        leaves the preview stale, and switching back is what renders it),
+        so a control that appeared there anyway would sit stale-marked and
+        unresponsive for as long as the user kept editing.
+        """
+        if self.modebar is None:
+            return
+        self.modebar.set_refresh_visible(
+            not self._auto_refresh and self.state.mode is Mode.PREVIEW
+        )
+        self.modebar.set_stale(self.state.preview_stale)
+
+    def _on_refresh_requested(self, _bar):
+        self.refresh_now()
 
     def _current_preview_scroll(self):
         """The scroll fraction to preserve across a reload while previewing.
@@ -289,10 +394,15 @@ class TabController:
 
     def _on_buffer_changed(self, *_args):
         self.state.preview_stale = True
-        if self.state.mode is not Mode.PREVIEW:
-            return  # no hidden rendering while the user types in source mode
+        self._update_refresh_cue()
+        if self.state.mode is not Mode.PREVIEW or not self._auto_refresh:
+            # No hidden rendering while the user types in source mode, and
+            # nothing at all when the user has asked for manual refresh.
+            return
         self._cancel_refresh()
-        self._refresh_source_id = GLib.timeout_add(REFRESH_DELAY_MS, self._do_refresh)
+        self._refresh_source_id = GLib.timeout_add(
+            self._refresh_delay_ms, self._do_refresh
+        )
 
     def _cancel_refresh(self):
         if self._refresh_source_id:
@@ -310,6 +420,14 @@ class TabController:
         """Re-render the body in place. Shared by the debounce timer and an
         immediate save-time refresh (see `_on_document_saved`) — neither
         case wants a full page reload."""
+        if not self._page_is_document:
+            # An error page is showing. Swapping the body would post into a
+            # page with no `window.xedown` and do nothing at all -- and the
+            # line at the end of this method would then mark the preview
+            # fresh, stranding the error page for good. A reload is the only
+            # route back to a document.
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
+            return
         text = self._buffer_text()
         try:
             fragment = renderer.render_fragment(
@@ -328,6 +446,7 @@ class TabController:
             return
         self.preview.update_body(fragment, resolved)
         self.state.preview_stale = False
+        self._update_refresh_cue()
 
     def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
@@ -356,7 +475,13 @@ class TabController:
             ("file://" + base_dir + "/") if base_dir else None,
             restore_scroll=restore_scroll,
         )
+        # Asks the page actually being loaded, not the caller's own belief
+        # about which branch produced it: render_document never raises, so
+        # `error is None` is true even when it caught something internally
+        # and returned an error page of its own.
+        self._page_is_document = not errors.is_error_page(html)
         self.state.preview_stale = False
+        self._update_refresh_cue()
 
     def _buffer_text(self):
         start, end = self.document.get_bounds()
@@ -372,6 +497,15 @@ class TabController:
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
+        path = self._document_path()
+        if path != self._remembered_path:
+            # A Save As. Follow the file rather than leaving an entry keyed
+            # to a path it no longer has.
+            if self._remembered_path and settings.get_settings().get(
+                settings.REMEMBER_MODE_PER_FILE
+            ):
+                modestore.get_store().rename(self._remembered_path, path)
+            self._remembered_path = path
         if self.state.preview_stale and self.state.mode is Mode.PREVIEW:
             self._refresh_body_now()
 
@@ -427,6 +561,17 @@ class TabController:
         <head> to rebuild. It costs one re-render of the Markdown, which is
         the right price for a setting nobody changes twice a day and reuses
         machinery that is already correct about mode and staleness.
+
+        `AUTO_REFRESH` and `REFRESH_DELAY_MS` are cached rather than read at
+        use time so the debounce path stays a timer schedule and nothing
+        more. The delay is read when a change is scheduled, which is what
+        makes a new value reach a tab that is already open; a timer already
+        in flight keeps the delay it was scheduled with, and the observable
+        difference is one render. Switching auto-refresh back on over a
+        stale preview is itself a body render, so it shares the same
+        multi-key-broadcast hazard as the theme reload above: a broadcast
+        that also moves `REMOTE_IMAGES` or `TEXT_DIRECTION` must not render
+        the body a second time for values the first render already carried.
         """
         if self._style is None:
             return
@@ -440,9 +585,18 @@ class TabController:
         previous_direction = self._text_direction
         self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
+        was_auto = self._auto_refresh
+        self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
+        self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
 
         reloaded = False
+        # Two independent branches below can each want a body render out of
+        # one broadcast (the auto-refresh catch-up here, and the
+        # image-display/direction branch further down) -- this flag is how
+        # the second one knows the first already happened, so one broadcast
+        # never renders the body twice.
+        refreshed = False
         if settings.PREVIEW_THEME in changed:
             self.state.preview_stale = True
             if self._built and self.state.mode is Mode.PREVIEW:
@@ -460,6 +614,30 @@ class TabController:
                 self._style.content_width_rem, self._style.text_size_px
             )
 
+        if not self._auto_refresh:
+            # A timer already in flight would render after the user asked for
+            # manual refresh only.
+            self._cancel_refresh()
+        elif (
+            not was_auto
+            and not reloaded
+            and self.state.preview_stale
+            and self._built
+            and self.state.mode is Mode.PREVIEW
+        ):
+            # Switched back on over a stale preview: catch up now rather than
+            # wait for a change that may never come.
+            self._refresh_body_now()
+            refreshed = True
+
+        if settings.REMEMBER_MODE_PER_FILE in changed and store.get(
+            settings.REMEMBER_MODE_PER_FILE
+        ):
+            # Switched on: make it true of the tabs already open, not only of
+            # ones opened later.
+            self._remember_mode(self.state.mode)
+        self._update_refresh_cue()
+
         if reloaded:
             # The reload already carried both values in its own config block
             # and re-rendered the body with them. Poking the outgoing page
@@ -474,10 +652,13 @@ class TabController:
         # The two settings that change the emitted body, and only the body:
         # the CSS for every image mode is already in the loaded page, and the
         # direction is one attribute on the article. Neither needs a reload.
+        # Skipped when the catch-up branch above already rendered: both
+        # values were re-read before it ran, so it already carries them, and
+        # a render here would only repeat that one for nothing.
         if (
             self._image_display != previous_display
             or self._text_direction != previous_direction
-        ):
+        ) and not refreshed:
             if self._built and self.state.mode is Mode.PREVIEW:
                 self._refresh_body_now()
             else:

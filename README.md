@@ -60,6 +60,15 @@ Markdown modes inside the same tab.
   unmarked file path or URL typed straight into right-to-left prose can put
   its leading slash on the wrong end — wrap it in backticks or in
   `<bdi>…</bdi>`.
+- **Driven from the keyboard.** <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>
+  switches modes, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> and
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> go straight to one,
+  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> refreshes now. All four are in
+  the *View* menu, and none of them takes a key xed already uses.
+- **Copy what you can see.** Copy and select-all act on the rendered document
+  while the preview is showing, and on the source while it is not.
+- **Opens how you want.** Choose the mode Markdown files open in, or have
+  xedown reopen each file in the mode you left it in.
 
 ## Requirements
 
@@ -136,6 +145,18 @@ and viewing never changes the file.
 - A custom stylesheet cannot load anything from the network, and cannot load a
   font file even from your own disk — install the font and name it instead.
   See [docs/themes.md](docs/themes.md).
+- **A remembered mode belongs to a path, not to a file.** Rename or move a
+  file inside xed and its mode follows. Do it outside xed and the old path
+  keeps its entry: a *new* file created at that path later opens in the old
+  one's mode until the entry falls out of the 200 most recent. Switching mode
+  once fixes it.
+- **Automatic refresh covers less than the name suggests.** xedown never shows
+  both surfaces at once, so nothing renders while you type in Markdown mode —
+  the switch back is what renders. What automatic refresh governs is a change
+  reaching the document *while the preview is showing*: an undo, a
+  find-and-replace. A reload from disk — xed's own revert, or accepting its
+  prompt after an external change — re-renders the preview regardless of this
+  setting.
 
 ## Documentation
 

@@ -21,11 +21,12 @@ import traceback
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Xed", "1.0")
 gi.require_version("WebKit2", "4.1")
 
-from gi.repository import Gio, GLib, GObject, Gtk, WebKit2, Xed
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, WebKit2, Xed
 
 REPORT = os.environ.get("XEDOWN_PROBE_REPORT", "/tmp/xedown-probe-report.txt")
 # Nested under the runner's own mktemp workdir when run through
@@ -58,17 +59,27 @@ TabController = None
 Mode = None
 ModeBar = None
 xedown_settings = None
+xedown_shortcuts = None
+xedown_stylewatcher = None
+XedownWindowActivatable = None
 
 
 def _lazy_imports():
-    global TabController, Mode, ModeBar, xedown_settings
+    global TabController, Mode, ModeBar, xedown_settings, xedown_shortcuts
+    global xedown_stylewatcher, XedownWindowActivatable
+    from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import settings as _settings
+    from xedown import shortcuts as _shortcuts
+    from xedown import stylewatcher as _stylewatcher
     from xedown.controller import TabController as _TabController
     from xedown.document_state import Mode as _Mode
     from xedown.modebar import ModeBar as _ModeBar
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_settings = _settings
+    xedown_shortcuts = _shortcuts
+    xedown_stylewatcher = _stylewatcher
+    XedownWindowActivatable = _XedownWindowActivatable
 
 
 def _format_line(name, passed, detail):
@@ -185,6 +196,26 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             action = group.get_action(name)
             if action is not None:
                 return action
+        return None
+
+    def _find_window_activatable(self):
+        """The live `XedownWindowActivatable` for this probe's window.
+
+        Neither `Xed.Window` nor `Peas.Engine` exposes the per-window
+        extension set peas builds it from -- checked directly against both
+        introspected APIs, nothing on either even hints at one -- so `gc` is
+        the only route from here to the object Fix 2's teardown assertions
+        need: the one holding the window-level key-press handler id and the
+        alias accelerator bookkeeping. Same spirit as the rest of this probe
+        reaching past behaviour into internal state, just one level further
+        out, since the object under test lives outside this probe's own
+        reference graph entirely.
+        """
+        import gc
+
+        for obj in gc.get_objects():
+            if isinstance(obj, XedownWindowActivatable) and obj.window is self.window:
+                return obj
         return None
 
     def _activate_named_action(self, name):
@@ -1249,13 +1280,21 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_txt_sensitivity(self):
-        action = self._find_action("XedownToggleAction")
-        record("xedown-action-exists", action is not None)
-        if action is not None:
-            # get_sensitive() always reads True regardless of menu state --
-            # only is_sensitive() reflects the action GROUP sensitivity that
-            # do_update_state() actually toggles.
-            record("menu-insensitive-on-txt", not action.is_sensitive())
+        for action_name in (
+            "XedownToggleAction",
+            "XedownPreviewModeAction",
+            "XedownMarkdownModeAction",
+            "XedownRefreshAction",
+        ):
+            action = self._find_action(action_name)
+            record(f"action-exists-{action_name}", action is not None)
+            if action is not None:
+                # get_sensitive() always reads True regardless of menu state
+                # -- only is_sensitive() reflects the action GROUP
+                # sensitivity that do_update_state() actually toggles.
+                record(
+                    f"menu-insensitive-on-txt-{action_name}", not action.is_sensitive()
+                )
         self.window.set_active_tab(self.tab)
         self.view.grab_focus()
         self._schedule(700, self.step_md_sensitivity)
@@ -1265,6 +1304,517 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         action = self._find_action("XedownToggleAction")
         if action is not None:
             record("menu-sensitive-on-md", action.is_sensitive())
+        self._schedule(400, self.step_error_page_setup)
+        return False
+
+    # --- an error page must be refreshable back into a document ------------
+
+    def step_error_page_setup(self):
+        controller = self._main_controller()
+        # A render failure the probe can cause on demand: the same call the
+        # controller makes when rendering actually raises.
+        controller._reload_preview(
+            error=RuntimeError("probe-forced failure"), restore_scroll=0.0
+        )
+        self._schedule(900, self.step_error_page_refresh)
+        return False
+
+    def step_error_page_refresh(self):
+        controller = self._main_controller()
+        controller.refresh_now()
+        self._schedule(900, self.step_error_page_check)
+        return False
+
+    def step_error_page_check(self):
+        preview = self._main_controller().preview
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            # Before the fix this stayed "false" for ever: update_body posts
+            # into a page with no window.xedown, and nothing reloads it.
+            record(
+                "error-page-recovers-on-refresh", found == "true", f"content: {found}"
+            )
+            self._schedule(400, self.step_manual_refresh_setup)
+
+        preview.widget.run_javascript(
+            "String(!!document.getElementById('xedown-content'))", None, on_result, None
+        )
+        return False
+
+    # --- automatic refresh off: the button, the dot, and the manual path ---
+
+    def step_manual_refresh_setup(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, False)
+        self._schedule(500, self.step_manual_refresh_bar)
+        return False
+
+    def step_manual_refresh_bar(self):
+        bar = self._main_controller().modebar
+        record(
+            "refresh-button-appears-when-auto-is-off",
+            bar is not None and bar._refresh_button.get_visible(),
+        )
+        # A buffer change while the preview is showing is exactly what
+        # automatic refresh would have picked up.
+        document = self._main_controller().document
+        document.insert(document.get_end_iter(), "\n\nmanual refresh marker\n")
+        self._schedule(700, self.step_manual_refresh_stale)
+        return False
+
+    def step_manual_refresh_stale(self):
+        controller = self._main_controller()
+        bar = controller.modebar
+        record("stale-dot-shows-when-behind", bar._stale_dot.get_visible())
+        # With automatic refresh off, nothing rendered it.
+        record("no-render-while-auto-is-off", controller.state.preview_stale)
+        controller.refresh_now()
+        self._schedule(900, self.step_manual_refresh_check)
+        return False
+
+    def step_manual_refresh_check(self):
+        controller = self._main_controller()
+        preview = controller.preview
+
+        def on_result(webview, result, _user_data):
+            found = ""
+            try:
+                found = webview.run_javascript_finish(result).get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            record(
+                "manual-refresh-updates-the-page", found == "true", f"found: {found}"
+            )
+            record(
+                "stale-dot-clears-after-refresh",
+                not controller.modebar._stale_dot.get_visible(),
+            )
+            # Restore the default before anything later renders against it.
+            xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, True)
+            self._schedule(500, self.step_refresh_button_hidden)
+
+        preview.widget.run_javascript(
+            "String(document.body.textContent.indexOf('manual refresh marker') >= 0)",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    def step_refresh_button_hidden(self):
+        bar = self._main_controller().modebar
+        record(
+            "refresh-button-hidden-when-auto-is-on",
+            bar is not None and not bar._refresh_button.get_visible(),
+        )
+        self._schedule(400, self.step_remember_mode_setup)
+        return False
+
+    # --- the mode a file opens in ------------------------------------------
+
+    def step_remember_mode_setup(self):
+        path = os.path.join(self._tmpdir, "remembered.md")
+        with open(path, "w") as handle:
+            handle.write("# Remembered\n\nA file with a mode to remember.\n")
+        self._remember_path = path
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1200, self.step_remember_mode_set)
+        return False
+
+    def step_remember_mode_set(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "remembered-file-opens-in-the-default",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        controller.set_mode(Mode.SOURCE)
+        self.window.close_tab(self._remember_tab)
+        self._schedule(900, self.step_remember_mode_reopen)
+        return False
+
+    def step_remember_mode_reopen(self):
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._remember_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_remember_mode_check)
+        return False
+
+    def step_remember_mode_check(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "reopened-file-restores-its-mode",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        self.window.close_tab(self._remember_tab)
+        xedown_settings.get_settings().set(
+            xedown_settings.REMEMBER_MODE_PER_FILE, False
+        )
+        self._schedule(900, self.step_remember_off_reopen)
+        return False
+
+    def step_remember_off_reopen(self):
+        self._remember_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._remember_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_remember_off_check)
+        return False
+
+    def step_remember_off_check(self):
+        controller = getattr(self._remember_tab.get_view(), "_xedown_controller", None)
+        record(
+            "remembering-off-uses-the-default-mode",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        self.window.close_tab(self._remember_tab)
+        xedown_settings.get_settings().set(xedown_settings.REMEMBER_MODE_PER_FILE, True)
+        self._schedule(700, self.step_default_mode_setup)
+        return False
+
+    def step_default_mode_setup(self):
+        # A file never opened before, so nothing is remembered for it and the
+        # default is the only thing that can decide.
+        xedown_settings.get_settings().set(xedown_settings.DEFAULT_MODE, "markdown")
+        path = os.path.join(self._tmpdir, "fresh.md")
+        with open(path, "w") as handle:
+            handle.write("# Fresh\n\nNever opened before.\n")
+        self._fresh_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_default_mode_check)
+        return False
+
+    def step_default_mode_check(self):
+        controller = getattr(self._fresh_tab.get_view(), "_xedown_controller", None)
+        record(
+            "default-mode-decides-a-new-file",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        # The source view must be the visible one, not merely the recorded
+        # one. `controller.frame` is captured in `__init__` before the
+        # ModeBar is packed, so it stays a correct reference to xed's own
+        # source-view container no matter how tab children are later
+        # reordered -- unlike `self._fresh_tab.get_children()[0]`, which is
+        # always the ModeBar once a tab is built (see modebar-at-index-0),
+        # and so is always visible regardless of mode.
+        record(
+            "default-markdown-shows-the-source",
+            controller is not None and controller.frame.get_visible(),
+        )
+        self.window.close_tab(self._fresh_tab)
+        xedown_settings.get_settings().set(xedown_settings.DEFAULT_MODE, "preview")
+        self._schedule(700, self.step_saveas_setup)
+        return False
+
+    # --- Save As moves the remembered entry; it does not copy it -----------
+    #
+    # `Xed.commands_save_document_as` opens a modal file chooser and cannot
+    # be driven from here without blocking on a dialog nothing in this probe
+    # may block on. `Xed.Document.set_location`, followed by the same
+    # `Xed.commands_save_document` step_save already uses for an ordinary
+    # save, is the actual non-interactive route this host exposes: confirmed
+    # by direct probing (not by reading the C source, which is not on this
+    # machine) that it writes to the new path with no dialog and no hang --
+    # exactly the mechanism `_on_document_saved` is written to react to,
+    # since it is keyed off `self._document_path()` changing underneath it,
+    # not off which xed command produced the change.
+
+    def step_saveas_setup(self):
+        path = os.path.join(self._tmpdir, "saveas-original.md")
+        with open(path, "w") as handle:
+            handle.write("# Save As Original\n\nStarts in Markdown mode.\n")
+        self._saveas_original_path = path
+        self._saveas_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._schedule(1200, self.step_saveas_set_mode)
+        return False
+
+    def step_saveas_set_mode(self):
+        controller = getattr(self._saveas_tab.get_view(), "_xedown_controller", None)
+        # Files an entry under the ORIGINAL path -- this is what the rename
+        # on save has to move rather than strand.
+        controller.set_mode(Mode.SOURCE)
+        self._schedule(500, self.step_saveas_move)
+        return False
+
+    def step_saveas_move(self):
+        new_path = os.path.join(self._tmpdir, "saveas-moved.md")
+        self._saveas_new_path = new_path
+        document = self._saveas_tab.get_document()
+        document.set_location(Gio.File.new_for_path(new_path))
+        Xed.commands_save_document(self.window, document)
+        self._schedule(1500, self.step_saveas_close)
+        return False
+
+    def step_saveas_close(self):
+        self.window.close_tab(self._saveas_tab)
+        self._schedule(700, self.step_saveas_reopen_new)
+        return False
+
+    def step_saveas_reopen_new(self):
+        self._saveas_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._saveas_new_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_saveas_check_new)
+        return False
+
+    def step_saveas_check_new(self):
+        controller = getattr(self._saveas_tab.get_view(), "_xedown_controller", None)
+        record(
+            "saveas-new-path-opens-in-the-remembered-mode",
+            controller is not None and controller.state.mode is Mode.SOURCE,
+        )
+        self.window.close_tab(self._saveas_tab)
+        self._schedule(700, self.step_saveas_reopen_original)
+        return False
+
+    def step_saveas_reopen_original(self):
+        # The same file `step_saveas_setup` wrote and never touched again --
+        # still on disk under its original name, since a Save As does not
+        # delete the file it moved away from.
+        self._saveas_orig_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._saveas_original_path), None, 0, False, True
+        )
+        self._schedule(1400, self.step_saveas_check_original)
+        return False
+
+    def step_saveas_check_original(self):
+        controller = getattr(
+            self._saveas_orig_tab.get_view(), "_xedown_controller", None
+        )
+        record(
+            "saveas-original-path-uses-the-default-not-a-stale-entry",
+            controller is not None and controller.state.mode is Mode.PREVIEW,
+        )
+        self.window.close_tab(self._saveas_orig_tab)
+        self._schedule(700, self.step_accel_map)
+        return False
+
+    # --- the four shortcuts, pressed for real ------------------------------
+
+    def _press(self, keyval, state):
+        """Deliver a real key press to the window, as the keyboard would.
+
+        `hardware_keycode` is not decoration: GTK's accelerator lookup goes
+        through its key hash by keycode, so an event without one activates
+        nothing at all and every assertion below would be vacuous.
+        """
+        keymap = Gdk.Keymap.get_for_display(self.window.get_display())
+        ok, entries = keymap.get_entries_for_keyval(keyval)
+        event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
+        event.window = self.window.get_window()
+        event.send_event = True
+        event.time = Gtk.get_current_event_time()
+        event.state = state
+        event.keyval = keyval
+        event.hardware_keycode = entries[0].keycode if ok and entries else 0
+        event.group = entries[0].group if ok and entries else 0
+        # Confirmed live (not merely inferred) that a device is equally
+        # load-bearing: without one, xed's own log fills with
+        # `Gdk-WARNING: Event with type 8 not holding a GdkDevice` and every
+        # mode-change assertion below fails -- not because the accelerator
+        # was wrong, but because an event with no device never reaches GTK's
+        # key-press handling at all. Every real GdkEventKey carries one;
+        # this attaches the display's actual keyboard so the synthetic
+        # event is a genuine one, not a shortcut around xed's real event
+        # pipeline.
+        seat = self.window.get_display().get_default_seat()
+        if seat is not None:
+            keyboard = seat.get_keyboard()
+            if keyboard is not None:
+                event.set_device(keyboard)
+        Gtk.main_do_event(event)
+
+    def step_accel_map(self):
+        ours = set()
+        for action in xedown_shortcuts.ACTIONS:
+            # Aliases too, not just the primary -- an alias that collided
+            # with something already in xed's own accel map would be just
+            # as broken, and it is the spelling that actually fires on the
+            # layouts where the alias exists at all.
+            for accel in (action.accelerator, *action.aliases):
+                # Two values, not three: PyGObject returns (key, mods) here.
+                key, mods = Gtk.accelerator_parse(accel)
+                ours.add((key, int(mods)))
+        clashes = []
+
+        def visit(_data, accel_path, accel_key, accel_mods, _changed):
+            if accel_path.startswith("<Actions>/XedownActions/"):
+                return  # our own registrations
+            if (accel_key, int(accel_mods)) in ours:
+                clashes.append(accel_path)
+
+        seen = []
+
+        def count(_data, accel_path, _key, _mods, _changed):
+            seen.append(accel_path)
+
+        Gtk.AccelMap.foreach_unfiltered(None, count)
+        # A map this small means nothing was read, which would make the
+        # assertion below pass while proving nothing.
+        record("accel-map-is-populated", len(seen) >= 10, f"paths: {len(seen)}")
+        Gtk.AccelMap.foreach_unfiltered(None, visit)
+        record("no-accelerator-clash-with-the-live-xed", not clashes, f"{clashes!r}")
+        self._schedule(400, self.step_shortcut_to_markdown)
+        return False
+
+    def step_shortcut_to_markdown(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        self.view.grab_focus()
+        self._press(
+            Gdk.KEY_2, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_to_markdown_check)
+        return False
+
+    def step_shortcut_to_markdown_check(self):
+        controller = self._main_controller()
+        record("ctrl-shift-2-shows-the-source", controller.state.mode is Mode.SOURCE)
+        # Again, from the mode it is already in: a no-op, not a toggle.
+        self._press(
+            Gdk.KEY_2, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(500, self.step_shortcut_repeat_check)
+        return False
+
+    def step_shortcut_repeat_check(self):
+        controller = self._main_controller()
+        record(
+            "going-to-the-current-mode-does-nothing",
+            controller.state.mode is Mode.SOURCE,
+        )
+        self._press(
+            Gdk.KEY_1, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_to_preview_check)
+        return False
+
+    def step_shortcut_to_preview_check(self):
+        controller = self._main_controller()
+        record("ctrl-shift-1-shows-the-preview", controller.state.mode is Mode.PREVIEW)
+        # With focus inside the WebView this time, which is the case v0.1
+        # could not serve.
+        controller.preview.widget.grab_focus()
+        self._press(
+            Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_from_preview_focus_check)
+        return False
+
+    def step_shortcut_from_preview_focus_check(self):
+        controller = self._main_controller()
+        record(
+            "shortcuts-work-with-focus-in-the-preview",
+            controller.state.mode is Mode.SOURCE,
+        )
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(500, self.step_menu_entries)
+        return False
+
+    def step_menu_entries(self):
+        for action in xedown_shortcuts.ACTIONS:
+            found = self._find_action(action.name)
+            record(f"menu-entry-exists-{action.name}", found is not None)
+            if found is not None:
+                record(
+                    f"menu-entry-sensitive-on-md-{action.name}", found.is_sensitive()
+                )
+        self._schedule(400, self.step_preview_copy_setup)
+        return False
+
+    # --- copy lands on the surface the user can see ------------------------
+
+    def step_preview_copy_setup(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        # The probe's document (`_long_markdown`) opens "# Scroll Test", so
+        # the rendered surface holds "Scroll Test" and the source holds
+        # "# Scroll Test". Whatever the clipboard ends up with, it came from
+        # one surface or the other and the two cannot be confused.
+        Gtk.Clipboard.get_default(self.window.get_display()).set_text("<none>", -1)
+        controller.preview.widget.grab_focus()
+        self._press(Gdk.KEY_a, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(500, self.step_preview_copy)
+        return False
+
+    def step_preview_copy(self):
+        self._press(Gdk.KEY_c, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(900, self.step_preview_copy_check)
+        return False
+
+    def step_preview_copy_check(self):
+        text = (
+            Gtk.Clipboard.get_default(self.window.get_display()).wait_for_text() or ""
+        )
+        record(
+            "preview-copy-produces-rendered-text",
+            "Scroll Test" in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        record(
+            "preview-copy-is-not-the-markdown-source",
+            "# " not in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        self._schedule(400, self.step_source_copy_setup)
+        return False
+
+    def step_source_copy_setup(self):
+        controller = self._main_controller()
+        controller.set_mode(Mode.SOURCE)
+        self.view.grab_focus()
+        Gtk.Clipboard.get_default(self.window.get_display()).set_text("<none>", -1)
+        self._schedule(500, self.step_source_copy)
+        return False
+
+    def step_source_copy(self):
+        self._press(Gdk.KEY_a, Gdk.ModifierType.CONTROL_MASK)
+        self._press(Gdk.KEY_c, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(900, self.step_source_copy_check)
+        return False
+
+    def step_source_copy_check(self):
+        text = (
+            Gtk.Clipboard.get_default(self.window.get_display()).wait_for_text() or ""
+        )
+        # Markdown mode keeps xed's own behaviour exactly: hashes and all.
+        record(
+            "markdown-copy-still-produces-source",
+            "# " in text,
+            f"clipboard: {text[:60]!r}",
+        )
+        controller = self._main_controller()
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(600, self.step_preview_focus_check)
+        return False
+
+    def step_preview_focus_check(self):
+        controller = self._main_controller()
+        # is_focus(), not has_focus(): the claim here is that entering
+        # Preview moves the TAB's focus to the WebView, which is exactly
+        # "is this widget its toplevel's focus widget" -- independent of
+        # which window the window manager currently considers active.
+        # has_focus() also requires real X11 input focus on the toplevel,
+        # which anything can hold at the moment this step runs (in this
+        # harness, the move-tab test's own second window; in ordinary use,
+        # literally anything else on the desktop) -- a check built on it is
+        # flaky by construction, not a stronger assertion.
+        record(
+            "entering-preview-focuses-the-preview",
+            controller.preview.widget.is_focus(),
+        )
         self._schedule(400, self.step_disable_prep_infobar)
         return False
 
@@ -1285,6 +1835,15 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record(
             "infobar-live-immediately-before-disable",
             self._pre_disable_info_bar is not None,
+        )
+        # Captured now, held on the probe rather than re-found after
+        # disable: do_deactivate() clears this object's own bookkeeping but
+        # does not stop existing, so a reference taken here is what lets
+        # step_disable_check still ask it anything once the plugin is gone.
+        self._window_activatable = self._find_window_activatable()
+        record(
+            "window-activatable-found-before-disable",
+            self._window_activatable is not None,
         )
         self._schedule(300, self.step_disable_plugin)
         return False
@@ -1337,6 +1896,32 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "disable-no-settings-listeners-left",
             store is not None and not store._listeners,
             f"listeners left: {sorted(getattr(store, '_listeners', {}))!r}",
+        )
+        # Same claim as the settings store above, for the stylesheet watcher:
+        # it is the other long-lived global every controller subscribes to,
+        # and a missed disconnect there is just as much of a leak.
+        watcher = xedown_stylewatcher.get_watcher()
+        record(
+            "disable-no-stylewatcher-listeners-left",
+            not watcher._listeners,
+            f"listeners left: {sorted(watcher._listeners)!r}",
+        )
+        # The accelerator-closure leak Fix 2 exists to catch: a leaked alias
+        # closure holds a bound method of XedownWindowActivatable, which
+        # holds the window, and none of it shows up as terminal output --
+        # the shutdown harness proving the log stays silent cannot tell that
+        # apart from this actually being torn down. Checked on the instance
+        # captured before disable, since the object itself has no reason to
+        # stop existing just because do_deactivate() ran.
+        activatable = getattr(self, "_window_activatable", None)
+        record(
+            "disable-key-press-handler-cleared",
+            activatable is not None and activatable._key_press_handler_id is None,
+        )
+        record(
+            "disable-alias-accels-cleared",
+            activatable is not None and not activatable._alias_accels,
+            f"aliases left: {getattr(activatable, '_alias_accels', None)!r}",
         )
         self._schedule(300, self.step_settle_before_exit)
         return False

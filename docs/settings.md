@@ -3,11 +3,14 @@
 xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
-**Some of these values have no consumer yet.** `preview_theme`,
-`custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images`,
-`code_copy_buttons` and `text_direction` are read as of v0.2 — see
-[themes.md](themes.md). The rest exist so that the features that use them, and
-the settings window that will edit them, have one place to look.
+**One of these values has no consumer yet.** `watch_external_changes` is not
+read by anything in this release; it exists so that the feature which will use
+it, and the settings window that will edit it, have one place to look. Every
+other setting here is read as of v0.2: `preview_theme`, `custom_stylesheet`,
+`content_width_rem`, `text_size_px`, `remote_images`, `code_copy_buttons` and
+`text_direction` — see [themes.md](themes.md); `default_mode`,
+`remember_mode_per_file`, `auto_refresh` and `refresh_delay_ms` — see
+[Modes and refreshing](#modes-and-refreshing) below.
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -49,8 +52,10 @@ names is an ordinary settings change, and needs a restart like the rest.
 in particular that nothing in it can reach the network.
 
 Two have no v0.1 equivalent, because the capability did not exist in v0.1 —
-`remember_mode_per_file` and `watch_external_changes`. Each ships **On**, so
-when the features that read them arrive later in v0.2 they will be active
+`remember_mode_per_file` and `watch_external_changes`. Each ships **On**.
+`remember_mode_per_file` is read as of v0.2 — see
+[Modes and refreshing](#modes-and-refreshing) below. `watch_external_changes`
+is not read yet; when the feature that uses it arrives it will be active
 without you doing anything. Set either of them to `false` here to opt out.
 
 `remote_images` decides how **any** image that cannot be displayed appears —
@@ -94,6 +99,64 @@ list's side. A bullet is part of the layout, and the layout is what
 This setting says nothing about xedown's own interface. The Preview/Markdown
 bar, the stylesheet notice and the error pages follow your **desktop's**
 direction, whatever the document is written in.
+
+## Modes and refreshing
+
+`default_mode` decides how a Markdown file opens. `remember_mode_per_file`, on
+by default, overrides it with whichever mode that file was last left in; a file
+xedown has never opened uses the default. Which mode a file opens in changes
+only for the *next* file you open, for both settings — a tab already in front
+of you is never switched out from under you.
+
+Switching `remember_mode_per_file` on does have one immediate effect, though:
+every tab already open has its current mode recorded at once, so each of
+those files already carries that mode the next time you open it, with no need
+to switch anything in it yourself first. `default_mode` has no such effect —
+it is read only when a tab is built, so changing it never touches a tab that
+is already open, in any way.
+
+Remembered modes live in `~/.config/xedown/modes.json`, beside this file. It
+holds the 200 most recently used files, newest first, and older entries fall
+off the end, so it cannot grow without limit. It is xedown's own bookkeeping
+rather than a setting: if it cannot be read, xedown starts from an empty one
+and says nothing. Deleting it forgets every remembered mode. Setting
+`remember_mode_per_file` to `false` stops xedown reading or writing it, and
+leaves what is already in it alone.
+
+A mode is filed under a file's **path**. Rename or move a file inside xed and
+the entry follows it; do it in a file manager and the old path keeps its entry
+until it ages out — see [known-issues.md](known-issues.md).
+
+`auto_refresh` decides whether the preview re-renders by itself. It covers less
+than the name suggests, and honestly: xedown never shows the source and the
+preview at once, so nothing is rendered while you type in Markdown mode — the
+switch back to Preview is what renders, and it always does, whatever this is
+set to. What `auto_refresh` governs is a change that reaches the document
+*while the preview is showing*: an undo or redo, a find-and-replace, a plugin's
+edit. A reload from disk — xed's own revert, or accepting its prompt after an
+external change — is not governed by it: that always re-renders the preview
+when it is showing, whatever `auto_refresh` says. On a very large document the
+re-renders `auto_refresh` does control are worth turning off.
+
+Changing `auto_refresh` itself takes effect at once, in every tab already
+open: switching it off cancels a render that is already scheduled, and
+switching it back on over a stale, visible preview renders it immediately
+rather than waiting for the next change.
+
+With `auto_refresh` set to `false`, the mode bar grows a **Refresh** button
+while the preview is showing, marked with a dot when the preview is behind
+the document, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> does the same
+thing from the keyboard. Both work whatever `auto_refresh` says, but both act
+on the preview itself, so neither does anything in Markdown mode: the button
+does not appear there at all, and the shortcut is a no-op — switching back to
+Preview is what renders, exactly as it always does regardless of this
+setting.
+
+`refresh_delay_ms` is how long xedown waits after a change before re-rendering.
+Unlike `default_mode` — the one setting on this page whose effect is entirely
+deferred to the next file you open — it reaches tabs that are already open:
+the next change uses the new value. A wait already under way keeps the delay
+it started with.
 
 ## Editing the file by hand
 

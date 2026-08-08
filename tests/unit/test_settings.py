@@ -58,10 +58,12 @@ def test_text_size_default_still_matches_the_live_stylesheet():
     assert f"--xedown-text-size: {expected:g}px;" in css
 
 
-def test_refresh_delay_default_still_matches_the_live_constant():
+def test_the_controller_reads_the_refresh_delay_from_settings():
+    # A module constant could not follow a settings change, and brief 8
+    # requires a new delay to reach tabs that are already open.
     source = CONTROLLER.read_text(encoding="utf-8")
-    expected = settings.defaults()["refresh_delay_ms"]
-    assert f"REFRESH_DELAY_MS = {expected}" in source
+    assert "REFRESH_DELAY_MS = " not in source
+    assert "store.get(settings.REFRESH_DELAY_MS)" in source
 
 
 @pytest.mark.parametrize(
