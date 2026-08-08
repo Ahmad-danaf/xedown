@@ -154,7 +154,9 @@ and viewing never changes the file.
   both surfaces at once, so nothing renders while you type in Markdown mode —
   the switch back is what renders. What automatic refresh governs is a change
   reaching the document *while the preview is showing*: an undo, a
-  find-and-replace, a reload from disk.
+  find-and-replace. A reload from disk — xed's own revert, or accepting its
+  prompt after an external change — re-renders the preview regardless of this
+  setting.
 
 ## Documentation
 

@@ -126,8 +126,15 @@ preview at once, so nothing is rendered while you type in Markdown mode — the
 switch back to Preview is what renders, and it always does, whatever this is
 set to. What `auto_refresh` governs is a change that reaches the document
 *while the preview is showing*: an undo or redo, a find-and-replace, a plugin's
-edit, a reload from disk. On a very large document those re-renders are worth
-turning off.
+edit. A reload from disk — xed's own revert, or accepting its prompt after an
+external change — is not governed by it: that always re-renders the preview
+when it is showing, whatever `auto_refresh` says. On a very large document the
+re-renders `auto_refresh` does control are worth turning off.
+
+Changing `auto_refresh` itself takes effect at once, in every tab already
+open: switching it off cancels a render that is already scheduled, and
+switching it back on over a stale, visible preview renders it immediately
+rather than waiting for the next change.
 
 With `auto_refresh` set to `false`, the mode bar grows a **Refresh** button,
 marked with a dot when the preview is behind the document, and
@@ -135,9 +142,9 @@ marked with a dot when the preview is behind the document, and
 keyboard. Both work whatever `auto_refresh` says.
 
 `refresh_delay_ms` is how long xedown waits after a change before re-rendering.
-Unlike the settings above it reaches tabs that are already open: the next
-change uses the new value. A wait already under way keeps the delay it started
-with.
+Unlike `default_mode` and `remember_mode_per_file`, it reaches tabs that are
+already open: the next change uses the new value. A wait already under way
+keeps the delay it started with.
 
 ## Editing the file by hand
 

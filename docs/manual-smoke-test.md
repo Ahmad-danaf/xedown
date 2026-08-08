@@ -148,7 +148,7 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 61 | Switch to Markdown, press <kbd>Ctrl</kbd>+<kbd>A</kbd> then <kbd>Ctrl</kbd>+<kbd>C</kbd>, and paste | The Markdown source, exactly as xed has always copied it. Undo, cut and paste all still behave normally |
 | 62 | Right-click a selection in the preview | **Copy** and **Select All**, and nothing else — no Back, no Reload, no Inspect |
 | 63 | Repeat rows 58 and 62 in each of the four themes, in both light and dark | The selection stays clearly visible and legible in all eight combinations |
-| 64 | Set `"auto_refresh": false`, restart xed, open a Markdown file, and press <kbd>Ctrl</kbd>+<kbd>Z</kbd> in Preview | The mode bar shows a **Refresh** button; a dot appears beside it and the page does not change |
+| 64 | Set `"auto_refresh": false`, restart xed, open a Markdown file, switch to Markdown mode and type a line, switch to Preview (which renders it), then press <kbd>Ctrl</kbd>+<kbd>Z</kbd> | The mode bar already shows a **Refresh** button; after <kbd>Ctrl</kbd>+<kbd>Z</kbd> a dot appears beside it and the page still shows the line you typed — undone in the buffer but not re-rendered |
 | 65 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | The page catches up, the dot disappears, and the scroll position is kept |
 | 66 | Set `"default_mode": "markdown"`, restart xed, and open a Markdown file you have never opened before | It opens in Markdown mode, scrolled and with the cursor where xed put it — not jumped to the top |
 | 67 | Switch it to Preview, close the tab, and reopen the same file | It opens in Preview: the remembered mode wins over the default |
