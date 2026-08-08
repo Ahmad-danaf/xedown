@@ -14,6 +14,21 @@ def test_the_four_actions_exist_with_the_designed_accelerators():
     }
 
 
+def test_the_digit_actions_carry_a_shifted_symbol_alias():
+    # <Ctrl><Shift>1 and <Ctrl><Shift>2 are what the menu shows and a user
+    # presses, but on a layout where Shift+digit produces a symbol (US, UK,
+    # most Latin QWERTY layouts) that is never what GTK actually receives --
+    # see Action's docstring. The alias is the spelling that fires there.
+    # Toggle and Refresh are letters, unaffected by the same translation, so
+    # they carry none.
+    assert {action.name: action.aliases for action in shortcuts.ACTIONS} == {
+        shortcuts.TOGGLE: (),
+        shortcuts.PREVIEW_MODE: ("<Ctrl><Shift>exclam",),
+        shortcuts.MARKDOWN_MODE: ("<Ctrl><Shift>at",),
+        shortcuts.REFRESH: (),
+    }
+
+
 def test_the_toggle_keeps_its_v01_identity():
     # v0.1 shipped this name, label and accelerator. An upgrading user's
     # muscle memory and menu entry must not move.
@@ -27,6 +42,17 @@ def test_no_action_reuses_a_name_an_accelerator_or_a_label():
     for field in ("name", "accelerator", "label"):
         values = [getattr(action, field) for action in shortcuts.ACTIONS]
         assert len(set(values)) == len(values)
+
+    # Primary and alias accelerators share one namespace: an alias that
+    # collided with another action's primary (or another action's alias)
+    # would be just as broken as two actions sharing a primary outright, and
+    # nothing above would catch it since it only looks at `accelerator`.
+    all_accelerators = [
+        shortcuts.parse_accelerator(accel)
+        for action in shortcuts.ACTIONS
+        for accel in (action.accelerator, *action.aliases)
+    ]
+    assert len(set(all_accelerators)) == len(all_accelerators)
 
 
 def test_every_action_has_a_tooltip_and_a_mnemonic():
@@ -167,8 +193,12 @@ def test_the_extract_contains_the_accelerator_the_brief_names():
 
 
 def test_no_xedown_accelerator_collides_with_one_of_xeds():
+    # Covers aliases too, not just primaries: an alias that collided with
+    # one of xed's own accelerators would be just as broken as a primary
+    # doing so -- it is the spelling that actually fires on some layouts.
     taken = {shortcuts.parse_accelerator(a) for a in _xed()["accelerators"]}
     for action in shortcuts.ACTIONS:
-        assert (
-            shortcuts.parse_accelerator(action.accelerator) not in taken
-        ), f"{action.accelerator} ({action.name}) is already xed's"
+        for accel in (action.accelerator, *action.aliases):
+            assert (
+                shortcuts.parse_accelerator(accel) not in taken
+            ), f"{accel} ({action.name}) is already xed's"

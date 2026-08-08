@@ -16,13 +16,32 @@ REFRESH = "XedownRefreshAction"
 
 
 class Action:
-    """One entry in the View menu, and the key that reaches it."""
+    """One entry in the View menu, and the key that reaches it.
 
-    def __init__(self, name, label, accelerator, tooltip):
+    `aliases` are accelerators that mean the same thing as `accelerator` but
+    are never shown anywhere -- no menu label, no tooltip, nothing a user
+    reads. They exist because GDK translates a physical key press through
+    the keymap BEFORE comparing it against a registered accelerator: on a
+    layout where Shift+1 produces "!" (US, UK, and most Latin QWERTY
+    layouts), a real Ctrl+Shift+1 press never arrives as digit "1" with
+    Shift held -- Shift was already spent producing "!" -- so
+    `<Ctrl><Shift>1` can never match what GTK actually receives.
+    `<Ctrl><Shift>exclam` is the spelling that does. The digit stays the
+    documented, displayed primary (what a user reads and presses); the
+    alias is what makes that press actually fire. On a layout where the
+    digit arrives unshifted, the primary matches directly and the alias is
+    simply never consulted. xed itself does the same thing, registering
+    `<shift><control>question` alongside `<control>slash`. Do not delete an
+    alias as redundant with its primary -- on the layouts where it matters,
+    the alias is the ONLY one of the two that ever fires.
+    """
+
+    def __init__(self, name, label, accelerator, tooltip, aliases=()):
         self.name = name
         self.label = label
         self.accelerator = accelerator
         self.tooltip = tooltip
+        self.aliases = aliases
 
 
 ACTIONS = (
@@ -39,12 +58,18 @@ ACTIONS = (
         "Previe_w Mode",
         "<Ctrl><Shift>1",
         "Show the rendered preview",
+        # See Action's docstring: this is the shifted-symbol spelling that
+        # actually reaches GTK when Shift+1 produces "!".
+        aliases=("<Ctrl><Shift>exclam",),
     ),
     Action(
         MARKDOWN_MODE,
         "_Markdown Mode",
         "<Ctrl><Shift>2",
         "Show the Markdown source",
+        # See Action's docstring: this is the shifted-symbol spelling that
+        # actually reaches GTK when Shift+2 produces "@".
+        aliases=("<Ctrl><Shift>at",),
     ),
     Action(
         REFRESH,

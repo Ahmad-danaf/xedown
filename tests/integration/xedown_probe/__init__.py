@@ -1610,9 +1610,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     def step_accel_map(self):
         ours = set()
         for action in xedown_shortcuts.ACTIONS:
-            # Two values, not three: PyGObject returns (key, mods) here.
-            key, mods = Gtk.accelerator_parse(action.accelerator)
-            ours.add((key, int(mods)))
+            # Aliases too, not just the primary -- an alias that collided
+            # with something already in xed's own accel map would be just
+            # as broken, and it is the spelling that actually fires on the
+            # layouts where the alias exists at all.
+            for accel in (action.accelerator, *action.aliases):
+                # Two values, not three: PyGObject returns (key, mods) here.
+                key, mods = Gtk.accelerator_parse(accel)
+                ours.add((key, int(mods)))
         clashes = []
 
         def visit(_data, accel_path, accel_key, accel_mods, _changed):

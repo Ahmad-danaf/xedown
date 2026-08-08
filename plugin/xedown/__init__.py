@@ -77,6 +77,8 @@ if _HOST_AVAILABLE:
             self._ui_id = None
             self._tab_removed_handler_id = None
             self._key_press_handler_id = None
+            self._accel_group = None
+            self._alias_accels = []
 
         def do_activate(self):
             manager = self.window.get_ui_manager()
@@ -113,6 +115,17 @@ if _HOST_AVAILABLE:
                     Gtk.UIManagerItemType.MENUITEM,
                     False,
                 )
+            # Aliases ride the same accel group the menu's own accelerators
+            # use, so they are found by the same key-hash lookup a physical
+            # press goes through -- see Action's docstring in shortcuts.py
+            # for why an alias is ever needed at all. Each is connected
+            # against the same handler as its action's own accelerator, not
+            # against a menu item: an alias is never displayed, so there is
+            # no proxy widget to `activate()`.
+            self._accel_group = manager.get_accel_group()
+            for action in shortcuts.ACTIONS:
+                for alias in action.aliases:
+                    self._connect_alias(alias, handlers[action.name])
             self._tab_removed_handler_id = self.window.connect(
                 "tab-removed", self._on_tab_removed
             )
@@ -133,6 +146,18 @@ if _HOST_AVAILABLE:
             if self._tab_removed_handler_id is not None:
                 self.window.disconnect(self._tab_removed_handler_id)
                 self._tab_removed_handler_id = None
+            # Aliases are connected directly on the accel group, not through
+            # an action, so removing the action group below would not take
+            # them with it -- a leaked accel closure per alias, for the life
+            # of the window, is exactly what the shutdown harness exists to
+            # catch. Done against the group reference taken in do_activate()
+            # rather than a fresh manager.get_accel_group() call, so this
+            # does not depend on the manager still being reachable.
+            if self._accel_group is not None:
+                for key, mods in self._alias_accels:
+                    self._accel_group.disconnect_key(key, mods)
+                self._alias_accels = []
+                self._accel_group = None
             manager = self.window.get_ui_manager()
             # The manager can already be gone during window teardown.
             if manager is None or self._ui_id is None:
@@ -142,6 +167,23 @@ if _HOST_AVAILABLE:
             manager.ensure_update()
             self._ui_id = None
             self._action_group = None
+
+        def _connect_alias(self, alias, handler):
+            """Register `alias` on the window's own accel group.
+
+            No menu item exists for an alias (nothing about it is ever
+            shown), so there is no `Gtk.Action` to `activate()` the way the
+            primary accelerator's own menu item does -- this calls `handler`
+            directly instead, the same callable the action was built with.
+            """
+            key, mods = Gtk.accelerator_parse(alias)
+
+            def callback(_accel_group, _acceleratable, _keyval, _modifier):
+                handler()
+                return True
+
+            self._accel_group.connect(key, mods, Gtk.AccelFlags.VISIBLE, callback)
+            self._alias_accels.append((key, mods))
 
         def _on_tab_removed(self, _window, tab):
             # "tab-removed" fires on the SOURCE window both for a real close
