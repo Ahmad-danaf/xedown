@@ -21,11 +21,12 @@ import traceback
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Xed", "1.0")
 gi.require_version("WebKit2", "4.1")
 
-from gi.repository import Gio, GLib, GObject, Gtk, WebKit2, Xed
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, WebKit2, Xed
 
 REPORT = os.environ.get("XEDOWN_PROBE_REPORT", "/tmp/xedown-probe-report.txt")
 # Nested under the runner's own mktemp workdir when run through
@@ -58,17 +59,20 @@ TabController = None
 Mode = None
 ModeBar = None
 xedown_settings = None
+xedown_shortcuts = None
 
 
 def _lazy_imports():
-    global TabController, Mode, ModeBar, xedown_settings
+    global TabController, Mode, ModeBar, xedown_settings, xedown_shortcuts
     from xedown import settings as _settings
+    from xedown import shortcuts as _shortcuts
     from xedown.controller import TabController as _TabController
     from xedown.document_state import Mode as _Mode
     from xedown.modebar import ModeBar as _ModeBar
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_settings = _settings
+    xedown_shortcuts = _shortcuts
 
 
 def _format_line(name, passed, detail):
@@ -1249,13 +1253,21 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_txt_sensitivity(self):
-        action = self._find_action("XedownToggleAction")
-        record("xedown-action-exists", action is not None)
-        if action is not None:
-            # get_sensitive() always reads True regardless of menu state --
-            # only is_sensitive() reflects the action GROUP sensitivity that
-            # do_update_state() actually toggles.
-            record("menu-insensitive-on-txt", not action.is_sensitive())
+        for action_name in (
+            "XedownToggleAction",
+            "XedownPreviewModeAction",
+            "XedownMarkdownModeAction",
+            "XedownRefreshAction",
+        ):
+            action = self._find_action(action_name)
+            record(f"action-exists-{action_name}", action is not None)
+            if action is not None:
+                # get_sensitive() always reads True regardless of menu state
+                # -- only is_sensitive() reflects the action GROUP
+                # sensitivity that do_update_state() actually toggles.
+                record(
+                    f"menu-insensitive-on-txt-{action_name}", not action.is_sensitive()
+                )
         self.window.set_active_tab(self.tab)
         self.view.grab_focus()
         self._schedule(700, self.step_md_sensitivity)
@@ -1557,7 +1569,136 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             controller is not None and controller.state.mode is Mode.PREVIEW,
         )
         self.window.close_tab(self._saveas_orig_tab)
-        self._schedule(700, self.step_disable_prep_infobar)
+        self._schedule(700, self.step_accel_map)
+        return False
+
+    # --- the four shortcuts, pressed for real ------------------------------
+
+    def _press(self, keyval, state):
+        """Deliver a real key press to the window, as the keyboard would.
+
+        `hardware_keycode` is not decoration: GTK's accelerator lookup goes
+        through its key hash by keycode, so an event without one activates
+        nothing at all and every assertion below would be vacuous.
+        """
+        keymap = Gdk.Keymap.get_for_display(self.window.get_display())
+        ok, entries = keymap.get_entries_for_keyval(keyval)
+        event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
+        event.window = self.window.get_window()
+        event.send_event = True
+        event.time = Gtk.get_current_event_time()
+        event.state = state
+        event.keyval = keyval
+        event.hardware_keycode = entries[0].keycode if ok and entries else 0
+        event.group = entries[0].group if ok and entries else 0
+        # Confirmed live (not merely inferred) that a device is equally
+        # load-bearing: without one, xed's own log fills with
+        # `Gdk-WARNING: Event with type 8 not holding a GdkDevice` and every
+        # mode-change assertion below fails -- not because the accelerator
+        # was wrong, but because an event with no device never reaches GTK's
+        # key-press handling at all. Every real GdkEventKey carries one;
+        # this attaches the display's actual keyboard so the synthetic
+        # event is a genuine one, not a shortcut around xed's real event
+        # pipeline.
+        seat = self.window.get_display().get_default_seat()
+        if seat is not None:
+            keyboard = seat.get_keyboard()
+            if keyboard is not None:
+                event.set_device(keyboard)
+        Gtk.main_do_event(event)
+
+    def step_accel_map(self):
+        ours = set()
+        for action in xedown_shortcuts.ACTIONS:
+            # Two values, not three: PyGObject returns (key, mods) here.
+            key, mods = Gtk.accelerator_parse(action.accelerator)
+            ours.add((key, int(mods)))
+        clashes = []
+
+        def visit(_data, accel_path, accel_key, accel_mods, _changed):
+            if accel_path.startswith("<Actions>/XedownActions/"):
+                return  # our own registrations
+            if (accel_key, int(accel_mods)) in ours:
+                clashes.append(accel_path)
+
+        seen = []
+
+        def count(_data, accel_path, _key, _mods, _changed):
+            seen.append(accel_path)
+
+        Gtk.AccelMap.foreach_unfiltered(None, count)
+        # A map this small means nothing was read, which would make the
+        # assertion below pass while proving nothing.
+        record("accel-map-is-populated", len(seen) >= 10, f"paths: {len(seen)}")
+        Gtk.AccelMap.foreach_unfiltered(None, visit)
+        record("no-accelerator-clash-with-the-live-xed", not clashes, f"{clashes!r}")
+        self._schedule(400, self.step_shortcut_to_markdown)
+        return False
+
+    def step_shortcut_to_markdown(self):
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        self.view.grab_focus()
+        self._press(
+            Gdk.KEY_2, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_to_markdown_check)
+        return False
+
+    def step_shortcut_to_markdown_check(self):
+        controller = self._main_controller()
+        record("ctrl-shift-2-shows-the-source", controller.state.mode is Mode.SOURCE)
+        # Again, from the mode it is already in: a no-op, not a toggle.
+        self._press(
+            Gdk.KEY_2, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(500, self.step_shortcut_repeat_check)
+        return False
+
+    def step_shortcut_repeat_check(self):
+        controller = self._main_controller()
+        record(
+            "going-to-the-current-mode-does-nothing",
+            controller.state.mode is Mode.SOURCE,
+        )
+        self._press(
+            Gdk.KEY_1, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_to_preview_check)
+        return False
+
+    def step_shortcut_to_preview_check(self):
+        controller = self._main_controller()
+        record("ctrl-shift-1-shows-the-preview", controller.state.mode is Mode.PREVIEW)
+        # With focus inside the WebView this time, which is the case v0.1
+        # could not serve.
+        controller.preview.widget.grab_focus()
+        self._press(
+            Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        self._schedule(600, self.step_shortcut_from_preview_focus_check)
+        return False
+
+    def step_shortcut_from_preview_focus_check(self):
+        controller = self._main_controller()
+        record(
+            "shortcuts-work-with-focus-in-the-preview",
+            controller.state.mode is Mode.SOURCE,
+        )
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(500, self.step_menu_entries)
+        return False
+
+    def step_menu_entries(self):
+        for action in xedown_shortcuts.ACTIONS:
+            found = self._find_action(action.name)
+            record(f"menu-entry-exists-{action.name}", found is not None)
+            if found is not None:
+                record(
+                    f"menu-entry-sensitive-on-md-{action.name}", found.is_sensitive()
+                )
+        self._schedule(400, self.step_disable_prep_infobar)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -

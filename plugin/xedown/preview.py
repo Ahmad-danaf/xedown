@@ -133,6 +133,21 @@ class PreviewView:
             f"if (window.xedown) {{ window.xedown.scrollToAnchor({json.dumps(anchor)}); }}"
         )
 
+    def copy_selection(self):
+        """Copy the page's selection, on xedown's behalf.
+
+        Runs in the UI process, which is what keeps the existing restriction
+        intact: `javascript-can-access-clipboard` stays off and nothing in
+        the page gains clipboard access of its own. The code-block copy
+        channel above exists precisely because the page has none, and is
+        untouched by this.
+        """
+        self.widget.execute_editing_command(WebKit2.EDITING_COMMAND_COPY)
+
+    def select_all(self):
+        """Select the rendered document."""
+        self.widget.execute_editing_command(WebKit2.EDITING_COMMAND_SELECT_ALL)
+
     def _run(self, script):
         try:
             self.widget.run_javascript(script, None, None, None)

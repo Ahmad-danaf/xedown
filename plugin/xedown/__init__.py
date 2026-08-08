@@ -12,6 +12,7 @@ __version__ = "0.1.0"
 try:
     import gi
 
+    gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
     gi.require_version("Xed", "1.0")
     _HOST_AVAILABLE = True
@@ -22,9 +23,11 @@ except (ImportError, ValueError) as exc:  # pragma: no cover - host-only path
     )
 
 if _HOST_AVAILABLE:
-    from gi.repository import GLib, GObject, Gtk, Xed
+    from gi.repository import Gdk, GLib, GObject, Gtk, Xed
 
+    from . import shortcuts
     from .controller import TabController
+    from .document_state import Mode
 
     MENU_PATH = "/MenuBar/ViewMenu/ViewOps_1"
     _CONTROLLER_ATTRIBUTE = "_xedown_controller"
@@ -50,6 +53,16 @@ if _HOST_AVAILABLE:
         if hasattr(view, _CONTROLLER_ATTRIBUTE):
             delattr(view, _CONTROLLER_ATTRIBUTE)
 
+    def _focus_is_editable(window):
+        """True when this keystroke belongs to something the user types into.
+
+        xed's find bar, the file browser's rename entry and any dialog entry
+        are `GtkEditable`s; the source view is a `GtkTextView`. Copy in any of
+        them is theirs, not the preview's.
+        """
+        focus = window.get_focus()
+        return isinstance(focus, (Gtk.Editable, Gtk.TextView))
+
     class XedownWindowActivatable(GObject.Object, Xed.WindowActivatable):
         """Owns the View-menu entry, the toggle accelerator, and the
         per-tab-close cleanup safety net (see `_deactivate_view`)."""
@@ -63,37 +76,60 @@ if _HOST_AVAILABLE:
             self._action_group = None
             self._ui_id = None
             self._tab_removed_handler_id = None
+            self._key_press_handler_id = None
 
         def do_activate(self):
             manager = self.window.get_ui_manager()
             self._action_group = Gtk.ActionGroup(name="XedownActions")
+            handlers = {
+                shortcuts.TOGGLE: self.toggle_preview,
+                shortcuts.PREVIEW_MODE: self.show_preview,
+                shortcuts.MARKDOWN_MODE: self.show_markdown,
+                shortcuts.REFRESH: self.refresh_preview,
+            }
             self._action_group.add_actions(
                 [
                     (
-                        "XedownToggleAction",
+                        action.name,
                         None,
-                        "Toggle Markdown _Preview",
-                        "<Ctrl><Shift>M",
-                        "Switch between the rendered preview and the Markdown source",
-                        self.toggle_preview,
+                        action.label,
+                        action.accelerator,
+                        action.tooltip,
+                        handlers[action.name],
                     )
+                    for action in shortcuts.ACTIONS
                 ]
             )
             manager.insert_action_group(self._action_group)
             self._ui_id = manager.new_merge_id()
-            manager.add_ui(
-                self._ui_id,
-                MENU_PATH,
-                "XedownToggleAction",
-                "XedownToggleAction",
-                Gtk.UIManagerItemType.MENUITEM,
-                False,
-            )
+            # One merge id for all four, so do_deactivate takes them out the
+            # same way it always did -- together.
+            for action in shortcuts.ACTIONS:
+                manager.add_ui(
+                    self._ui_id,
+                    MENU_PATH,
+                    action.name,
+                    action.name,
+                    Gtk.UIManagerItemType.MENUITEM,
+                    False,
+                )
             self._tab_removed_handler_id = self.window.connect(
                 "tab-removed", self._on_tab_removed
             )
+            # Connected rather than connected-after on purpose: GtkWindow's
+            # own class handler is what activates accelerators, and for a
+            # RUN_LAST signal it runs after ordinary handlers. Returning True
+            # from here is the only way to stop xed's Ctrl+C from reaching
+            # the hidden source buffer while the preview is what the user is
+            # looking at.
+            self._key_press_handler_id = self.window.connect(
+                "key-press-event", self._on_key_press
+            )
 
         def do_deactivate(self):
+            if self._key_press_handler_id is not None:
+                self.window.disconnect(self._key_press_handler_id)
+                self._key_press_handler_id = None
             if self._tab_removed_handler_id is not None:
                 self.window.disconnect(self._tab_removed_handler_id)
                 self._tab_removed_handler_id = None
@@ -142,10 +178,64 @@ if _HOST_AVAILABLE:
             view = self.window.get_active_view()
             return getattr(view, _CONTROLLER_ATTRIBUTE, None) if view else None
 
-        def toggle_preview(self, *_args):
+        def _on_key_press(self, _window, event):
+            """Give copy and select-all to whichever surface is visible.
+
+            Two cheap tests before anything else is looked at, because this
+            sees every key press in the window; `shortcuts.route_key` remains
+            the authority on what the press means.
+            """
+            key_name = (
+                Gdk.keyval_name(Gdk.keyval_to_lower(event.keyval)) or ""
+            ).lower()
+            control_only = (
+                event.state & Gtk.accelerator_get_default_mod_mask()
+            ) == Gdk.ModifierType.CONTROL_MASK
+            if not control_only or key_name not in shortcuts.HANDLED_KEYS:
+                return False
+
             controller = self._active_controller()
-            if controller is not None and controller.is_markdown:
+            action = shortcuts.route_key(
+                key_name,
+                control_only=control_only,
+                focus_is_editable=_focus_is_editable(self.window),
+                previewing=controller is not None and controller.is_previewing,
+            )
+            if action is None:
+                return False
+            if action is shortcuts.KeyAction.COPY:
+                controller.preview.copy_selection()
+            else:
+                controller.preview.select_all()
+            return True
+
+        def _markdown_controller(self):
+            controller = self._active_controller()
+            return (
+                controller
+                if controller is not None and controller.is_markdown
+                else None
+            )
+
+        def toggle_preview(self, *_args):
+            controller = self._markdown_controller()
+            if controller is not None:
                 controller.toggle()
+
+        def show_preview(self, *_args):
+            controller = self._markdown_controller()
+            if controller is not None:
+                controller.set_mode(Mode.PREVIEW)
+
+        def show_markdown(self, *_args):
+            controller = self._markdown_controller()
+            if controller is not None:
+                controller.set_mode(Mode.SOURCE)
+
+        def refresh_preview(self, *_args):
+            controller = self._markdown_controller()
+            if controller is not None:
+                controller.refresh_now()
 
     class XedownViewActivatable(GObject.Object, Xed.ViewActivatable):
         """One controller per view — this is the per-tab ownership boundary.

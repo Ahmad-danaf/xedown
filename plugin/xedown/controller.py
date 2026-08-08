@@ -136,6 +136,16 @@ class TabController:
     def is_markdown(self):
         return is_markdown_path(self._document_path())
 
+    @property
+    def is_previewing(self):
+        """The preview is the surface the user is looking at, in this tab."""
+        return (
+            self._built
+            and self.preview is not None
+            and self.state.mode is Mode.PREVIEW
+            and self.is_markdown
+        )
+
     def _document_path(self):
         location = self.document.get_location()
         return location.get_path() if location is not None else None
