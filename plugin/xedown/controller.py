@@ -216,8 +216,10 @@ class TabController:
         """The mode this file opens in.
 
         A remembered mode wins when remembering is on; otherwise the default.
-        Anything unusable falls back silently -- the brief's rule is that a
-        mode which cannot be determined must not interrupt the user.
+        Anything unusable falls back silently: which mode a file opens in is
+        not worth a dialog or a warning, so a value that cannot be determined
+        is treated the same as one that was never set, rather than stopping
+        the file from opening cleanly.
         """
         store = settings.get_settings()
         if store.get(settings.REMEMBER_MODE_PER_FILE):
@@ -235,10 +237,10 @@ class TabController:
     def set_mode(self, mode, initial=False):
         """Show `mode`. `initial` is the build-time call, which is different.
 
-        Going to the mode you are already in does nothing: the brief says so,
-        and re-running the branches below would re-grab focus and re-file the
-        mode for no reason. The build-time call is exempt, because that is
-        the call that first makes one of the two widgets visible.
+        Going to the mode you are already in does nothing: re-running the
+        branches below would re-grab focus and re-file the mode for no
+        change anyone would see. The build-time call is exempt, because that
+        is the call that first makes one of the two widgets visible.
 
         `initial` also suppresses three things that would each be a
         regression on a file opening in Markdown mode: restoring the source
@@ -297,7 +299,9 @@ class TabController:
 
         Nothing to do in Markdown mode: the preview is already stale and
         switching to it renders. Rendering into a hidden WebView to reach the
-        same state would be the hidden re-rendering the brief forbids.
+        same state would be work the user cannot see happen -- exactly the
+        eager, unseen rendering that turning `auto_refresh` off is meant to
+        avoid, done anyway just with an extra step in front of it.
         """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return
@@ -305,10 +309,19 @@ class TabController:
         self._refresh_body_now()
 
     def _update_refresh_cue(self):
-        """Keep the bar's refresh control telling the truth."""
+        """Keep the bar's refresh control telling the truth.
+
+        Visible only where clicking it would do something: `refresh_now`
+        is a no-op outside Preview mode (typing in Markdown mode already
+        leaves the preview stale, and switching back is what renders it),
+        so a control that appeared there anyway would sit stale-marked and
+        unresponsive for as long as the user kept editing.
+        """
         if self.modebar is None:
             return
-        self.modebar.set_refresh_visible(not self._auto_refresh)
+        self.modebar.set_refresh_visible(
+            not self._auto_refresh and self.state.mode is Mode.PREVIEW
+        )
         self.modebar.set_stale(self.state.preview_stale)
 
     def _on_refresh_requested(self, _bar):

@@ -143,10 +143,14 @@ open: switching it off cancels a render that is already scheduled, and
 switching it back on over a stale, visible preview renders it immediately
 rather than waiting for the next change.
 
-With `auto_refresh` set to `false`, the mode bar grows a **Refresh** button,
-marked with a dot when the preview is behind the document, and
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> does the same thing from the
-keyboard. Both work whatever `auto_refresh` says.
+With `auto_refresh` set to `false`, the mode bar grows a **Refresh** button
+while the preview is showing, marked with a dot when the preview is behind
+the document, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> does the same
+thing from the keyboard. Both work whatever `auto_refresh` says, but both act
+on the preview itself, so neither does anything in Markdown mode: the button
+does not appear there at all, and the shortcut is a no-op — switching back to
+Preview is what renders, exactly as it always does regardless of this
+setting.
 
 `refresh_delay_ms` is how long xedown waits after a change before re-rendering.
 Unlike `default_mode` — the one setting on this page whose effect is entirely

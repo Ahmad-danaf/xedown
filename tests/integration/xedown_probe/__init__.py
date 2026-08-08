@@ -60,12 +60,17 @@ Mode = None
 ModeBar = None
 xedown_settings = None
 xedown_shortcuts = None
+xedown_stylewatcher = None
+XedownWindowActivatable = None
 
 
 def _lazy_imports():
     global TabController, Mode, ModeBar, xedown_settings, xedown_shortcuts
+    global xedown_stylewatcher, XedownWindowActivatable
+    from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import settings as _settings
     from xedown import shortcuts as _shortcuts
+    from xedown import stylewatcher as _stylewatcher
     from xedown.controller import TabController as _TabController
     from xedown.document_state import Mode as _Mode
     from xedown.modebar import ModeBar as _ModeBar
@@ -73,6 +78,8 @@ def _lazy_imports():
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_settings = _settings
     xedown_shortcuts = _shortcuts
+    xedown_stylewatcher = _stylewatcher
+    XedownWindowActivatable = _XedownWindowActivatable
 
 
 def _format_line(name, passed, detail):
@@ -189,6 +196,26 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             action = group.get_action(name)
             if action is not None:
                 return action
+        return None
+
+    def _find_window_activatable(self):
+        """The live `XedownWindowActivatable` for this probe's window.
+
+        Neither `Xed.Window` nor `Peas.Engine` exposes the per-window
+        extension set peas builds it from -- checked directly against both
+        introspected APIs, nothing on either even hints at one -- so `gc` is
+        the only route from here to the object Fix 2's teardown assertions
+        need: the one holding the window-level key-press handler id and the
+        alias accelerator bookkeeping. Same spirit as the rest of this probe
+        reaching past behaviour into internal state, just one level further
+        out, since the object under test lives outside this probe's own
+        reference graph entirely.
+        """
+        import gc
+
+        for obj in gc.get_objects():
+            if isinstance(obj, XedownWindowActivatable) and obj.window is self.window:
+                return obj
         return None
 
     def _activate_named_action(self, name):
@@ -1809,6 +1836,15 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "infobar-live-immediately-before-disable",
             self._pre_disable_info_bar is not None,
         )
+        # Captured now, held on the probe rather than re-found after
+        # disable: do_deactivate() clears this object's own bookkeeping but
+        # does not stop existing, so a reference taken here is what lets
+        # step_disable_check still ask it anything once the plugin is gone.
+        self._window_activatable = self._find_window_activatable()
+        record(
+            "window-activatable-found-before-disable",
+            self._window_activatable is not None,
+        )
         self._schedule(300, self.step_disable_plugin)
         return False
 
@@ -1860,6 +1896,32 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "disable-no-settings-listeners-left",
             store is not None and not store._listeners,
             f"listeners left: {sorted(getattr(store, '_listeners', {}))!r}",
+        )
+        # Same claim as the settings store above, for the stylesheet watcher:
+        # it is the other long-lived global every controller subscribes to,
+        # and a missed disconnect there is just as much of a leak.
+        watcher = xedown_stylewatcher.get_watcher()
+        record(
+            "disable-no-stylewatcher-listeners-left",
+            not watcher._listeners,
+            f"listeners left: {sorted(watcher._listeners)!r}",
+        )
+        # The accelerator-closure leak Fix 2 exists to catch: a leaked alias
+        # closure holds a bound method of XedownWindowActivatable, which
+        # holds the window, and none of it shows up as terminal output --
+        # the shutdown harness proving the log stays silent cannot tell that
+        # apart from this actually being torn down. Checked on the instance
+        # captured before disable, since the object itself has no reason to
+        # stop existing just because do_deactivate() ran.
+        activatable = getattr(self, "_window_activatable", None)
+        record(
+            "disable-key-press-handler-cleared",
+            activatable is not None and activatable._key_press_handler_id is None,
+        )
+        record(
+            "disable-alias-accels-cleared",
+            activatable is not None and not activatable._alias_accels,
+            f"aliases left: {getattr(activatable, '_alias_accels', None)!r}",
         )
         self._schedule(300, self.step_settle_before_exit)
         return False

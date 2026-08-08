@@ -4,9 +4,10 @@ Shaped like `settings.py` on purpose: a process-wide singleton, an atomic
 write, and a broad handler wherever untrusted data flows. It diverges in one
 respect, deliberately. `settings.json` is the user's own file, so a store that
 cannot be used is quarantined and reported; this file is state xedown derived
-and can regenerate, and the brief requires that a mode which cannot be
-determined falls back to the default *without interrupting the user*. So a
-store that cannot be used loads empty, keeps no copy, and says nothing.
+and can regenerate, and which mode a file opens in is not worth a dialog or a
+warning -- a mode that cannot be determined must fall back to the default
+*without interrupting the user*. So a store that cannot be used loads empty,
+keeps no copy, and says nothing.
 
 Bounded on purpose too: remembering must not grow without end as a user opens
 more files over months. The newest `MAX_ENTRIES` survive a write and the rest
@@ -137,6 +138,14 @@ class ModeStore:
         over the same file, and must not have its memory erased by ours. Ours
         win a conflicting path: the last mode set is the one the user chose
         most recently in the process doing the writing.
+
+        `removed` is how `forget()` and `rename()` keep that same merge from
+        undoing them. Both have already dropped a path from `self._entries`
+        before calling this; without `removed` naming that path, the merge
+        below would find it only in the on-disk copy, read it as an entry
+        some other process is still holding, and write it straight back in --
+        indistinguishable, from here, from a real conflicting write by
+        another process.
 
         A failure is swallowed. The mode stays live for this session and is
         simply not there next time; there is no surface in this brief on

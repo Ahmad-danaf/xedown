@@ -95,10 +95,49 @@ def test_different_accelerators_stay_different(first, second):
     assert shortcuts.parse_accelerator(first) != shortcuts.parse_accelerator(second)
 
 
-def test_handled_keys_is_exactly_what_route_key_answers_for():
-    assert shortcuts.HANDLED_KEYS == frozenset(
-        shortcuts.COPY_KEYS + shortcuts.SELECT_ALL_KEYS
+def test_every_key_route_key_answers_for_is_in_handled_keys():
+    # __init__.py's `_on_key_press` only ever calls `route_key` for a key
+    # already in `HANDLED_KEYS` -- that short-circuit is what keeps every
+    # other key press in the window from paying for a full route_key call,
+    # but it also means a key route_key WOULD answer for, that HANDLED_KEYS
+    # does not list, would never reach route_key at all: not merely
+    # untested, silently unreachable. This drives route_key itself over a
+    # broad keyspace under the one call shape that can make it answer
+    # (control held, focus elsewhere, previewing) and checks the actual
+    # containment property, rather than re-deriving HANDLED_KEYS from the
+    # same two tuples it is built from -- which is true by construction and
+    # cannot fail no matter how badly the two drift apart.
+    keyspace = (
+        [chr(c) for c in range(ord("a"), ord("z") + 1)]
+        + [str(digit) for digit in range(10)]
+        + [
+            "insert",
+            "delete",
+            "tab",
+            "space",
+            "escape",
+            "return",
+            "home",
+            "end",
+            "page_up",
+            "page_down",
+            "up",
+            "down",
+            "left",
+            "right",
+        ]
+        + [f"f{n}" for n in range(1, 13)]
     )
+    for key_name in keyspace:
+        action = shortcuts.route_key(
+            key_name, control_only=True, focus_is_editable=False, previewing=True
+        )
+        if action is not None:
+            assert key_name in shortcuts.HANDLED_KEYS, (
+                f"route_key answers for {key_name!r} but HANDLED_KEYS omits "
+                "it, so __init__.py's short-circuit would never let it reach "
+                "route_key at all"
+            )
 
 
 def _route(**overrides):

@@ -106,6 +106,12 @@ def test_forget_removes_one_entry(path):
         "[]",
         '{"version": 99, "modes": [["/a.md", "markdown"]]}',
         '{"version": 1, "modes": "not a list"}',
+        # Looks like it targets read_text's UnicodeDecodeError branch, but
+        # write_text's errors="ignore" only ever affects the ENCODE side, and
+        # utf-8 can encode any Unicode code point -- so this string round-trips
+        # to valid UTF-8 ("ÿþ not utf-8 at all") and actually exercises the
+        # json.loads failure below, same as "{" above. The decode branch has
+        # its own case, test_a_store_with_invalid_utf8_bytes_loads_empty_and_silently.
         "\xff\xfe not utf-8 at all",
     ],
 )
@@ -115,6 +121,17 @@ def test_an_unusable_store_loads_empty_and_silently(path, text, capsys):
     assert store.get("/a.md") is None
     # Derived state, not the user's own file: no quarantine copy, and no
     # noise. The brief requires falling back without interrupting the user.
+    assert not path.with_name(path.name + ".corrupt").exists()
+    assert capsys.readouterr().err == ""
+
+
+def test_a_store_with_invalid_utf8_bytes_loads_empty_and_silently(path, capsys):
+    # write_bytes, not write_text: this is the only way to put bytes on disk
+    # that read_text's own decode actually rejects, which is what the
+    # "\xff\xfe not utf-8 at all" case above looks like it does and does not.
+    path.write_bytes(b"\xff\xfe not utf-8 at all")
+    store = modestore.ModeStore(path)
+    assert store.get("/a.md") is None
     assert not path.with_name(path.name + ".corrupt").exists()
     assert capsys.readouterr().err == ""
 

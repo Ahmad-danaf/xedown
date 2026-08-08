@@ -183,3 +183,30 @@ files have been opened, and deleting that file forgets all of them.
 `"remember_mode_per_file": false` turns the whole feature off.
 
 **Status:** by design, bounded.
+
+## Copy and select-all in the preview fall back to xed's own shortcut on a non-Latin keyboard layout
+
+**What you see:** with the preview showing, <kbd>Ctrl</kbd>+<kbd>C</kbd> and
+<kbd>Ctrl</kbd>+<kbd>A</kbd> copy and select the Markdown *source* instead of
+the rendered preview, on a keyboard set to a non-Latin layout (Cyrillic,
+Greek, Arabic, and others) — the exact wrong-surface mix-up xedown's own key
+handling exists to prevent, on this one class of layout.
+
+**Why:** GDK delivers a key event's `keyval` already translated through the
+active layout — the same mechanism that lets a user on an AZERTY layout reach
+`A` where their layout puts it. `XedownWindowActivatable._on_key_press`
+(`plugin/xedown/__init__.py`) compares that translated keyval's name against
+a fixed set of Latin key names, `shortcuts.HANDLED_KEYS`. On a layout where
+the physical Ctrl+C key produces a Cyrillic, Greek or Arabic letter, that
+name never matches, so `_on_key_press` declines the event and it falls
+through to xed's own Copy and Select All, which act on the hidden source
+buffer regardless of which surface is on screen.
+
+**What to do about it:** right-click the preview. Its context menu offers
+Copy (when something is selected) and Select All, driven by the mouse rather
+than a keysym, so it is unaffected by layout. Switching to Markdown mode also
+copies correctly, since that is the surface xed's fallback actually reaches.
+
+**Status:** known limitation, degrading to v0.1 behaviour rather than
+breaking. A real fix needs matching on hardware keycode instead of
+translated keyval, which is a larger change than this fix belongs in.
