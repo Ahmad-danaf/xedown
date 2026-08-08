@@ -34,6 +34,16 @@ for real (via the same `active-plugins` gsettings key the Preferences dialog use
 confirming the `_xedown_controller` attribute is fully removed, several independent
 Markdown tabs, and `Gtk.Action.is_sensitive()` on both a `.md` and a `.txt` tab. Run it
 first — it takes a couple of minutes and catches regressions in exactly those hazards.
+Point it at the same archive, for the same reason as the shutdown harness above:
+
+```bash
+XEDOWN_INSTALL_FROM_ARCHIVE="$ARCHIVE" scripts/run-integration-tests.sh
+```
+
+Run it that way rather than plainly, same as the shutdown harness — a normal run
+installs the working tree and leaves it installed, which would quietly turn every
+row below into a test of the working tree instead of the artifact you are about to
+ship.
 
 Some rows below cover ground the harnesses also touch. They are kept deliberately, for
 what a human's eyes catch that a structural assertion cannot — a visual glitch, an

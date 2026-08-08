@@ -24,7 +24,10 @@
 #   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.1.0.tar.gz scripts/run-shutdown-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being tested is the artifact users download. Build it with
-#         scripts/build-release.sh first.
+#         scripts/build-release.sh first. The archive is staged and
+#         validated in a scratch directory before anything already
+#         installed is touched, so a mistyped path (the path embeds a
+#         version number) cannot destroy a working install.
 #
 # Other knobs, all for investigating a failure rather than everyday use:
 #   XEDOWN_KEEP_LOGS=1              keep each scenario's xed.log on success
@@ -36,6 +39,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="$HOME/.local/share/xed/plugins"
 WORKDIR="$(mktemp -d)"
+STAGE="$(mktemp -d)"
 SAVED_PLUGINS=""
 XED_PID=""
 CONTROL="${XEDOWN_CONTROL:-0}"
@@ -105,6 +109,7 @@ cleanup() {
   fi
   rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" \
          "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
+  rm -rf "$STAGE"
   # A control run deliberately uninstalls xedown. Put it back unconditionally:
   # active-plugins still lists xedown (it is restored just above), so leaving
   # the directory missing would hand back an editor configured to load a
@@ -132,27 +137,53 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$PLUGIN_DIR"
-rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
 # Always re-copy: an edited working tree with a stale installed copy silently
 # tests the wrong code, which has bitten this project before.
 if [ "$CONTROL" = "1" ]; then
   echo "### CONTROL RUN: xedown is NOT installed for these scenarios ###"
-elif [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
-  # Test the artifact users actually download, not the working tree it was
-  # built from. The two are supposed to be identical; this is how you find
-  # out when they are not.
-  if [ ! -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
-    echo "No such archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
-    exit 1
+  rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+else
+  if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
+    # Test the artifact users actually download, not the working tree it was
+    # built from. The two are supposed to be identical; this is how you find
+    # out when they are not.
+    if [ ! -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
+      echo "No such archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
+      exit 1
+    fi
+    echo "### Staging release archive: $XEDOWN_INSTALL_FROM_ARCHIVE ###"
+    tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$STAGE"
+  else
+    cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$STAGE/"
   fi
-  echo "### Installing from release archive: $XEDOWN_INSTALL_FROM_ARCHIVE ###"
-  tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
-  if [ ! -f "$PLUGIN_DIR/xedown.plugin" ] || [ ! -d "$PLUGIN_DIR/xedown" ]; then
+
+  # Validate the staged copy before touching the live plugin directory at
+  # all -- same stage/validate/commit shape as scripts/build-release.sh. A
+  # mistyped archive path, or one that doesn't unpack into a usable plugin,
+  # must never take down whatever is already installed there; the checks
+  # below run entirely against $STAGE, so nothing under $PLUGIN_DIR is
+  # touched until both pass. (cleanup()'s own reinstall-with-fallback below
+  # is a separate, smaller safety net for a run interrupted after this
+  # point, not a substitute for validating first.)
+  if [ ! -f "$STAGE/xedown.plugin" ] || [ ! -d "$STAGE/xedown" ]; then
     echo "That archive did not unpack into a usable plugin." >&2
     exit 1
   fi
-else
-  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  # Nothing but the plugin itself should land in a user's plugins directory
+  # -- catches a malformed archive that also drops something else at its
+  # root alongside the two entries expected.
+  UNEXPECTED="$(find "$STAGE" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
+  if [ -n "$UNEXPECTED" ]; then
+    echo "Refusing to install: unexpected entries alongside the plugin:" >&2
+    printf '%s\n' "$UNEXPECTED" | sed 's/^/  /' >&2
+    exit 1
+  fi
+
+  if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
+    echo "### Installing from release archive: $XEDOWN_INSTALL_FROM_ARCHIVE ###"
+  fi
+  rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+  cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 fi
 rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
 cp -r "$ROOT/tests/integration/xedown_shutdown_probe" \

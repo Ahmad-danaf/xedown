@@ -7,12 +7,16 @@
 #         thing being probed is the artifact users download. Build it with
 #         scripts/build-release.sh first. Without this, the working tree is
 #         always installed, even over a copy of the archive placed there by
-#         hand beforehand.
+#         hand beforehand. The archive is staged and validated in a scratch
+#         directory before anything already installed is touched, so a
+#         mistyped path (the path embeds a version number) cannot destroy a
+#         working install.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="$HOME/.local/share/xed/plugins"
 WORKDIR="$(mktemp -d)"
+STAGE="$(mktemp -d)"
 REPORT="$WORKDIR/report.txt"
 SAMPLE="$WORKDIR/sample.md"
 XED_LOG="$WORKDIR/xed.log"
@@ -51,6 +55,19 @@ cleanup() {
     fi
   fi
   rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin"
+  rm -rf "$STAGE"
+  # Whatever this run was testing, leave a working plugin installed on exit.
+  # An interrupted run -- Ctrl+C mid-copy, a crash between the two lines
+  # below that replace the live directory -- must not leave the user with
+  # nothing where their xedown used to be. Mirrors
+  # run-shutdown-tests.sh's cleanup(); the two scripts are meant to stay in
+  # step on this.
+  rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+  if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ] && [ -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
+    tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
+  else
+    cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  fi
   if [ -n "$XED_PID" ] && kill -0 "$XED_PID" 2>/dev/null; then
     echo "xed (pid $XED_PID) is still running at exit; killing it." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
@@ -62,7 +79,6 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$PLUGIN_DIR"
-rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
 if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
   # Test the artifact users actually download, not the working tree it was
   # built from. The two are supposed to be identical; this is how you find
@@ -71,15 +87,35 @@ if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
     echo "No such archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
     exit 1
   fi
-  echo "==> Installing from release archive: $XEDOWN_INSTALL_FROM_ARCHIVE"
-  tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$PLUGIN_DIR"
-  if [ ! -f "$PLUGIN_DIR/xedown.plugin" ] || [ ! -d "$PLUGIN_DIR/xedown" ]; then
-    echo "That archive did not unpack into a usable plugin." >&2
-    exit 1
-  fi
+  echo "==> Staging release archive: $XEDOWN_INSTALL_FROM_ARCHIVE"
+  tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$STAGE"
 else
-  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$STAGE/"
 fi
+
+# Validate the staged copy before touching the live plugin directory at all
+# -- same stage/validate/commit shape as scripts/build-release.sh. A
+# mistyped archive path, or one that doesn't unpack into a usable plugin,
+# must never take down whatever is already installed there; the checks
+# below run entirely against $STAGE, so nothing under $PLUGIN_DIR is
+# touched until both pass.
+if [ ! -f "$STAGE/xedown.plugin" ] || [ ! -d "$STAGE/xedown" ]; then
+  echo "That archive did not unpack into a usable plugin." >&2
+  exit 1
+fi
+# Nothing but the plugin itself should land in a user's plugins directory --
+# catches a malformed archive that also drops something else at its root
+# alongside the two entries expected.
+UNEXPECTED="$(find "$STAGE" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
+if [ -n "$UNEXPECTED" ]; then
+  echo "Refusing to install: unexpected entries alongside the plugin:" >&2
+  printf '%s\n' "$UNEXPECTED" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+echo "==> Installing the validated copy into $PLUGIN_DIR"
+rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 cp -r "$ROOT/tests/integration/xedown_probe" \
       "$ROOT/tests/integration/xedown_probe.plugin" "$PLUGIN_DIR/"
 
