@@ -104,9 +104,16 @@ direction, whatever the document is written in.
 
 `default_mode` decides how a Markdown file opens. `remember_mode_per_file`, on
 by default, overrides it with whichever mode that file was last left in; a file
-xedown has never opened uses the default. Changing either affects the *next*
-file you open — a tab already in front of you is never switched out from under
-you.
+xedown has never opened uses the default. Which mode a file opens in changes
+only for the *next* file you open, for both settings — a tab already in front
+of you is never switched out from under you.
+
+Switching `remember_mode_per_file` on does have one immediate effect, though:
+every tab already open has its current mode recorded at once, so each of
+those files already carries that mode the next time you open it, with no need
+to switch anything in it yourself first. `default_mode` has no such effect —
+it is read only when a tab is built, so changing it never touches a tab that
+is already open, in any way.
 
 Remembered modes live in `~/.config/xedown/modes.json`, beside this file. It
 holds the 200 most recently used files, newest first, and older entries fall
@@ -142,9 +149,10 @@ marked with a dot when the preview is behind the document, and
 keyboard. Both work whatever `auto_refresh` says.
 
 `refresh_delay_ms` is how long xedown waits after a change before re-rendering.
-Unlike `default_mode` and `remember_mode_per_file`, it reaches tabs that are
-already open: the next change uses the new value. A wait already under way
-keeps the delay it started with.
+Unlike `default_mode` — the one setting on this page whose effect is entirely
+deferred to the next file you open — it reaches tabs that are already open:
+the next change uses the new value. A wait already under way keeps the delay
+it started with.
 
 ## Editing the file by hand
 
