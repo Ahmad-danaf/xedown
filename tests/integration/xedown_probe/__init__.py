@@ -145,12 +145,26 @@ def _long_markdown():
     `<mark>` elements whose concatenated text is the original nine
     characters, spaces included. Plain digits, not "Paragraph"/"Filler", so
     it changes neither count the search steps already pin.
+
+    The `İstanbul` line is for one specific hazard, and it sits ahead of
+    everything else deliberately. U+0130 is the only character in Unicode
+    whose UTF-16 length changes under `String.prototype.toLowerCase` (it
+    becomes two units), so a case-insensitive search that lowercased the
+    whole flattened text at once left the haystack one unit longer than the
+    per-character map and shifted every match position after it. The count
+    stayed correct, which is what made it invisible -- so putting this line
+    FIRST puts every other search assertion in this fixture downstream of the
+    shift as well, and `step_dotted_capital_check` below is the one that
+    compares the marked text itself rather than only counting it. "sentinel"
+    appears nowhere else in this document, and the line contains neither
+    "Paragraph" nor "Filler", so it moves no count already pinned.
     """
     paragraphs = "\n\n".join(
         f"Paragraph {i}. Filler text to build page height. " * 3 for i in range(120)
     )
     return (
         "# Scroll Test\n\nAn **emphasised** phrase for the search.\n\n"
+        "İstanbul stands before this sentinel.\n\n"
         + paragraphs
         + "\n\n```python\n42    100\n```\n"
     )
@@ -2395,7 +2409,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 f"marks: {payload.get('marks')}, "
                 f"matched text: {payload.get('matchText')!r}{failure}",
             )
-            self._schedule(400, self.step_moved_tab_search_open)
+            self._schedule(400, self.step_dotted_capital_query)
 
         preview.widget.run_javascript(
             "JSON.stringify({"
@@ -2409,6 +2423,152 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             on_result,
             None,
         )
+        return False
+
+    # --- a dotted capital must not shift the marks off the match -----------
+    #
+    # U+0130 is the one character whose UTF-16 length changes under
+    # toLowerCase, so folding the whole flattened string at once left every
+    # match position after one a character out of step with the map those
+    # positions are turned back into DOM ranges through -- while still
+    # reporting the right count, because the count is computed in haystack
+    # coordinates. A count-only assertion therefore cannot see it at all:
+    # this one reads the marked text back and compares it with the query.
+    # `İstanbul` sits at the top of the fixture (see _long_markdown), so the
+    # shift is upstream of every other search assertion here too.
+
+    def step_dotted_capital_query(self):
+        controller = self._main_controller()
+        # The bar is still open from the whitespace step above, and still
+        # case-insensitive -- step_search_case_check put the toggle back.
+        # Case-insensitive is the whole point: the case-sensitive path never
+        # folds anything and was never affected.
+        controller.searchbar.set_query("sentinel")
+        self._schedule(900, self.step_dotted_capital_check)
+        return False
+
+    def step_dotted_capital_check(self):
+        controller = self._main_controller()
+        preview = controller.preview
+
+        def on_result(webview, result, _user_data):
+            payload, failure = {}, ""
+            try:
+                value = webview.run_javascript_finish(result)
+                payload = json.loads(value.get_js_value().to_string())
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                failure = f"<error: {exc}>"
+            record(
+                "a-dotted-capital-does-not-shift-the-marks",
+                controller.search.total == 1
+                and payload.get("marks") == 1
+                and payload.get("markText") == "sentinel"
+                and not failure,
+                f"session total: {controller.search.total}, "
+                f"marks: {payload.get('marks')}, "
+                f"marked text: {payload.get('markText')!r}{failure}",
+            )
+            self._schedule(400, self.step_debounce_escape_setup)
+
+        preview.widget.run_javascript(
+            "JSON.stringify({"
+            "marks: document.querySelectorAll('mark.xedown-match').length,"
+            "markText: Array.prototype.map.call("
+            "document.querySelectorAll('mark.xedown-match'),"
+            "function (m) { return m.textContent; }"
+            ").join('')"
+            "})",
+            None,
+            on_result,
+            None,
+        )
+        return False
+
+    # --- a keystroke landing after Escape must not re-mark a closed search --
+    #
+    # GtkSearchEntry debounces `search-changed` by ~150 ms and cancels
+    # nothing when the bar closes, so a query typed and then abandoned inside
+    # that window arrives at the controller after close_search() has already
+    # cleared the session and taken the marks out -- and used to be acted on,
+    # because a non-empty query against an empty session is a new search.
+    # Every other Escape check here waits out the debounce by construction,
+    # which is exactly why none of them can see it: the typing and the Escape
+    # below happen in the SAME main-loop turn, with no _schedule between.
+
+    def step_debounce_escape_setup(self):
+        controller = self._main_controller()
+        # Focus in the entry, which is where a user typing a query is.
+        controller.searchbar.focus_entry()
+        self._schedule(400, self.step_debounce_escape_race)
+        return False
+
+    def step_debounce_escape_race(self):
+        controller = self._main_controller()
+        controller.searchbar.set_query("Paragraph")
+        self._press(Gdk.KEY_Escape, Gdk.ModifierType(0))
+        # Well past the entry's ~150 ms debounce, and past the page search it
+        # would have provoked.
+        self._schedule(900, self.step_debounce_escape_check)
+        return False
+
+    def step_debounce_escape_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "a-debounced-keystroke-cannot-re-mark-a-closed-search",
+                payload["total"] == 0 and not controller.is_searching,
+                f"marks left: {payload['total']}, "
+                f"is_searching: {controller.is_searching}",
+            )
+            self._schedule(400, self.step_bar_button_escape_setup)
+
+        self._marks(check)
+        return False
+
+    # --- Escape closes the bar from the bar's own buttons too --------------
+    #
+    # The bar is asked whether the focus xed stole was anywhere inside it,
+    # not only whether it was the entry. Tabbing from the entry to the case
+    # toggle and pressing Escape used to reclaim focus for the preview and
+    # leave the bar open -- and on xed 3.8.9 this focus path is the live one,
+    # so `shortcuts.route_key`'s own (wider) rule never got the chance to
+    # disagree.
+
+    def step_bar_button_escape_setup(self):
+        controller = self._main_controller()
+        # Re-runs whatever the entry still holds ("Paragraph", from the
+        # abandoned keystroke above), so there is real highlighting to lose.
+        controller.open_search()
+        self._schedule(900, self.step_bar_button_escape_focus)
+        return False
+
+    def step_bar_button_escape_focus(self):
+        controller = self._main_controller()
+        # Neither the entry nor the preview: the bar's own case toggle, which
+        # is exactly what one Tab press from the entry reaches.
+        controller.searchbar._case.grab_focus()
+        self._schedule(300, self.step_bar_button_escape_press)
+        return False
+
+    def step_bar_button_escape_press(self):
+        self._press(Gdk.KEY_Escape, Gdk.ModifierType(0))
+        self._schedule(700, self.step_bar_button_escape_check)
+        return False
+
+    def step_bar_button_escape_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "escape-from-a-bar-button-also-closes-the-search",
+                payload["total"] == 0 and not controller.is_searching,
+                f"marks left: {payload['total']}, "
+                f"is_searching: {controller.is_searching}",
+            )
+            self._schedule(400, self.step_moved_tab_search_open)
+
+        self._marks(check)
         return False
 
     # --- Escape still closes the search after the tab changed windows ------
