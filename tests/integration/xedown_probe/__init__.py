@@ -125,11 +125,35 @@ _COPY_MD = (
 
 
 def _long_markdown():
-    """Content tall enough to give a real scroll range at any window size."""
+    """Content tall enough to give a real scroll range at any window size.
+
+    The emphasised phrase is for the search steps: in the DOM it is three
+    nodes (`An `, `<strong>emphasised</strong>`, ` phrase...`), so finding
+    "emphasised phrase" is only possible if the search flattens the text
+    across inline boundaries rather than matching within one text node.
+
+    The trailing fenced block is also for the search steps: highlight.js
+    wraps "42" and "100" each in their own `<span>`, which leaves the four
+    spaces between them as an isolated whitespace-only text node -- exactly
+    the shape `search-crosses-an-inline-boundary`'s emphasis phrase is not:
+    that gap sits between two elements with nothing of the query's own text
+    on either side of it. Confirmed against the vendored highlight.js
+    bundle (not just read from its source) that "42    100" renders as
+    `<span class="hljs-number">42</span>    <span class="hljs-number">
+    100</span>` -- the middle four spaces belonging to no span at all --
+    and that a search for the collapsed query below marks it as three
+    `<mark>` elements whose concatenated text is the original nine
+    characters, spaces included. Plain digits, not "Paragraph"/"Filler", so
+    it changes neither count the search steps already pin.
+    """
     paragraphs = "\n\n".join(
         f"Paragraph {i}. Filler text to build page height. " * 3 for i in range(120)
     )
-    return "# Scroll Test\n\n" + paragraphs + "\n"
+    return (
+        "# Scroll Test\n\nAn **emphasised** phrase for the search.\n\n"
+        + paragraphs
+        + "\n\n```python\n42    100\n```\n"
+    )
 
 
 class XedownProbe(GObject.Object, Xed.WindowActivatable):
@@ -1815,7 +1839,460 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "entering-preview-focuses-the-preview",
             controller.preview.widget.is_focus(),
         )
-        self._schedule(400, self.step_disable_prep_infobar)
+        self._schedule(400, self.step_search_reset)
+        return False
+
+    # --- find in the preview ------------------------------------------------
+
+    def _marks(self, on_result):
+        """Ask the page what its search marks currently look like."""
+        preview = self._main_controller().preview
+
+        def finished(webview, result, _user_data):
+            payload = {"total": -1, "current": -1, "text": ""}
+            try:
+                value = webview.run_javascript_finish(result)
+                payload = json.loads(value.get_js_value().to_string())
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                payload = {"total": -1, "current": -1, "text": f"<error: {exc}>"}
+            on_result(payload)
+
+        preview.widget.run_javascript(
+            "JSON.stringify({"
+            "total: document.querySelectorAll('mark.xedown-match').length,"
+            "current: document.querySelectorAll('mark.xedown-match-current').length,"
+            "text: (document.querySelector('mark.xedown-match-current')"
+            " || {textContent: ''}).textContent"
+            "})",
+            None,
+            finished,
+            None,
+        )
+
+    def step_search_reset(self):
+        # Every count below is a count of what is in THIS text, and earlier
+        # steps have edited the buffer (step_content_integrity types an "X"
+        # into it). Putting the fixture back is what makes 1 mean 1 and 360
+        # mean 360 rather than "whatever survived the last twenty steps".
+        controller = self._main_controller()
+        if controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        self.document.set_text(_long_markdown())
+        # Past the 250 ms debounce, so the body being searched is the body
+        # this text renders to.
+        self._schedule(900, self.step_search_open)
+        return False
+
+    def step_search_open(self):
+        controller = self._main_controller()
+        controller.preview.widget.grab_focus()
+        self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(600, self.step_search_open_check)
+        return False
+
+    def step_search_open_check(self):
+        controller = self._main_controller()
+        record(
+            "ctrl-f-opens-the-preview-search",
+            controller.is_searching
+            and controller.searchbar.owns_focus(self.window.get_focus()),
+        )
+        # "Paragraph 7" alone would also match "Paragraph 70" through
+        # "Paragraph 79", which is exactly the kind of accident that makes a
+        # count assertion meaningless -- the trailing period rules those out.
+        # It does not rule out three: each paragraph's own sentence is
+        # itself written `* 3` above, so "Paragraph 7." appears three times
+        # in paragraph 7's own block, not once. Confirmed directly against
+        # this fixture's rendered output, not assumed.
+        controller.searchbar.set_query("Paragraph 7.")
+        self._schedule(900, self.step_search_count_check)
+        return False
+
+    def step_search_count_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "search-marks-every-match",
+                payload["total"] == 3 and controller.search.total == 3,
+                f"page: {payload['total']}, session: {controller.search.total}",
+            )
+            record(
+                "search-marks-one-current-match",
+                payload["current"] == 1,
+                f"current marks: {payload['current']}",
+            )
+            record(
+                "search-counts-from-one",
+                controller.searchbar.get_query() == "Paragraph 7."
+                and controller.search.status() == "1 of 3",
+                f"status: {controller.search.status()!r}",
+            )
+            controller.searchbar.set_query("Filler")
+            self._schedule(900, self.step_search_step)
+
+        self._marks(check)
+        return False
+
+    def step_search_step(self):
+        controller = self._main_controller()
+        # 360 of them: three per paragraph, 120 paragraphs.
+        record(
+            "search-finds-every-repeat",
+            controller.search.total == 360,
+            f"total: {controller.search.total}",
+        )
+        # A real Return, through the entry that still holds focus: the window
+        # hook leaves an unmodified Return alone, GTK delivers it to the
+        # focused entry, and the entry's `activate` is what steps.
+        self._press(Gdk.KEY_Return, Gdk.ModifierType(0))
+        self._schedule(600, self.step_search_wrap)
+        return False
+
+    def step_search_wrap(self):
+        controller = self._main_controller()
+        record(
+            "enter-steps-to-the-next-match",
+            controller.search.index == 1,
+            f"index: {controller.search.index}",
+        )
+        # Back twice from match 2: to the first, then past it. Emitted rather
+        # than typed because Shift+Return through a synthetic event depends on
+        # the entry holding focus through the step above, and what is being
+        # checked here is the wrap, not the key.
+        controller.searchbar.emit("step-requested", False)
+        controller.searchbar.emit("step-requested", False)
+        self._schedule(600, self.step_search_wrap_check)
+        return False
+
+    def step_search_wrap_check(self):
+        controller = self._main_controller()
+        record(
+            "search-wraps-past-the-last-match",
+            controller.search.index == 359,
+            f"index: {controller.search.index}",
+        )
+        # Every occurrence in the fixture is capitalised, so a case-sensitive
+        # search for the lowercase spelling must find none of them.
+        controller.searchbar.set_case_sensitive(True)
+        controller.searchbar.set_query("filler")
+        self._schedule(900, self.step_search_case_check)
+        return False
+
+    def step_search_case_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "search-is-case-sensitive-when-asked",
+                controller.search.total == 0 and payload["total"] == 0,
+                f"session: {controller.search.total}, page: {payload['total']}",
+            )
+            record(
+                "search-says-when-there-is-nothing",
+                controller.search.status() == "No matches",
+                f"status: {controller.search.status()!r}",
+            )
+            controller.searchbar.set_case_sensitive(False)
+            controller.searchbar.set_query("emphasised phrase")
+            self._schedule(900, self.step_search_inline_check)
+
+        self._marks(check)
+        return False
+
+    def step_search_inline_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            # `An **emphasised** phrase` renders as three DOM nodes. Finding
+            # it proves the flattened index, and one match wrapped in two
+            # marks proves they are grouped by match number rather than
+            # counted as two.
+            record(
+                "search-crosses-an-inline-boundary",
+                controller.search.total == 1 and payload["total"] == 2,
+                f"session: {controller.search.total}, marks: {payload['total']}",
+            )
+            self._press(Gdk.KEY_Escape, Gdk.ModifierType(0))
+            self._schedule(700, self.step_search_escape_check)
+
+        self._marks(check)
+        return False
+
+    def step_search_escape_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "escape-clears-every-mark",
+                payload["total"] == 0 and not controller.is_searching,
+                f"marks left: {payload['total']}",
+            )
+            record(
+                "escape-returns-focus-to-the-preview",
+                controller.preview.widget.is_focus(),
+            )
+            self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
+            self._schedule(600, self.step_search_mode_switch)
+
+        self._marks(check)
+        return False
+
+    def step_search_mode_switch(self):
+        controller = self._main_controller()
+        controller.set_mode(Mode.SOURCE)
+        self._schedule(600, self.step_search_mode_switch_check)
+        return False
+
+    def step_search_mode_switch_check(self):
+        controller = self._main_controller()
+        record("markdown-mode-closes-the-search", not controller.is_searching)
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(500, self.step_reload_search_setup)
+        return False
+
+    # --- search survives a full page reload ---------------------------------
+    #
+    # PreviewView remembers the live query and re-issues it on
+    # LoadEvent.FINISHED (see `_search_request` in preview.py) precisely
+    # because a fresh page is a fresh JS context with no memory of its own.
+    # Nothing above exercises that: the theme/revert/save reload steps all
+    # run before the search bar ever opens, and every search step after that
+    # only swaps the body in place. This is the one path that puts both
+    # together -- a live search, then a reload that is not a body swap.
+
+    def step_reload_search_setup(self):
+        controller = self._main_controller()
+        controller.preview.widget.grab_focus()
+        self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
+        self._schedule(600, self.step_reload_search_query)
+        return False
+
+    def step_reload_search_query(self):
+        controller = self._main_controller()
+        controller.searchbar.set_query("Filler")
+        self._schedule(900, self.step_reload_search_go)
+        return False
+
+    def step_reload_search_go(self):
+        controller = self._main_controller()
+        self._reload_baseline_total = controller.search.total
+        # The same mechanism step_theme_switch uses above: a settings change
+        # that forces a full `load_html` reload (a fresh JS context) rather
+        # than the in-place `replaceBody` every other search step exercises.
+        xedown_settings.get_settings().set(xedown_settings.PREVIEW_THEME, "focused")
+        # A full reload of this fixture, not an in-place update: matches
+        # step_scroll_toggle_back's own wait for the same-sized document
+        # rather than the shorter waits the in-place search steps above use.
+        self._schedule(1600, self.step_reload_search_check)
+        return False
+
+    def step_reload_search_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "search-survives-a-full-reload",
+                self._reload_baseline_total == 360
+                and payload["total"] == 360
+                and controller.search.total == 360
+                and controller.searchbar.get_query() == "Filler",
+                f"before: {self._reload_baseline_total}, "
+                f"page marks: {payload['total']}, session: {controller.search.total}",
+            )
+            self._schedule(400, self.step_error_search_setup)
+
+        self._marks(check)
+        return False
+
+    # --- a render failure must settle the count, not leave a stale one -----
+    #
+    # `_reload_preview` bumps the search token before answering 0 for an
+    # error page precisely so a reply already in flight from the page being
+    # replaced cannot land afterwards and overwrite that answer (see the
+    # comment above `self.search.invalidate()` in controller.py). This drives
+    # that path for real: a live search with real matches, a forced failure,
+    # and then a second look after a further beat to prove nothing crept back
+    # in. Restoring is deliberately not a bare refresh: SearchSession.set_query
+    # only re-asks the page when the text or the case flag actually changes
+    # (see search.py), so a refresh alone leaves `PreviewView._search_request`
+    # pointing at the token the invalidate moved past -- closing and reopening
+    # the bar is the same round trip step_search_escape_check /
+    # step_search_mode_switch already use above, and it is what makes the
+    # entry's still-held query count as new again.
+
+    def step_error_search_setup(self):
+        controller = self._main_controller()
+        controller._reload_preview(
+            error=RuntimeError("probe-forced search failure"), restore_scroll=0.0
+        )
+        self._schedule(900, self.step_error_search_settled)
+        return False
+
+    def step_error_search_settled(self):
+        controller = self._main_controller()
+        record(
+            "an-error-page-settles-on-no-matches",
+            controller.searchbar._status.get_text() == "No matches"
+            and controller.search.total == 0,
+            f"bar: {controller.searchbar._status.get_text()!r}, "
+            f"session total: {controller.search.total!r}",
+        )
+        self._schedule(900, self.step_error_search_stays)
+        return False
+
+    def step_error_search_stays(self):
+        controller = self._main_controller()
+        record(
+            "error-page-search-stays-at-no-matches",
+            controller.searchbar._status.get_text() == "No matches"
+            and controller.search.total == 0,
+            f"bar: {controller.searchbar._status.get_text()!r}, "
+            f"session total: {controller.search.total!r}",
+        )
+        controller.refresh_now()
+        # Another full reload (recovering from the error page back to a
+        # real document) -- same margin as step_reload_search_go above.
+        self._schedule(1600, self.step_error_search_restore)
+        return False
+
+    def step_error_search_restore(self):
+        controller = self._main_controller()
+        controller.close_search()
+        controller.open_search()
+        self._schedule(900, self.step_error_search_recovered)
+        return False
+
+    def step_error_search_recovered(self):
+        controller = self._main_controller()
+        record(
+            "error-page-search-recovers-after-restore",
+            controller.search.total == 360
+            and controller.searchbar._status.get_text() != "No matches",
+            f"total: {controller.search.total}, "
+            f"bar: {controller.searchbar._status.get_text()!r}",
+        )
+        self._schedule(400, self.step_showall_search_setup)
+        return False
+
+    # --- a stray show_all() must not raise a search bar nobody asked for ---
+
+    def step_showall_search_setup(self):
+        controller = self._main_controller()
+        controller.close_search()
+        self._schedule(400, self.step_showall_search_check)
+        return False
+
+    def step_showall_search_check(self):
+        controller = self._main_controller()
+        # Mirrors step_showall_preview above, for the search bar rather than
+        # the frame/WebView: xed forces widgets visible on save and revert,
+        # and the bar pins no_show_all precisely to survive that.
+        self.tab.show_all()
+        record(
+            "a-stray-show-all-cannot-raise-the-search-bar",
+            not controller.is_searching and not controller.searchbar.get_visible(),
+            f"is_searching={controller.is_searching} "
+            f"bar_visible={controller.searchbar.get_visible()}",
+        )
+        self._schedule(400, self.step_shift_return_setup)
+        return False
+
+    # --- Shift+Return steps backward exactly once, not twice ---------------
+    #
+    # The entry's own `activate` also fires on a bare Return, whether or not
+    # Shift is held; `_on_entry_key` has to consume the event before that
+    # happens or a single Shift+Return would step back AND forward, netting
+    # to no move at all. Starting from match 0 and landing on the last match
+    # after one press is what a double-fire could not produce by accident.
+
+    def step_shift_return_setup(self):
+        controller = self._main_controller()
+        # Reuses whatever the entry still holds ("Filler", left over from the
+        # error-recovery check above) -- open_search() re-runs it exactly as
+        # a real reopen would.
+        controller.open_search()
+        self._schedule(900, self.step_shift_return_press)
+        return False
+
+    def step_shift_return_press(self):
+        controller = self._main_controller()
+        self._shift_return_index_before = controller.search.index
+        self._shift_return_total = controller.search.total
+        self._press(Gdk.KEY_Return, Gdk.ModifierType.SHIFT_MASK)
+        self._schedule(600, self.step_shift_return_check)
+        return False
+
+    def step_shift_return_check(self):
+        controller = self._main_controller()
+        expected = (self._shift_return_index_before - 1) % self._shift_return_total
+        record(
+            "shift-return-steps-backward-once",
+            self._shift_return_total > 1 and controller.search.index == expected,
+            f"before: {self._shift_return_index_before}, "
+            f"after: {controller.search.index}, expected: {expected}, "
+            f"total: {self._shift_return_total}",
+        )
+        self._schedule(400, self.step_whitespace_match_setup)
+        return False
+
+    # --- a match covers a whole run of spaces, not one character of it -----
+    #
+    # Pins the task 5 fix: a collapsed space's map entry used to record only
+    # its first character, so a match landing on an isolated whitespace text
+    # node (here, the four spaces highlight.js leaves between "42" and "100"
+    # once it wraps each in its own <span>) was marked one character short.
+    # The query is typed with a single space -- collapse() would fold four
+    # into one regardless, but typing it pre-collapsed is what a person
+    # actually does, and is not what is under test here.
+
+    def step_whitespace_match_setup(self):
+        controller = self._main_controller()
+        controller.open_search()
+        self._schedule(600, self.step_whitespace_match_query)
+        return False
+
+    def step_whitespace_match_query(self):
+        controller = self._main_controller()
+        controller.searchbar.set_query("42 100")
+        self._schedule(900, self.step_whitespace_match_check)
+        return False
+
+    def step_whitespace_match_check(self):
+        controller = self._main_controller()
+        preview = controller.preview
+
+        def on_result(webview, result, _user_data):
+            payload, failure = {}, ""
+            try:
+                value = webview.run_javascript_finish(result)
+                payload = json.loads(value.get_js_value().to_string())
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                failure = f"<error: {exc}>"
+            record(
+                "a-match-covers-a-whole-run-of-spaces",
+                controller.search.total == 1
+                and payload.get("marks") == 3
+                and payload.get("matchText") == "42    100"
+                and not failure,
+                f"session total: {controller.search.total}, "
+                f"marks: {payload.get('marks')}, "
+                f"matched text: {payload.get('matchText')!r}{failure}",
+            )
+            self._schedule(400, self.step_disable_prep_infobar)
+
+        preview.widget.run_javascript(
+            "JSON.stringify({"
+            "marks: document.querySelectorAll('mark.xedown-match').length,"
+            "matchText: Array.prototype.map.call("
+            "document.querySelectorAll('mark.xedown-match-current'),"
+            "function (m) { return m.textContent; }"
+            ").join('')"
+            "})",
+            None,
+            on_result,
+            None,
+        )
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
