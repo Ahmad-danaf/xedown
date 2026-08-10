@@ -21,12 +21,17 @@ class PreviewView:
     # clipboard, and reported as a failure so the button says so.
     MAX_COPY_CHARS = 1024 * 1024
 
-    def __init__(self, on_link=None, on_image_error=None):
+    def __init__(self, on_link=None, on_image_error=None, on_search=None):
         self.on_link = on_link
         self.on_image_error = on_image_error
+        self.on_search = on_search
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = 0.0
+        # The live search, remembered so a full page load can re-issue it: a
+        # fresh page is a fresh JS context and knows nothing about it. Body
+        # swaps need no help -- preview.js re-applies the search itself.
+        self._search_request = None
 
         self._content_manager = WebKit2.UserContentManager()
         self._content_manager.register_script_message_handler(_MESSAGE_HANDLER)
@@ -133,6 +138,37 @@ class PreviewView:
             f"if (window.xedown) {{ window.xedown.scrollToAnchor({json.dumps(anchor)}); }}"
         )
 
+    def search(self, query, case_sensitive, token):
+        """Ask the page to mark `query`. The count comes back as a message.
+
+        `run_javascript` cannot be awaited, which is why the token travels
+        with the request and comes back with the answer: without it the count
+        for `he` can arrive after the count for `hell` and overwrite it.
+        """
+        self._search_request = (query, bool(case_sensitive), int(token))
+        self._run(
+            "if (window.xedown) { window.xedown.search("
+            + json.dumps(query)
+            + ", "
+            + json.dumps(bool(case_sensitive))
+            + ", "
+            + json.dumps(int(token))
+            + "); }"
+        )
+
+    def set_search_index(self, index):
+        """Make match `index` the current one, and scroll it into view."""
+        self._run(
+            "if (window.xedown) { window.xedown.setSearchIndex("
+            + json.dumps(int(index))
+            + "); }"
+        )
+
+    def clear_search(self):
+        """Take every mark back out of the page."""
+        self._search_request = None
+        self._run("if (window.xedown) { window.xedown.clearSearch(); }")
+
     def copy_selection(self):
         """Copy the page's selection, on xedown's behalf.
 
@@ -171,6 +207,13 @@ class PreviewView:
                 pass
         elif kind == "imageError" and self.on_image_error is not None:
             self.on_image_error(payload.get("src") or "")
+        elif kind == "search" and self.on_search is not None:
+            try:
+                count = int(payload.get("count") or 0)
+                token = int(payload.get("token") or 0)
+            except (TypeError, ValueError):
+                return
+            self.on_search(count, bool(payload.get("capped")), token)
         elif kind == "copy":
             self._copy_to_clipboard(payload.get("token"), payload.get("text"))
 
@@ -272,6 +315,11 @@ class PreviewView:
         if load_event == WebKit2.LoadEvent.FINISHED:
             self.set_scroll(self._pending_scroll)
             self._pending_scroll = 0.0
+            # A reload (theme change, revert, external change) replaced the JS
+            # context, so a search that is still live has to be asked for
+            # again -- the page has no memory of it.
+            if self._search_request is not None:
+                self.search(*self._search_request)
 
     # --- teardown ----------------------------------------------------------
 
@@ -291,4 +339,6 @@ class PreviewView:
         self._content_manager.unregister_script_message_handler(_MESSAGE_HANDLER)
         self.on_link = None
         self.on_image_error = None
+        self.on_search = None
+        self._search_request = None
         self.widget.destroy()
