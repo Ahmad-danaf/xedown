@@ -609,11 +609,12 @@ class TabController:
         is showing" means it should never do, so the focus is always
         reclaimed for the preview when this fires. Closing the search bar
         over it is narrower: that only happens when the focus xed just
-        stole was one of xedown's own widgets -- the search entry, or the
-        preview itself -- which `_reclaim_focus_from_hidden_view` decides
-        from `_last_focus` below. Focus arriving from anything else (xed's
-        own find bar closing, a dialog dismissing, a mode-bar button) is not
-        this tab's Escape to react to, and must leave an open search alone.
+        stole was one of xedown's own widgets -- anywhere inside the search
+        bar, or the preview itself -- which `_reclaim_focus_from_hidden_view`
+        decides from `_last_focus` below. Focus arriving from anything else
+        (xed's own find bar closing, a dialog dismissing, a mode-bar button)
+        is not this tab's Escape to react to, and must leave an open search
+        alone.
         """
         previous = self._last_focus
         if widget is not None:
@@ -625,21 +626,23 @@ class TabController:
     def _reclaim_focus_from_hidden_view(self, previous_focus):
         """Take the focus back, and close the search if it was ours to close.
 
-        Known drift, recorded rather than fixed: "xedown's own" is read
-        narrowly here -- the search entry, or the preview -- while
-        `shortcuts.route_key`'s own CLOSE_SEARCH branch (still shipped, and
-        still the path a bare Escape would take if some future xed stopped
-        swallowing it before ordinary key dispatch) closes the search on
-        *any* non-editable focus while searching, which includes the search
-        bar's own case toggle and step buttons. Escape pressed with one of
-        those focused would therefore close the bar through `route_key` and
-        not through here. Whichever rule is right, the two should agree;
-        today they do not.
+        "xedown's own" is the whole search bar, not only its entry: the case
+        toggle, the two step buttons and the close button are all places a
+        user can tab to and press Escape from, and closing the bar from one
+        of them is what `shortcuts.route_key`'s own CLOSE_SEARCH branch does
+        (it closes on any non-editable focus while searching). The two rules
+        have to agree, because which of them runs is not this plugin's
+        choice: on xed 3.8.9 Escape never reaches ordinary key dispatch at
+        all, so this focus path is the live one -- a divergence here would
+        be a divergence a user could see.
         """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return False
         stolen_from_ours = previous_focus is not None and (
-            (self.searchbar is not None and self.searchbar.owns_focus(previous_focus))
+            (
+                self.searchbar is not None
+                and self.searchbar.contains_focus(previous_focus)
+            )
             or (self.preview is not None and previous_focus is self.preview.widget)
         )
         if self.is_searching and stolen_from_ours:

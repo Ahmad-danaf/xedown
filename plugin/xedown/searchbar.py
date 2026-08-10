@@ -140,9 +140,22 @@ class SearchBar(Gtk.Box):
 
         This is what tells xedown's own entry apart from xed's find bar for
         `shortcuts.route_key`: both are GtkEditables, and only one of them is
-        ours.
+        ours. Deliberately narrower than `contains_focus` below: the question
+        it answers is "is the focused editable ours", and only the entry is
+        an editable at all.
         """
         return widget is self._entry
+
+    def contains_focus(self, widget):
+        """True when `widget` is this bar or any part of it.
+
+        The controller asks this to decide whether the focus xed just took
+        away was the user's own place in the search -- which the case toggle,
+        the two step buttons and the close button all are, just as much as
+        the entry. Asked of the bar rather than reasoned about from outside,
+        so the answer follows this widget's own structure.
+        """
+        return widget is not None and (widget is self or widget.is_ancestor(self))
 
     # --- what the widgets report -------------------------------------------
 
