@@ -1,3 +1,5 @@
+import pathlib
+
 import pytest
 from xedown import vendoring
 from xedown.mdext import find_list_interrupt, make_extensions
@@ -257,3 +259,82 @@ def test_a_task_list_interrupting_a_paragraph_still_gets_checkboxes(convert):
     assert "<p>Text.</p>" in html
     assert 'class="task-list"' in html
     assert html.count("<input") == 2
+
+
+# --- Reach, residual, and fixture parity (brief 16) ---
+#
+# Blockquotes, list items and footnote definitions each re-parse their own
+# contents through the same block processor chain, so registering once fixes
+# a paragraph anywhere one can occur. That reach is what makes it honest to
+# delete the README limitation outright instead of narrowing it.
+
+
+def test_a_list_interrupts_a_paragraph_inside_a_blockquote(convert):
+    html = convert("> quote text\n> - item\n> - item two")
+    assert "<blockquote>" in html
+    assert "<ul>" in html
+    assert html.count("<li>") == 2
+
+
+def test_a_list_interrupts_a_paragraph_inside_a_list_item(convert):
+    html = convert("- item\n\n    text in item\n    - nested")
+    assert html.count("<ul>") == 2
+
+
+def test_a_list_interrupts_a_paragraph_inside_a_footnote(convert):
+    html = convert("Body[^1]\n\n[^1]: Footnote text\n    - item\n    - item two")
+    assert "<ul>" in html
+    assert html.count("<li>") >= 2
+
+
+def test_an_unclosed_fence_does_not_protect_a_marker_line(convert):
+    # Recorded, not endorsed -- see section 8 of the design. An unclosed
+    # fence is not matched by fenced_code's preprocessor, so its lines reach
+    # block parsing. Nothing regresses: these lines were not code before this
+    # brief either, they were one paragraph. Teaching this processor about
+    # fences is exactly the coupling priority 12 exists to avoid.
+    assert "<ul>" in convert("Text.\n```\n- item")
+
+
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent.parent / "fixtures"
+
+# Every fixture that must render byte-identically. edge-cases.md is
+# deliberately absent: it is the one document this brief changes.
+CLEAN_FIXTURES = (
+    "showcase.md",
+    "rtl.md",
+    "mixed-direction.md",
+    "linked.md",
+    "README.md",
+)
+
+
+def _convert_without_list_interrupt(markdown_module, text):
+    """Convert with every xedown extension except this brief's."""
+    extensions = make_extensions(markdown_module)
+    kept = [e for e in extensions if type(e).__name__ != "ListInterruptExtension"]
+    # Without this, a renamed class would silently filter nothing and leave
+    # the parity test below comparing a converter to itself, passing forever.
+    assert len(kept) == len(extensions) - 1, "ListInterruptExtension was not found"
+    md = markdown_module.Markdown(extensions=list(vendoring.MARKDOWN_EXTENSIONS) + kept)
+    return md.convert(text)
+
+
+def test_the_clean_fixtures_render_identically_without_this_extension(convert):
+    # "Renders identically to before", made checkable without a frozen
+    # baseline that would rot: the comparison is against the same parser with
+    # this brief's extension filtered out, in the same run.
+    markdown_module = vendoring.import_markdown()
+    for name in CLEAN_FIXTURES:
+        text = (FIXTURES_DIR / name).read_text(encoding="utf-8")
+        assert convert(text) == _convert_without_list_interrupt(
+            markdown_module, text
+        ), name
+
+
+def test_the_edge_cases_fixture_is_the_one_document_that_changes(convert):
+    # The other half of the claim. If this ever passes as "identical", the
+    # fixture's paragraph-and-list section has been edited away.
+    markdown_module = vendoring.import_markdown()
+    text = (FIXTURES_DIR / "edge-cases.md").read_text(encoding="utf-8")
+    assert convert(text) != _convert_without_list_interrupt(markdown_module, text)
