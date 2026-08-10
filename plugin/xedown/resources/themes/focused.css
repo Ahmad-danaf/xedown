@@ -34,6 +34,10 @@
   --xedown-syn-deletion-bg: #fbeceb;
   --xedown-selection-bg: #a8cbe8;
   --xedown-selection-fg: #24262b;
+  --xedown-match-bg: #f0c04a;
+  --xedown-match-fg: #24262b;
+  --xedown-match-current-bg: #f28a3c;
+  --xedown-match-current-fg: #24262b;
   --xedown-measure-scale: 1;
   --xedown-text-scale: .97;
 }
@@ -66,6 +70,10 @@ body.dark {
   --xedown-syn-deletion-bg: #33211f;
   --xedown-selection-bg: #35526d;
   --xedown-selection-fg: #dfe1e4;
+  --xedown-match-bg: #544716;
+  --xedown-match-fg: #dfe1e4;
+  --xedown-match-current-bg: #83380f;
+  --xedown-match-current-fg: #f5e6de;
 }
 
 body {

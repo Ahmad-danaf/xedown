@@ -113,6 +113,16 @@ built-in theme sets both for light and dark, and xedown's own tests hold them
 to 4.5:1 against each other and 1.5:1 against the page. A custom stylesheet
 overriding them is not held to anything — check your own contrast.
 
+`--xedown-match-bg` / `--xedown-match-fg` colour every search match, and
+`--xedown-match-current-bg` / `--xedown-match-current-fg` colour the one the
+reader is on. All four are checked in `tests/unit/test_contrast.py`: text on a
+highlight meets AA at 4.5:1, each highlight is at least 1.5:1 against both the
+page and the code surface, and each is at least ΔE 20 (CIE76) from the
+selection colour and from the other highlight. That last threshold is this
+project's own — no standard defines "a different colour" — and it exists
+because a contrast ratio compares luminance only, so it cannot tell an amber
+highlight from a tan selection of the same weight.
+
 Clear the setting — set it to `null` — and the preview goes back to the plain
 built-in theme.
 

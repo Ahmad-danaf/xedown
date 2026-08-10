@@ -23,6 +23,10 @@
   --xedown-shadow: rgba(31, 35, 40, .22);
   --xedown-selection-bg: #9ecbff;
   --xedown-selection-fg: #1f2328;
+  --xedown-match-bg: #f0c243;
+  --xedown-match-fg: #1f2328;
+  --xedown-match-current-bg: #f58a2e;
+  --xedown-match-current-fg: #1f2328;
   --xedown-measure-scale: 1;
   --xedown-text-scale: 1;
 }
@@ -42,6 +46,10 @@ body.dark {
   --xedown-shadow: rgba(0, 0, 0, .55);
   --xedown-selection-bg: #2d4f76;
   --xedown-selection-fg: #e6e6e6;
+  --xedown-match-bg: #5a4a12;
+  --xedown-match-fg: #e6e6e6;
+  --xedown-match-current-bg: #8a3d0e;
+  --xedown-match-current-fg: #ffffff;
 }
 
 body {

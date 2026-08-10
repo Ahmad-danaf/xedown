@@ -189,3 +189,85 @@ def test_the_selection_highlight_is_visible_against_the_page(theme, appearance):
         f"{theme.identifier} {appearance}: selection sits at {ratio:.2f}:1 "
         f"against the page"
     )
+
+
+# A search highlight is held to the same floors as the selection: text on it
+# is text (4.5:1), and the highlight itself has to be visible against both
+# surfaces it can land on (1.5:1 -- the floor brief 8 chose, and not a WCAG
+# claim; see this module's docstring).
+MATCH_TEXT_PAIRS = (
+    ("--xedown-match-fg", "--xedown-match-bg"),
+    ("--xedown-match-current-fg", "--xedown-match-current-bg"),
+)
+MATCH_SURFACES = ("--xedown-bg", "--xedown-code-bg")
+HIGHLIGHT_AGAINST_SURFACE = 1.5
+
+# "Distinguishable" is a question about colour, not about luminance: an amber
+# highlight and a tan selection of the same weight sit at 1.0:1 and are
+# obviously different, while two greys a shade apart clear any ratio you like
+# and are not. CIE76 is the measure; 20 is this project's threshold for
+# "another colour", recorded in docs/themes.md as such rather than borrowed
+# from a standard that does not define one.
+DISTINCT_DELTA_E = 20.0
+
+
+def test_delta_e_is_zero_for_a_colour_against_itself():
+    assert wcag.delta_e("#f0c243", "#f0c243") == pytest.approx(0.0)
+
+
+def test_delta_e_spans_a_hundred_from_black_to_white():
+    assert wcag.delta_e("#000000", "#ffffff") == pytest.approx(100.0, abs=0.5)
+
+
+def test_delta_e_separates_colours_a_contrast_ratio_calls_identical():
+    # Yellow on cyan is 1.17:1 -- a ratio would call them interchangeable, and
+    # nobody looking at them would. This is the whole reason this function
+    # exists beside contrast_ratio rather than instead of it.
+    assert wcag.contrast_ratio("#ffff00", "#00ffff") < 1.3
+    assert wcag.delta_e("#ffff00", "#00ffff") > DISTINCT_DELTA_E
+
+
+@pytest.mark.parametrize("theme,appearance", list(cases()))
+def test_text_on_a_search_highlight_meets_aa(theme, appearance):
+    tokens = palette(theme, appearance)
+    for foreground, background in MATCH_TEXT_PAIRS:
+        ratio = wcag.contrast_ratio(tokens[foreground], tokens[background])
+        assert ratio >= 4.5, (
+            f"{theme.identifier}/{appearance}: {foreground} on {background} "
+            f"is {ratio:.2f}:1"
+        )
+
+
+@pytest.mark.parametrize("theme,appearance", list(cases()))
+def test_a_search_highlight_is_visible_on_every_surface_it_lands_on(theme, appearance):
+    # A match inside a fenced block sits on the code surface, which is not the
+    # page surface -- and in every light theme it is the darker of the two,
+    # so it is the binding constraint rather than a formality.
+    tokens = palette(theme, appearance)
+    for highlight in ("--xedown-match-bg", "--xedown-match-current-bg"):
+        for surface in MATCH_SURFACES:
+            ratio = wcag.contrast_ratio(tokens[highlight], tokens[surface])
+            assert ratio >= HIGHLIGHT_AGAINST_SURFACE, (
+                f"{theme.identifier}/{appearance}: {highlight} on {surface} "
+                f"is {ratio:.2f}:1"
+            )
+
+
+@pytest.mark.parametrize("theme,appearance", list(cases()))
+def test_a_match_is_a_different_colour_from_the_selection_and_from_the_current_one(
+    theme, appearance
+):
+    tokens = palette(theme, appearance)
+    selection = tokens["--xedown-selection-bg"]
+    match = tokens["--xedown-match-bg"]
+    current = tokens["--xedown-match-current-bg"]
+    for name, colour, other, other_name in (
+        ("--xedown-match-bg", match, selection, "the selection"),
+        ("--xedown-match-current-bg", current, selection, "the selection"),
+        ("--xedown-match-current-bg", current, match, "an ordinary match"),
+    ):
+        difference = wcag.delta_e(colour, other)
+        assert difference >= DISTINCT_DELTA_E, (
+            f"{theme.identifier}/{appearance}: {name} is only ΔE {difference:.1f} "
+            f"from {other_name}"
+        )
