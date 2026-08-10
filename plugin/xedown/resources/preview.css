@@ -123,6 +123,30 @@ a { unicode-bidi: plaintext; }
   color: var(--xedown-selection-fg);
 }
 
+/* A search match, and the one the reader is on.
+
+   `mark` is not in the sanitizer's allowlist, so a rendered document can
+   never contain one: every mark on the page was inserted by preview.js, which
+   is what lets clearSearch() unwrap all of them without asking whose they are
+   and what makes these two rules additions rather than a change to what a
+   v0.1 page looked like.
+
+   The current match carries an outline as well as its own colour, so the
+   distinction survives a reader who cannot separate the two hues. Both pairs
+   are gated in tests/unit/test_contrast.py: legible on both the page and the
+   code surface, and ΔE 20 away from the selection. */
+mark.xedown-match {
+  background: var(--xedown-match-bg);
+  color: var(--xedown-match-fg);
+  border-radius: 2px;
+}
+
+mark.xedown-match-current {
+  background: var(--xedown-match-current-bg);
+  color: var(--xedown-match-current-fg);
+  outline: 1px solid var(--xedown-match-current-fg);
+}
+
 /* Keyboard focus must always be visible; never suppress the outline. A
    theme may refine this rule, but the base always supplies one, coloured
    by whichever theme is loaded. */

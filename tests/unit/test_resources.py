@@ -594,3 +594,28 @@ def test_the_notice_bar_is_not_part_of_the_document_selection(preview_css):
     parsed, _ = declarations(preview_css)
     assert parsed[".xedown-notice"]["user-select"] == "none"
     assert parsed[".xedown-notice"]["-webkit-user-select"] == "none"
+
+
+def test_a_search_match_is_coloured_only_from_the_theme(preview_css):
+    parsed, _ = declarations(preview_css)
+    match = parsed["mark.xedown-match"]
+    assert match["background"] == "var(--xedown-match-bg)"
+    assert match["color"] == "var(--xedown-match-fg)"
+
+
+def test_the_current_match_is_distinguished_by_more_than_its_colour(preview_css):
+    # Hue alone would leave the current match indistinguishable to a reader
+    # who cannot separate the two, so it also carries an edge.
+    parsed, _ = declarations(preview_css)
+    current = parsed["mark.xedown-match-current"]
+    assert current["background"] == "var(--xedown-match-current-bg)"
+    assert current["color"] == "var(--xedown-match-current-fg)"
+    assert "outline" in current
+
+
+def test_no_search_highlight_colour_is_hardcoded(preview_css):
+    parsed, _ = declarations(preview_css)
+    for selector in ("mark.xedown-match", "mark.xedown-match-current"):
+        for name, value in parsed[selector].items():
+            if name in ("background", "color", "outline"):
+                assert "var(--xedown-" in value, f"{selector} {{ {name} }} is a literal"

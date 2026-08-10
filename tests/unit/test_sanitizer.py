@@ -1,5 +1,5 @@
 import pytest
-from xedown.sanitizer import ImagePlaceholder, sanitize
+from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, sanitize
 
 
 def test_keeps_ordinary_markup():
@@ -336,3 +336,19 @@ def test_bdi_gains_no_other_attribute():
     result = sanitize('<bdi class="hljs" onclick="evil()">x</bdi>')
     assert "onclick" not in result
     assert "class" not in result
+
+
+def test_mark_is_not_an_allowed_element():
+    # Load-bearing, not trivia: preview.js inserts <mark> for every search hit
+    # and clearSearch() unwraps *every* mark in the article without asking
+    # whose it is. That is only safe because a document can never produce one
+    # -- and it is why the two mark rules are `ADDITIONS` in the v0.1 parity
+    # guard rather than a change to what an upgrading user sees.
+    assert "mark" not in ALLOWED_ELEMENTS
+
+
+def test_a_mark_in_the_source_document_never_reaches_the_page():
+    html = sanitize("<p>a <mark>highlight</mark> b</p>")
+    assert "<mark" not in html
+    # The tag goes; the words the author wrote stay.
+    assert "highlight" in html

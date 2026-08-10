@@ -90,6 +90,13 @@ ADDITIONS = {
     # v0.1 emitted no `dir` attribute anywhere, so a rule scoped to
     # .xedown-document[dir="rtl"] cannot match anything a v0.1 page produced.
     '.xedown-document[dir="rtl"] .footnote a[href^="#fnref"]',
+    # `mark` is absent from sanitizer.ALLOWED_ELEMENTS, so no rendered page --
+    # v0.1's or v0.2's -- has ever contained one that xedown did not insert
+    # itself for a search. A rule that can only match xedown's own element
+    # cannot move an upgrading user's preview. Pinned by
+    # test_mark_is_not_an_allowed_element in tests/unit/test_sanitizer.py.
+    "mark.xedown-match",
+    "mark.xedown-match-current",
 }
 
 # Declarations v0.1 shipped that v0.2 deliberately DROPS, with no v0.2
