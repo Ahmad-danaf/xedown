@@ -102,6 +102,10 @@ class TabController:
                 pass
         self._handlers = []
         self._detach_focus_watch()
+        # Also cleared by the line above; stated here so the guarantee that a
+        # torn-down controller holds no other tab's view (and so no other
+        # tab's buffer) does not depend on that call staying where it is.
+        self._last_focus = None
 
         if self._settings_token is not None:
             settings.get_settings().disconnect(self._settings_token)
@@ -198,6 +202,14 @@ class TabController:
         reason `deactivate()`'s bulk disconnect loop is: this runs during
         teardown too, and a disconnect against a window GTK has already
         finalised raises rather than returning quietly.
+
+        `_last_focus` goes with the connection that fed it. The watch is
+        per-tab on a signal the whole *window* shares, so what it records is
+        routinely some other tab's widget -- and a `Xed.View` held here is
+        that tab's buffer held too. Dropping it is also the right answer for
+        the tab move this method is half of: the widget last focused in the
+        window the tab has left is no answer to any question the new window
+        will ask.
         """
         if self._focus_window is not None and self._focus_handler_id is not None:
             try:
@@ -206,6 +218,7 @@ class TabController:
                 pass
         self._focus_window = None
         self._focus_handler_id = None
+        self._last_focus = None
 
     # --- construction ------------------------------------------------------
 
