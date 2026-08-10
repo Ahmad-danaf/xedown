@@ -220,6 +220,12 @@ class TabController:
 
         self._connect(self.document, "changed", self._on_buffer_changed)
 
+        # See _on_window_set_focus's docstring: xed's own Escape handling
+        # can hand focus straight to the hidden source view without ever
+        # reaching this controller's own key routing.
+        if self.window is not None:
+            self._connect(self.window, "set-focus", self._on_window_set_focus)
+
         self._built = True
         self._remembered_path = self._document_path()
         self.set_mode(self._initial_mode(), initial=True)
@@ -500,6 +506,48 @@ class TabController:
             self.tab.reorder_child(self.modebar, 0)
         return False
 
+    def _on_window_set_focus(self, _window, widget):
+        """A second forced-state hazard, in the same family as save/revert
+        forcing the frame visible: pressing Escape while xedown's own
+        preview search bar (or xed's own native find bar, over the source
+        view) has focus does not reach this controller's own key routing
+        at all -- confirmed live, with an independent GTK signal witness
+        connected directly to the window, that neither this controller's
+        window-level handler nor the search entry's own `stop-search`
+        binding ever fires. Whatever inside xed handles Escape for its own
+        find bar operates underneath ordinary "key-press-event" dispatch,
+        and it hands keyboard focus straight to `self.view` -- including
+        while that view sits inside the hidden frame -- by some route that
+        does not run the view's own "focus-in-event" either (confirmed live:
+        a handler on that signal never fires here, even though
+        `window.get_focus()` reports the view immediately afterwards).
+        `Gtk.Window.set_focus()` is the one choke point every route to
+        changing `window.get_focus()` has to go through -- it is what
+        `get_focus()` itself reads back -- so this is the reliable place to
+        catch it regardless of which internal path xed took.
+
+        The source view legitimately holding focus is exactly what "Preview
+        is showing" means it should never do, so this is a reliable enough
+        signal to treat as "the user just tried to dismiss whatever is
+        focused" regardless of what actually triggered it: if the search
+        bar was open, that is almost certainly Escape, and closing it is
+        what closes the marks and returns focus to the preview the way a
+        working Escape would; if it was not, the correction is simply to
+        hand focus back to the preview it was stolen from.
+        """
+        if widget is not self.view:
+            return
+        GLib.idle_add(self._reclaim_focus_from_hidden_view)
+
+    def _reclaim_focus_from_hidden_view(self):
+        if not self._built or self.state.mode is not Mode.PREVIEW:
+            return False
+        if self.is_searching:
+            self.close_search()
+        elif self.preview is not None:
+            self.preview.widget.grab_focus()
+        return False
+
     # --- content updates ---------------------------------------------------
 
     def _on_buffer_changed(self, *_args):
@@ -597,12 +645,19 @@ class TabController:
             # so a reply already in flight from that page cannot land after
             # this one and put a count back on a document nobody can see.
             token = self.search.invalidate()
-            # Re-arm the page's pending request with the same new token. An
-            # error page carries no preview.js, so this runs nowhere -- but it
-            # is what makes PreviewView reissue with a *current* token once a
-            # real document loads again, instead of one this session has
-            # already stopped believing.
-            self.preview.search(self.search.query, self.search.case_sensitive, token)
+            # Re-arm the page's pending request with the same new token --
+            # not preview.search(), which would also ask the page right now.
+            # load_html's navigation to the error page is asynchronous, so
+            # at this exact point the OLD (still real) page can still be the
+            # one actually loaded; asking it would come back with a real
+            # answer carrying this same new token, which the session would
+            # then accept and use to overwrite the "no matches" answer below.
+            # rearm_search only updates the pending-request bookkeeping, so
+            # the *next* page's own load is what reissues it, with a token
+            # this session still believes.
+            self.preview.rearm_search(
+                self.search.query, self.search.case_sensitive, token
+            )
             self._report_search(0, False, token)
 
     def _buffer_text(self):

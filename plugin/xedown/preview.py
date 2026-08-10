@@ -156,6 +156,26 @@ class PreviewView:
             + "); }"
         )
 
+    def rearm_search(self, query, case_sensitive, token):
+        """Update the pending-request bookkeeping without touching the page.
+
+        Used when the page a request would go to is already on its way out
+        (an error page about to replace it): there is nothing to usefully
+        ask right now, and `search()` would ask it anyway -- `load_html`'s
+        navigation is asynchronous, so at the moment this is called the OLD
+        page can still be the one actually loaded, and `search()`'s
+        immediate `run_javascript` would land on it, not on nothing. That
+        produces a real answer for a page that is already gone, tagged with
+        the token this request is arming -- which is exactly the token the
+        session will accept, so it would overwrite the "no matches" answer
+        this call exists to protect. Setting `_search_request` directly,
+        with no page interaction, is what makes the *next* page's own
+        `LoadEvent.FINISHED` reissue this request with a current token
+        (see `_on_load_changed` below), without asking the current page
+        anything at all.
+        """
+        self._search_request = (query, bool(case_sensitive), int(token))
+
     def set_search_index(self, index):
         """Make match `index` the current one, and scroll it into view."""
         self._run(

@@ -24,11 +24,16 @@ SAVED_PLUGINS=""
 XED_PID=""
 
 # How long to wait for the scripted sequence to reach "PASS done" or a FAIL
-# line before giving up on it. It normally finishes in well under a minute:
-# async WebView loads, gsettings round trips, a second window for the
-# move-tab check, tab creation/teardown. How long to then wait for a
-# *graceful* shutdown, once requested, before escalating to SIGTERM/SIGKILL.
-SEQUENCE_TIMEOUT_SECONDS=90
+# line before giving up on it. Async WebView loads, gsettings round trips, a
+# second window for the move-tab check, tab creation/teardown, and -- since
+# brief 11 -- a full round of preview-search checks (real key presses, two
+# more full-page reloads, an error-page-and-back cycle) all add up: on a
+# representative dev machine a clean run takes on the order of ninety
+# seconds end to end, not the well-under-a-minute this budget once assumed.
+# 150 keeps a comfortable margin over that rather than trimming it close.
+# How long to then wait for a *graceful* shutdown, once requested, before
+# escalating to SIGTERM/SIGKILL.
+SEQUENCE_TIMEOUT_SECONDS=150
 SHUTDOWN_GRACE_SECONDS=10
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
