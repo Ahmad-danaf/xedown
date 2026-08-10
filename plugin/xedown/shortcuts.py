@@ -85,6 +85,8 @@ class KeyAction(enum.Enum):
 
     COPY = "copy"
     SELECT_ALL = "select-all"
+    FIND = "find"
+    CLOSE_SEARCH = "close-search"
 
 
 # `Insert` is copy's legacy alias. It costs one key name and is only ever
@@ -93,10 +95,28 @@ class KeyAction(enum.Enum):
 # route_key, which is why the tuple holds "insert" (lowercase).
 COPY_KEYS = ("c", "insert")
 SELECT_ALL_KEYS = ("a",)
-HANDLED_KEYS = frozenset(COPY_KEYS + SELECT_ALL_KEYS)
+FIND_KEYS = ("f",)
+HANDLED_KEYS = frozenset(COPY_KEYS + SELECT_ALL_KEYS + FIND_KEYS)
+
+# The one key xedown answers for with no modifier held, and the reason it can
+# be: it is claimed only while the preview is showing AND xedown's own search
+# bar is open, which is a state the user put the window in deliberately.
+# `HANDLED_KEYS` and this set are what `__init__.py` short-circuits on, so a
+# key added here is a key xedown starts inspecting on every unmodified press.
+CLOSE_KEYS = ("escape",)
+UNMODIFIED_KEYS = frozenset(CLOSE_KEYS)
 
 
-def route_key(key_name, *, control_only, focus_is_editable, previewing):
+def route_key(
+    key_name,
+    *,
+    control_only,
+    focus_is_editable,
+    previewing,
+    focus_in_preview_search=False,
+    search_open=False,
+    no_modifier=False,
+):
     """What this key press means, or None to leave it to the host.
 
     The order of the guards is the design, cheapest first, and returning None
@@ -106,9 +126,33 @@ def route_key(key_name, *, control_only, focus_is_editable, previewing):
 
     `key_name` arrives already lowercased by the caller (the GTK layer applies
     `Gdk.keyval_to_lower` before calling this function).
+
+    `focus_in_preview_search` is focus inside xedown's own search entry, which
+    is a GtkEditable like any other -- so it is always accompanied by
+    `focus_is_editable`, and it is what tells "our entry" apart from xed's
+    find bar. `search_open` is the bar being visible in the tab being looked
+    at.
     """
+    if no_modifier:
+        # The only unmodified key xedown ever answers for, and only in the one
+        # state where the host has nothing better to do with it.
+        if key_name not in CLOSE_KEYS:
+            return None
+        if not previewing or not search_open:
+            return None
+        if focus_is_editable and not focus_in_preview_search:
+            return None
+        return KeyAction.CLOSE_SEARCH
     if not control_only:
         return None
+    if key_name in FIND_KEYS:
+        # Find is the one Ctrl key that is still ours while focus sits in an
+        # editable, because that editable can be our own search entry.
+        if not previewing:
+            return None
+        if focus_is_editable and not focus_in_preview_search:
+            return None
+        return KeyAction.FIND
     if key_name in COPY_KEYS:
         action = KeyAction.COPY
     elif key_name in SELECT_ALL_KEYS:

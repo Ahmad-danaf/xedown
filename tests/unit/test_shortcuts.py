@@ -146,6 +146,9 @@ def _route(**overrides):
         "control_only": True,
         "focus_is_editable": False,
         "previewing": True,
+        "focus_in_preview_search": False,
+        "search_open": False,
+        "no_modifier": False,
     }
     call.update(overrides)
     key_name = call.pop("key_name")
@@ -203,6 +206,122 @@ def test_capitalized_insert_does_not_match_because_the_caller_lowercases():
     # function to handle capitalised key names, they will see this test fail
     # and understand the intent.
     assert _route(key_name="Insert") is None
+
+
+def test_ctrl_f_in_the_preview_opens_xedowns_own_find():
+    assert _route(key_name="f") is shortcuts.KeyAction.FIND
+
+
+def test_ctrl_f_over_the_source_is_xeds_own_find():
+    assert _route(key_name="f", previewing=False) is None
+
+
+def test_ctrl_f_inside_someone_elses_entry_is_theirs():
+    # xed's find bar, the file browser's rename box, any dialog entry.
+    assert _route(key_name="f", focus_is_editable=True) is None
+
+
+def test_ctrl_f_inside_our_own_search_entry_is_still_ours():
+    # Pressing it again re-selects the query so typing replaces it, rather
+    # than opening xed's find over a preview it does not control.
+    assert (
+        _route(key_name="f", focus_is_editable=True, focus_in_preview_search=True)
+        is shortcuts.KeyAction.FIND
+    )
+
+
+def test_copy_and_select_all_inside_our_search_entry_stay_the_entrys():
+    # The entry is a GtkEditable, so the existing guard already defers to it;
+    # this pins that adding the search flags did not change it.
+    for key in ("c", "a", "insert"):
+        assert (
+            _route(key_name=key, focus_is_editable=True, focus_in_preview_search=True)
+            is None
+        )
+
+
+def test_escape_closes_an_open_preview_search():
+    assert (
+        _route(
+            key_name="escape", control_only=False, no_modifier=True, search_open=True
+        )
+        is shortcuts.KeyAction.CLOSE_SEARCH
+    )
+
+
+def test_escape_with_no_search_open_belongs_to_the_host():
+    assert (
+        _route(
+            key_name="escape", control_only=False, no_modifier=True, search_open=False
+        )
+        is None
+    )
+
+
+def test_escape_over_the_source_belongs_to_the_host():
+    assert (
+        _route(
+            key_name="escape",
+            control_only=False,
+            no_modifier=True,
+            previewing=False,
+            search_open=True,
+        )
+        is None
+    )
+
+
+def test_escape_in_someone_elses_entry_is_theirs():
+    # xed's own find bar closes on Escape, and must keep doing so even while
+    # xedown's bar happens to be open in the same tab.
+    assert (
+        _route(
+            key_name="escape",
+            control_only=False,
+            no_modifier=True,
+            search_open=True,
+            focus_is_editable=True,
+        )
+        is None
+    )
+
+
+def test_escape_in_our_own_entry_closes_our_bar():
+    assert (
+        _route(
+            key_name="escape",
+            control_only=False,
+            no_modifier=True,
+            search_open=True,
+            focus_is_editable=True,
+            focus_in_preview_search=True,
+        )
+        is shortcuts.KeyAction.CLOSE_SEARCH
+    )
+
+
+def test_a_modified_escape_is_never_ours():
+    assert (
+        _route(
+            key_name="escape", control_only=True, no_modifier=False, search_open=True
+        )
+        is None
+    )
+
+
+def test_the_unmodified_keyspace_is_exactly_escape():
+    # __init__.py short-circuits on this set before looking at anything else,
+    # so a key added here is a key xedown starts inspecting on every press.
+    assert shortcuts.UNMODIFIED_KEYS == frozenset({"escape"})
+
+
+def test_find_is_a_routed_key_not_an_accelerator():
+    # Ctrl+F reaches the preview through the key hook, like copy. Registering
+    # it as an accelerator would take it from xed in Markdown mode too, and
+    # would put it in front of the clash fixture as a collision with xed's own
+    # <control>F.
+    assert "f" in shortcuts.HANDLED_KEYS
+    assert all("F" not in action.accelerator for action in shortcuts.ACTIONS)
 
 
 FIXTURE = (
