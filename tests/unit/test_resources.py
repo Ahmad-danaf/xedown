@@ -619,3 +619,37 @@ def test_no_search_highlight_colour_is_hardcoded(preview_css):
         for name, value in parsed[selector].items():
             if name in ("background", "color", "outline"):
                 assert "var(--xedown-" in value, f"{selector} {{ {name} }} is a literal"
+
+
+def test_the_script_exposes_the_search_entry_points(preview_js):
+    for symbol in ("search:", "setSearchIndex:", "clearSearch:"):
+        assert symbol in preview_js
+
+
+def test_the_search_walk_skips_the_copy_button(preview_js):
+    # The copy button is the one thing inside the article that `user-select:
+    # none` keeps out of a selection, and search covers exactly what
+    # select-all would give you.
+    assert "xedown-copy" in preview_js
+    assert "FILTER_REJECT" in preview_js
+
+
+def test_the_current_match_is_scrolled_to_without_animation(preview_js):
+    # This fires on every keystroke while the reader types; smooth scrolling
+    # would animate the page on each one.
+    body = preview_js[preview_js.index("function setSearchIndex(") :]
+    assert 'behavior: "auto"' in body
+    assert "smooth" not in body[: body.index("function ", 10)]
+
+
+def test_the_script_stops_marking_at_the_python_cap(preview_js):
+    from xedown.search import MATCH_CAP
+
+    assert f"MATCH_CAP = {MATCH_CAP}" in preview_js
+
+
+def test_a_body_swap_reapplies_the_live_search(preview_js):
+    # Auto-refresh replaces the body every 250 ms while the reader types; the
+    # highlighting has to survive that rather than flicker away.
+    body = preview_js[preview_js.index("function replaceBody(") :]
+    assert "runSearch(" in body[: body.index("function scrollToAnchor(")]

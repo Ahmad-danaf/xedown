@@ -298,6 +298,194 @@
     }
   }
 
+  /* --- search ------------------------------------------------------------
+
+     Three entry points that decide nothing: the host asks for a query to be
+     marked, for a match to become the current one, or for everything to be
+     put back. Which match is current, how many there are and what the label
+     says all live in search.py, on the other side of the message channel. */
+
+  var MATCH_CAP = 2000;
+  var MARK_CLASS = "xedown-match";
+  var CURRENT_CLASS = "xedown-match-current";
+
+  /* Every inline element the sanitizer allows, plus our own <mark>. Anything
+     else is a block, and a match never crosses one: the reader sees two
+     blocks, not one line. Tag names as the DOM reports them: uppercase. */
+  var INLINE_TAGS = {
+    A: 1, BDI: 1, CODE: 1, DEL: 1, EM: 1, IMG: 1, INPUT: 1, MARK: 1,
+    S: 1, SPAN: 1, STRONG: 1, SUB: 1, SUP: 1
+  };
+
+  /* The query the host last asked for, so a body swap can re-apply it. */
+  var activeSearch = null;
+
+  function blockOf(node) {
+    var element = node.parentNode;
+    while (element && element.nodeType === 1 && INLINE_TAGS[element.tagName]) {
+      element = element.parentNode;
+    }
+    return element;
+  }
+
+  function isSpace(character) {
+    return character === " " || character === "\t" || character === "\n" ||
+      character === "\r" || character === "\f";
+  }
+
+  /* The rendered text as the reader sees it, plus one {node, offset} per
+     character so a match position can be turned back into a DOM range.
+
+     Whitespace is collapsed because HTML collapses it: Python-Markdown keeps
+     the newline from a paragraph the author wrapped over two source lines,
+     and searching for the phrase has to find it. The collapse spans nodes, so
+     the space between <em>a</em> and <em>b</em> survives. A "\n" is emitted
+     at every block boundary and at every <br>; the search entry is
+     single-line, so no query can contain one and no match can cross one. */
+  function collectText(root) {
+    var walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT,
+      {
+        acceptNode: function (node) {
+          if (node.nodeType === 1 && node.className &&
+              String(node.className).indexOf("xedown-copy") !== -1) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      },
+      false
+    );
+    var text = "";
+    var map = [];
+    var lastBlock = null;
+    var pending = null;
+    var node;
+    while ((node = walker.nextNode())) {
+      if (node.nodeType === 1) {
+        if (node.tagName === "BR") { text += "\n"; map.push(null); pending = null; }
+        continue;
+      }
+      var block = blockOf(node);
+      if (lastBlock !== null && block !== lastBlock) {
+        text += "\n";
+        map.push(null);
+        pending = null;
+      }
+      lastBlock = block;
+      var raw = node.nodeValue || "";
+      for (var i = 0; i < raw.length; i++) {
+        var character = raw.charAt(i);
+        if (isSpace(character)) {
+          if (!pending) { pending = { node: node, offset: i }; }
+          continue;
+        }
+        if (pending) { text += " "; map.push(pending); pending = null; }
+        text += character;
+        map.push({ node: node, offset: i });
+      }
+    }
+    return { text: text, map: map };
+  }
+
+  /* One entry per text node the match covers: a match crossing <strong>
+     produces two, which is why the match number is an attribute rather than a
+     position in a node list. */
+  function collectGroups(map, start, end, index, into) {
+    for (var i = start; i < end; i++) {
+      var entry = map[i];
+      if (!entry) { continue; }
+      var last = into.length ? into[into.length - 1] : null;
+      if (last && last.node === entry.node && last.index === index) {
+        last.end = entry.offset + 1;
+      } else {
+        into.push({
+          node: entry.node,
+          start: entry.offset,
+          end: entry.offset + 1,
+          index: index
+        });
+      }
+    }
+  }
+
+  /* Applied in reverse document order by the caller: splitText invalidates
+     every offset after the split, and taking the last one first means no
+     offset is ever used after it has moved. */
+  function wrapGroup(group) {
+    var node = group.node;
+    if (!node.parentNode) { return; }
+    var target = group.start > 0 ? node.splitText(group.start) : node;
+    var length = group.end - group.start;
+    if (length < (target.nodeValue || "").length) { target.splitText(length); }
+    var mark = document.createElement("mark");
+    mark.className = MARK_CLASS;
+    mark.setAttribute("data-xedown-match", String(group.index));
+    target.parentNode.replaceChild(mark, target);
+    mark.appendChild(target);
+  }
+
+  function runSearch(query, caseSensitive, token) {
+    clearSearch();
+    var count = 0;
+    var capped = false;
+    var root = content();
+    if (root && query) {
+      var collected = collectText(root);
+      var haystack = caseSensitive
+        ? collected.text
+        : collected.text.toLowerCase();
+      var needle = caseSensitive ? query : query.toLowerCase();
+      var groups = [];
+      var from = 0;
+      while (needle) {
+        var at = haystack.indexOf(needle, from);
+        if (at < 0) { break; }
+        if (count >= MATCH_CAP) { capped = true; break; }
+        collectGroups(collected.map, at, at + needle.length, count, groups);
+        count += 1;
+        from = at + needle.length;
+      }
+      for (var i = groups.length - 1; i >= 0; i--) { wrapGroup(groups[i]); }
+      activeSearch = { query: query, caseSensitive: caseSensitive, token: token };
+    }
+    post({ type: "search", count: count, capped: capped, token: token });
+  }
+
+  function setSearchIndex(index) {
+    var root = content();
+    if (!root) { return; }
+    var wanted = String(index);
+    var marks = root.querySelectorAll("mark." + MARK_CLASS);
+    var first = null;
+    for (var i = 0; i < marks.length; i++) {
+      var mine = marks[i].getAttribute("data-xedown-match") === wanted;
+      toggleClass(marks[i], CURRENT_CLASS, mine);
+      if (mine && first === null) { first = marks[i]; }
+    }
+    /* Not animated: this runs on every keystroke while the reader types. */
+    if (first) { first.scrollIntoView({ block: "center", behavior: "auto" }); }
+  }
+
+  /* Every mark on the page is ours -- `mark` is not in the sanitizer's
+     allowlist -- so this can take them all without asking, and normalize()
+     puts the split text nodes back the way they were. */
+  function clearSearch() {
+    activeSearch = null;
+    var root = content();
+    if (!root) { return; }
+    var marks = root.querySelectorAll("mark");
+    for (var i = 0; i < marks.length; i++) {
+      var mark = marks[i];
+      var parent = mark.parentNode;
+      if (!parent) { continue; }
+      while (mark.firstChild) { parent.insertBefore(mark.firstChild, mark); }
+      parent.removeChild(mark);
+    }
+    root.normalize();
+  }
+
   function decorate(root) {
     /* Before highlight(): what gets copied is what the author wrote, not
        what the highlighter left behind. */
@@ -351,10 +539,14 @@
     var target = content();
     if (!target) { return; }
     var previous = getScroll();
+    var search = activeSearch;
     if (dir === "ltr" || dir === "rtl") { target.setAttribute("dir", dir); }
     target.innerHTML = html;
     decorate(target);
     setScroll(previous);
+    /* The swap took the marks with it. Re-running the same query reports the
+       new count, and the host clamps the current match into it. */
+    if (search) { runSearch(search.query, search.caseSensitive, search.token); }
   }
 
   function scrollToAnchor(name) {
@@ -392,7 +584,10 @@
     scrollToAnchor: scrollToAnchor,
     setMetrics: setMetrics,
     setConfig: setConfig,
-    copyResult: copyResult
+    copyResult: copyResult,
+    search: runSearch,
+    setSearchIndex: setSearchIndex,
+    clearSearch: clearSearch
   };
 
   if (document.readyState === "loading") {
