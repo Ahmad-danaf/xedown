@@ -464,7 +464,7 @@
       toggleClass(marks[i], CURRENT_CLASS, mine);
       if (mine && first === null) { first = marks[i]; }
     }
-    /* Not animated: this runs on every keystroke while the reader types. */
+    /* Never smooth: this runs on every keystroke while the reader types. */
     if (first) { first.scrollIntoView({ block: "center", behavior: "auto" }); }
   }
 

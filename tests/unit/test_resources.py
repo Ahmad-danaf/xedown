@@ -636,10 +636,14 @@ def test_the_search_walk_skips_the_copy_button(preview_js):
 
 def test_the_current_match_is_scrolled_to_without_animation(preview_js):
     # This fires on every keystroke while the reader types; smooth scrolling
-    # would animate the page on each one.
+    # would animate the page on each one. Comments are stripped before the
+    # scan so the assertion is about what the code does, not about a word
+    # that appears in the prose explaining it.
     body = preview_js[preview_js.index("function setSearchIndex(") :]
-    assert 'behavior: "auto"' in body
-    assert "smooth" not in body[: body.index("function ", 10)]
+    body = body[: body.index("function ", 10)]
+    code = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    assert 'behavior: "auto"' in code
+    assert "smooth" not in code
 
 
 def test_the_script_stops_marking_at_the_python_cap(preview_js):
