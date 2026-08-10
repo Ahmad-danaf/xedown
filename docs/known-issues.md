@@ -179,3 +179,25 @@ it was accepted deliberately rather than missed.
 The count reads `2000+` and `Enter` cycles the first 2000. A query that matches
 more than that is filtering rather than searching, and marking tens of
 thousands of elements on every keystroke would make the preview stutter.
+
+## A case-insensitive preview search can miss a Greek word-final sigma
+
+Case-insensitive search folds the rendered text to lowercase one character at
+a time, rather than lowercasing the whole string in one call. That is
+deliberate: U+0130 — the dotted capital `İ` that opens Turkish words like
+`İstanbul` — is the one character in all of Unicode that becomes two UTF-16
+units when lowercased, and the search tracks matches by position in the
+original text. Fold the whole string at once and that one character throws
+the positions out of step with the text they came from, so a match could
+highlight the wrong stretch of the document, or claim a match and highlight
+nothing. Folding a character at a time avoids that by leaving such a
+character as itself instead of letting it grow.
+
+The cost lands on Greek: lowercasing a whole string in one call knows to
+write a word-final capital sigma as `ς` rather than `σ`, but that rule needs
+to see the whole word, and folding one character at a time never gets to.
+So a case-insensitive query typed `οδος` (with the word-final form) no
+longer matches all-caps `ΟΔΟΣ`; typed `οδοσ` instead, it does.
+Case-sensitive search, and every other language, are unaffected. This was
+taken deliberately, not missed: a Greek query occasionally needing its other
+spelling costs less than a search that can highlight the wrong text.
