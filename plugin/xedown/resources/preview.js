@@ -434,6 +434,21 @@
     mark.appendChild(target);
   }
 
+  /* Lowercasing the whole string would desync `map`: U+0130 is the one
+     character whose UTF-16 length changes under toLowerCase, so every
+     position after one would shift. Folding per character and keeping any
+     character whose lowercase is not a single unit keeps the haystack the
+     same length as the map -- the case-insensitive comparison loses that one
+     character, which is the right trade against marking the wrong text. */
+  function fold(text) {
+    var out = "";
+    for (var i = 0; i < text.length; i++) {
+      var lower = text.charAt(i).toLowerCase();
+      out += lower.length === 1 ? lower : text.charAt(i);
+    }
+    return out;
+  }
+
   function runSearch(query, caseSensitive, token) {
     clearSearch();
     var count = 0;
@@ -441,10 +456,8 @@
     var root = content();
     if (root && query) {
       var collected = collectText(root);
-      var haystack = caseSensitive
-        ? collected.text
-        : collected.text.toLowerCase();
-      var needle = caseSensitive ? query : query.toLowerCase();
+      var haystack = caseSensitive ? collected.text : fold(collected.text);
+      var needle = caseSensitive ? query : fold(query);
       var groups = [];
       var from = 0;
       while (needle) {

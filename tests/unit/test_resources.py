@@ -652,6 +652,28 @@ def test_the_script_stops_marking_at_the_python_cap(preview_js):
     assert f"MATCH_CAP = {MATCH_CAP}" in preview_js
 
 
+def test_the_case_fold_keeps_the_haystack_the_same_length_as_the_map(preview_js):
+    # `collectText` builds one map entry per character of the flattened text,
+    # and a match position is only meaningful in those coordinates. U+0130
+    # (`İ`) is the one character in Unicode whose UTF-16 length changes under
+    # `String.prototype.toLowerCase` -- it becomes two units -- so folding the
+    # whole string at once makes the haystack longer than the map and shifts
+    # every match after one by a character each. The count stays right, which
+    # is what makes it invisible: the bar says "1 of 1" while the mark sits
+    # over the wrong text, or over nothing at all.
+    #
+    # Folding per character is the fix, and it has to be applied to both
+    # sides of the compare. Comments are stripped before the scan so this
+    # asserts what the code does rather than what the prose beside it says.
+    assert "function fold(text)" in preview_js
+    body = preview_js[preview_js.index("function runSearch(") :]
+    body = body[: body.index("function setSearchIndex(")]
+    code = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
+    assert "toLowerCase" not in code, "runSearch must fold through fold(), not inline"
+    assert "fold(collected.text)" in code
+    assert "fold(query)" in code
+
+
 def test_a_body_swap_reapplies_the_live_search(preview_js):
     # Auto-refresh replaces the body every 250 ms while the reader types; the
     # highlighting has to survive that rather than flicker away.
