@@ -73,8 +73,8 @@ rows 13–15 and rows 32–34. Use `tests/fixtures/edge-cases.md` specifically f
 cases, not mistakes — see `tests/fixtures/README.md` before changing anything in it.
 While `edge-cases.md` is open, it is also worth glancing over its basic
 bidirectional-text cases (an Arabic paragraph, heading, list, table, blockquote, and
-a Python fence with Arabic comments that must stay left-to-right) and its
-demonstration of the known GFM paragraph/list gap tracked in `docs/known-issues.md`
+a Python fence with Arabic comments that must stay left-to-right) and the list
+written directly under a paragraph with no blank line, which renders as a list
 — neither has its own numbered row, but both are real content in that file and
 worth a look while it is on screen. Rows 32–34 also need a scratch stylesheet at
 `~/.config/xedown/mine.css`, which row 46 removes.
