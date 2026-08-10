@@ -153,3 +153,29 @@ copies correctly, since that is the surface xed's fallback actually reaches.
 **Status:** known limitation, degrading to v0.1 behaviour rather than
 breaking. A real fix needs matching on hardware keycode instead of
 translated keyval, which is a larger change than this fix belongs in.
+
+## A preview search does not match across a block boundary
+
+Searching the preview for a phrase that starts in one paragraph and finishes
+in the next finds nothing, and the same goes for a heading and the text under
+it. This is deliberate: the reader sees two blocks, not one line, and the
+flattened text the search runs over puts a line break between them. Matching
+across inline markup — a phrase containing a bold or italic word, or one the
+author wrapped over two source lines — does work.
+
+## A preview search's highlight can show a seam inside a run of whitespace
+
+Searching for a match whose whitespace is split across an element boundary —
+markup like `a <em> </em> b`, where a space sits alone inside its own inline
+tag — highlights only the part of that whitespace run that falls in the
+first text node. The match is still found and still counted correctly; only
+its highlight is broken into two marks with an unhighlighted gap between
+them, instead of one continuous strip. This needs an element boundary inside
+a run of whitespace to occur at all, which is uncommon, and it is cosmetic —
+it was accepted deliberately rather than missed.
+
+## A very broad preview search stops highlighting at 2000 matches
+
+The count reads `2000+` and `Enter` cycles the first 2000. A query that matches
+more than that is filtering rather than searching, and marking tens of
+thousands of elements on every keystroke would make the preview stutter.

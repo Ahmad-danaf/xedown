@@ -111,10 +111,23 @@ Preview*. Both the shortcut and the menu entry are greyed out for files that
 are not Markdown. Preview and Markdown each remember their own scroll position,
 and viewing never changes the file.
 
+### Finding text
+
+`Ctrl+F` while the preview is showing opens a search bar for the rendered
+document; `Ctrl+F` while the Markdown source is showing opens xed's own find.
+Typing searches as you type, `Enter` and `Shift+Enter` move between matches
+and wrap around, `Aa` toggles case sensitivity, and `Escape` closes the bar,
+clears the highlighting and puts focus back on the page.
+
+The search covers what you can see: rendered text, not Markdown syntax. A
+match never spans a blank line or a paragraph break, and very broad queries
+stop being highlighted after 2000 matches (the count then reads `2000+`).
+
 ## Known limitations
 
-- Find and go-to-line operate on the source text and are inert while Preview
-  is showing; switch to Markdown mode to use them.
+- Go-to-line operates on the source text and is inert while Preview is
+  showing; switch to Markdown mode to use it. Find is no longer among them —
+  `Ctrl+F` in Preview searches the rendered document (see *Finding text*).
 - There is no scroll synchronisation between Preview and Markdown modes —
   each mode keeps its own independent scroll position.
 - **Remote images are never fetched.** A `https://` image shows a

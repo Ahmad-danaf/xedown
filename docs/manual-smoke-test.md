@@ -154,6 +154,19 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 67 | Switch it to Preview, close the tab, and reopen the same file | It opens in Preview: the remembered mode wins over the default |
 | 68 | Set `"remember_mode_per_file": false`, restart xed, and reopen that same file | It opens in Markdown again — the default decides once more |
 | 69 | Clean up: remove `default_mode`, `remember_mode_per_file` and `auto_refresh` from `~/.config/xedown/settings.json`, and delete `~/.config/xedown/modes.json` | Your normal settings are restored |
+| 70 | Open a long `.md` file in Preview and press <kbd>Ctrl</kbd>+<kbd>F</kbd> | A search bar appears under the preview with the cursor already in it |
+| 71 | Type a word that occurs several times | Matches highlight as you type, the current one is scrolled into view, and the count reads `1 of N` |
+| 72 | Press <kbd>Enter</kbd> a few times, then <kbd>Shift</kbd>+<kbd>Enter</kbd> | The current match moves forward then back, the count follows, and each one is scrolled into view |
+| 73 | Keep pressing <kbd>Enter</kbd> past the last match | It wraps to the first |
+| 74 | Type something the document does not contain | `No matches`, and no highlighting anywhere |
+| 75 | Search a word with mixed case, then click `Aa` | The count changes to the case-sensitive one |
+| 76 | Select a paragraph next to a highlighted match, in each of the four themes, light and dark | The highlight is legible in every one, and is unmistakably not the selection |
+| 77 | Press <kbd>Escape</kbd> | The bar goes, every highlight goes, and the arrow keys scroll the preview immediately |
+| 78 | Open the bar again, then switch to Markdown mode | The bar closes |
+| 79 | Press <kbd>Ctrl</kbd>+<kbd>F</kbd> in Markdown mode | xed's own find bar appears, exactly as it always has |
+| 80 | In `tests/fixtures/showcase.md`, search `with bold text` — it starts in plain text and crosses into the bold word — and step to it so it is the current match | The highlight, outline included, reads as one continuous run across the boundary, not two boxes with a seam |
+| 81 | Search `Hello` (it appears inside the Python fenced block in `tests/fixtures/showcase.md`), in each of the four themes, light and dark | The match highlight stays readable against the syntax-highlighting colours behind it, in every combination |
+| 82 | With a search open and a match highlighted, switch the desktop between light and dark | The preview comes back themed to match, the highlighting and match count are still there, and it settles at a sensible scroll position rather than jumping |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

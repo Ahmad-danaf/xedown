@@ -91,6 +91,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [docs/settings.md](docs/settings.md) for what each one does; the settings
   window that will edit them, and `watch_external_changes`, are still to come
   later in v0.2.
+- Find in the preview: `Ctrl+F` searches the rendered document, with match
+  counting, wrapping navigation, a case toggle and highlighting themed for all
+  four themes in both appearances. `Ctrl+F` over the Markdown source is still
+  xed's own find. Closes v0.1's documented gap.
 
 ### Fixed
 
