@@ -53,14 +53,15 @@ if _HOST_AVAILABLE:
         if hasattr(view, _CONTROLLER_ATTRIBUTE):
             delattr(view, _CONTROLLER_ATTRIBUTE)
 
-    def _focus_is_editable(window):
+    def _focus_is_editable(focus):
         """True when this keystroke belongs to something the user types into.
 
         xed's find bar, the file browser's rename entry and any dialog entry
         are `GtkEditable`s; the source view is a `GtkTextView`. Copy in any of
-        them is theirs, not the preview's.
+        them is theirs, not the preview's. Takes the focused widget rather
+        than the window because the caller needs that widget anyway, to ask
+        whether it is xedown's own search entry.
         """
-        focus = window.get_focus()
         return isinstance(focus, (Gtk.Editable, Gtk.TextView))
 
     class XedownWindowActivatable(GObject.Object, Xed.WindowActivatable):
@@ -221,34 +222,52 @@ if _HOST_AVAILABLE:
             return getattr(view, _CONTROLLER_ATTRIBUTE, None) if view else None
 
         def _on_key_press(self, _window, event):
-            """Give copy and select-all to whichever surface is visible.
+            """Give the visible surface the keys that belong to it.
 
             Two cheap tests before anything else is looked at, because this
             sees every key press in the window; `shortcuts.route_key` remains
-            the authority on what the press means.
+            the authority on what the press means. Escape is the one key
+            considered without a modifier, and only because the sets below
+            keep that to a single name.
             """
             key_name = (
                 Gdk.keyval_name(Gdk.keyval_to_lower(event.keyval)) or ""
             ).lower()
-            control_only = (
-                event.state & Gtk.accelerator_get_default_mod_mask()
-            ) == Gdk.ModifierType.CONTROL_MASK
-            if not control_only or key_name not in shortcuts.HANDLED_KEYS:
+            modifiers = event.state & Gtk.accelerator_get_default_mod_mask()
+            control_only = modifiers == Gdk.ModifierType.CONTROL_MASK
+            no_modifier = modifiers == 0
+            if control_only:
+                if key_name not in shortcuts.HANDLED_KEYS:
+                    return False
+            elif no_modifier:
+                if key_name not in shortcuts.UNMODIFIED_KEYS:
+                    return False
+            else:
                 return False
 
             controller = self._active_controller()
+            focus = self.window.get_focus()
             action = shortcuts.route_key(
                 key_name,
                 control_only=control_only,
-                focus_is_editable=_focus_is_editable(self.window),
+                no_modifier=no_modifier,
+                focus_is_editable=_focus_is_editable(focus),
                 previewing=controller is not None and controller.is_previewing,
+                focus_in_preview_search=(
+                    controller is not None and controller.focus_is_search_entry(focus)
+                ),
+                search_open=controller is not None and controller.is_searching,
             )
             if action is None:
                 return False
             if action is shortcuts.KeyAction.COPY:
                 controller.preview.copy_selection()
-            else:
+            elif action is shortcuts.KeyAction.SELECT_ALL:
                 controller.preview.select_all()
+            elif action is shortcuts.KeyAction.FIND:
+                controller.open_search()
+            else:
+                controller.close_search()
             return True
 
         def _markdown_controller(self):
