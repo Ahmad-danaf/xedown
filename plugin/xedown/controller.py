@@ -24,6 +24,8 @@ from .document_state import DocumentState, Mode, is_markdown_path, mode_from_set
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
+from .search import SearchSession
+from .searchbar import SearchBar
 
 
 class TabController:
@@ -38,6 +40,8 @@ class TabController:
 
         self.state = DocumentState()
         self.modebar = None
+        self.searchbar = None
+        self.search = SearchSession()
         self.preview = None
         self.appearance_watcher = None
         self._settings_token = None
@@ -113,6 +117,9 @@ class TabController:
         if self.modebar is not None:
             self.modebar.destroy()
             self.modebar = None
+        if self.searchbar is not None:
+            self.searchbar.destroy()
+            self.searchbar = None
         self._built = False
 
     def _connect(self, owner, signal, callback):
@@ -196,9 +203,20 @@ class TabController:
         self._connect(self.modebar, "refresh-requested", self._on_refresh_requested)
 
         self.preview = PreviewView(
-            on_link=self._on_link_activated, on_image_error=self._on_image_error
+            on_link=self._on_link_activated,
+            on_image_error=self._on_image_error,
+            on_search=self._on_search_count,
         )
         self.tab.pack_start(self.preview.widget, True, True, 0)
+
+        # Packed from the trailing edge, so it sits under the preview where
+        # xed's own find bar sits. The mode bar keeps the top; nothing in
+        # _enforce_visibility touches the end of the box.
+        self.searchbar = SearchBar()
+        self.tab.pack_end(self.searchbar, False, False, 0)
+        self._connect(self.searchbar, "query-changed", self._on_search_query_changed)
+        self._connect(self.searchbar, "step-requested", self._on_search_step)
+        self._connect(self.searchbar, "close-requested", self._on_search_close)
 
         self._connect(self.document, "changed", self._on_buffer_changed)
 
@@ -281,6 +299,10 @@ class TabController:
                 # docstring.
                 self.preview.widget.grab_focus()
         else:
+            # Before the widgets swap, not after: the marks come out of a page
+            # that is still the visible one, and a bar left open would hang
+            # over an editor it does not control.
+            self.close_search(focus_preview=False)
             # Mirror the frame's mitigation on the other widget: without
             # this, a bare show_all() on the tab while in source mode would
             # re-reveal the WebView (packed expand=True) alongside the
@@ -371,6 +393,94 @@ class TabController:
             return False
 
         GLib.idle_add(apply_scroll)
+
+    # --- search ------------------------------------------------------------
+
+    @property
+    def is_searching(self):
+        """The search bar is open in this tab."""
+        return self.searchbar is not None and self.searchbar.get_visible()
+
+    def focus_is_search_entry(self, widget):
+        """`widget` is this tab's own search entry, not somebody else's."""
+        return self.searchbar is not None and self.searchbar.owns_focus(widget)
+
+    def open_search(self):
+        """Show the bar and put the cursor in it.
+
+        Re-runs whatever query the entry still holds: the bar keeps its text
+        for the life of the tab, and reopening it over a query with no
+        highlighting would look broken.
+        """
+        if not self._built or self.state.mode is not Mode.PREVIEW:
+            return
+        self.searchbar.show()
+        self.searchbar.focus_entry()
+        self._request_search(
+            self.searchbar.get_query(), self.searchbar.get_case_sensitive()
+        )
+
+    def close_search(self, focus_preview=True):
+        """Hide the bar, take the marks out, and hand focus back.
+
+        `focus_preview` is False for the one caller that is on its way
+        somewhere else: a mode switch to Markdown, which grabs focus for the
+        source view a moment later and must not have it taken back.
+        """
+        if self.searchbar is None or not self.searchbar.get_visible():
+            return
+        self.searchbar.hide()
+        self.searchbar.set_status("")
+        self.search.clear()
+        if self.preview is not None:
+            self.preview.clear_search()
+            if focus_preview:
+                self.preview.widget.grab_focus()
+
+    def _request_search(self, query, case_sensitive):
+        """Take a query from the bar and ask whoever can answer it."""
+        if not self.search.set_query(query, case_sensitive):
+            return
+        if not self.search.active:
+            if self.preview is not None:
+                self.preview.clear_search()
+            self.searchbar.set_status(self.search.status())
+            return
+        if not self._page_is_document:
+            # An error page carries no preview.js, so there is nobody to ask
+            # and the honest answer is none. Answering here rather than
+            # refusing to open the bar is what keeps Ctrl+F behaving the same
+            # way everywhere.
+            self._report_search(0, False, self.search.token)
+            return
+        self.preview.search(
+            self.search.query, self.search.case_sensitive, self.search.token
+        )
+
+    def _report_search(self, count, capped, token):
+        if not self.search.report(count, capped, token):
+            return  # an answer for a query the user has already replaced
+        if self.search.index >= 0 and self.preview is not None:
+            self.preview.set_search_index(self.search.index)
+        if self.searchbar is not None:
+            self.searchbar.set_status(self.search.status())
+
+    def _on_search_count(self, count, capped, token):
+        self._report_search(count, capped, token)
+
+    def _on_search_query_changed(self, _bar, query, case_sensitive):
+        self._request_search(query, case_sensitive)
+
+    def _on_search_step(self, _bar, forward):
+        index = self.search.step(forward)
+        if index is None:
+            return
+        if self.preview is not None:
+            self.preview.set_search_index(index)
+        self.searchbar.set_status(self.search.status())
+
+    def _on_search_close(self, _bar):
+        self.close_search()
 
     # --- the verified host hazard -----------------------------------------
 
@@ -482,6 +592,10 @@ class TabController:
         self._page_is_document = not errors.is_error_page(html)
         self.state.preview_stale = False
         self._update_refresh_cue()
+        if not self._page_is_document and self.search.active:
+            # The page that could have answered is gone. Say so, rather than
+            # leaving the bar showing a count for a document nobody can see.
+            self._report_search(0, False, self.search.token)
 
     def _buffer_text(self):
         start, end = self.document.get_bounds()
