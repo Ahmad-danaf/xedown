@@ -1,6 +1,6 @@
 import pytest
 from xedown import vendoring
-from xedown.mdext import make_extensions
+from xedown.mdext import find_list_interrupt, make_extensions
 
 
 @pytest.fixture
@@ -180,3 +180,45 @@ def test_a_marker_with_no_content_does_not_start_a_list(convert):
 
 def test_a_deeply_indented_marker_does_not_interrupt(convert):
     assert "<ul>" not in convert("Some text\n    - deep")
+
+
+# --- The rule itself (brief 16) ---
+
+
+def test_a_marker_on_the_first_line_is_not_an_interrupt():
+    # Line 0 is never a candidate: a block that begins with a marker is
+    # already a list. Note this is about line 0 only -- "- a\n- b" returns 1,
+    # because line 1 does start a list. That block never reaches the
+    # processor: `ulist` claims it at priority 30, well above 12.
+    assert find_list_interrupt("- only item") is None
+
+
+def test_the_first_interrupting_line_is_found():
+    assert find_list_interrupt("Text.\n- item") == 1
+    assert find_list_interrupt("Text.\nmore text\n1. item") == 2
+
+
+def test_every_unordered_marker_is_recognised():
+    for marker in ("-", "*", "+"):
+        assert find_list_interrupt(f"Text.\n{marker} item") == 1
+
+
+def test_only_an_ordered_list_starting_at_one_is_recognised():
+    assert find_list_interrupt("Text.\n1. item") == 1
+    assert find_list_interrupt("Text.\n2. item") is None
+
+
+def test_up_to_three_spaces_of_indent_are_tolerated():
+    # Three is the vendored list processors' own tolerance. Four is a
+    # continuation line, not a marker.
+    assert find_list_interrupt("Text.\n   - item") == 1
+    assert find_list_interrupt("Text.\n    - item") is None
+
+
+def test_a_marker_needs_content_after_it():
+    assert find_list_interrupt("Text.\n- ") is None
+    assert find_list_interrupt("Text.\n-item") is None
+
+
+def test_an_empty_block_has_no_interrupt():
+    assert find_list_interrupt("") is None

@@ -13,6 +13,30 @@ _TASK_MARKER = re.compile(r"^\[([ xX])\]\s+")
 
 _STRIKETHROUGH_PATTERN = r"(~{2})(.+?)~{2}"
 
+# A list marker allowed to interrupt a paragraph: up to three spaces of
+# indent, then `-`, `*`, `+` or `1.`, then a space and real content.
+#
+# `1.` rather than `\d+\.` is GFM's own rule, and it is what keeps prose that
+# wraps onto a line starting with a number ("...was\n1985. What a year.") a
+# paragraph rather than an `<ol start="1985">`. The lookahead is GFM's rule
+# that an empty list item cannot interrupt. Three spaces is the tolerance the
+# vendored list processors already use.
+_INTERRUPTING_MARKER = re.compile(r"^[ ]{0,3}(?:[*+-]|1\.)[ ]+(?=\S)")
+
+
+def find_list_interrupt(block):
+    """Index of the first line in `block` that starts a list, or None.
+
+    Line 0 is never a candidate: a block that *begins* with a list marker is
+    already a list, and this only ever looks for a list interrupting text
+    above it.
+    """
+    lines = block.split("\n")
+    for index, line in enumerate(lines[1:], 1):
+        if _INTERRUPTING_MARKER.match(line):
+            return index
+    return None
+
 
 def make_extensions(markdown_module):
     """Return xedown's extension instances, bound to `markdown_module`."""
