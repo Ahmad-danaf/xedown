@@ -79,6 +79,18 @@ class SearchSession:
         self.capped = False
         self._token += 1
 
+    def invalidate(self):
+        """Stop wanting answers for the query as it stands, and say so.
+
+        Returns the new token. `clear()` bumps the token as part of ending
+        the search; this bumps it while the search stays live, which is what
+        the controller needs when it starts answering on the page's behalf:
+        the page that would have replied is gone, and a reply of its already
+        in flight must not be believed.
+        """
+        self._token += 1
+        return self._token
+
     # --- the three things that happen --------------------------------------
 
     def set_query(self, text, case_sensitive):

@@ -593,9 +593,10 @@ class TabController:
         self.state.preview_stale = False
         self._update_refresh_cue()
         if not self._page_is_document and self.search.active:
-            # The page that could have answered is gone. Say so, rather than
-            # leaving the bar showing a count for a document nobody can see.
-            self._report_search(0, False, self.search.token)
+            # The page that could have answered is gone. Bump the token first,
+            # so a reply already in flight from that page cannot land after
+            # this one and put a count back on a document nobody can see.
+            self._report_search(0, False, self.search.invalidate())
 
     def _buffer_text(self):
         start, end = self.document.get_bounds()

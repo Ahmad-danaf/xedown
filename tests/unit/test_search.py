@@ -186,3 +186,42 @@ def test_clearing_ends_the_search_and_refuses_what_is_in_flight():
     assert session.total is None
     assert session.index == -1
     assert session.report(12, False, in_flight) is False
+
+
+def test_invalidate_moves_the_token_and_returns_the_new_one():
+    session = SearchSession()
+    session.set_query("para", False)
+    token_before = session.token
+    returned = session.invalidate()
+    assert session.token != token_before
+    assert returned == session.token
+
+
+def test_invalidate_leaves_the_search_itself_alone():
+    # Not clear(): the query, the case flag, and whatever answer the session
+    # already holds all survive -- only the token moves.
+    session = SearchSession()
+    session.set_query("para", True)
+    session.report(9, False, session.token)
+    session.step(True)
+    query_before = session.query
+    case_before = session.case_sensitive
+    total_before = session.total
+    index_before = session.index
+    session.invalidate()
+    assert session.active is True
+    assert session.query == query_before
+    assert session.case_sensitive == case_before
+    assert session.total == total_before
+    assert session.index == index_before
+
+
+def test_invalidate_refuses_the_answer_it_superseded_and_accepts_the_new_one():
+    session = SearchSession()
+    session.set_query("para", False)
+    stale = session.token
+    fresh = session.invalidate()
+    assert session.report(5, False, stale) is False
+    assert session.total is None
+    assert session.report(5, False, fresh) is True
+    assert session.total == 5
