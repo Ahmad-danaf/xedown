@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counting, wrapping navigation, a case toggle and highlighting themed for all
   four themes in both appearances. `Ctrl+F` over the Markdown source is still
   xed's own find. Closes v0.1's documented gap.
+- While the preview is showing, the keyboard now stays with it: whenever
+  focus lands on the hidden source text instead — switching to the tab, or
+  dismissing something that had focus — the preview takes it back, so the
+  arrow keys and <kbd>Page Down</kbd> scroll what you are reading straight
+  away.
 
 ### Fixed
 
