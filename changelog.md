@@ -135,5 +135,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - xedown supports selected GitHub-flavored Markdown features (tables, task
   lists, strikethrough, fenced code, and footnotes), not full GFM
   compatibility. A list does not currently interrupt a paragraph without an
-  intervening blank line, unlike GFM. See
-  [docs/known-issues.md](docs/known-issues.md). Targeted for v0.2.
+  intervening blank line, unlike GFM (fixed in Unreleased).

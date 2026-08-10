@@ -101,11 +101,15 @@ def make_extensions(markdown_module):
         """Split a paragraph block where a list starts inside it.
 
         Registered below every other block processor and just above
-        `paragraph`, so every block it is offered has already been declined by
-        `setextheader`, `hr`, `olist`, `ulist` and the rest: it only ever sees
-        blocks that were about to become a `<p>`. That is what keeps `---` a
-        heading underline or a rule, and what makes a first-line guard against
-        blocks that are already lists unnecessary.
+        `paragraph`, so every block it is offered has already been declined
+        by `setextheader`, `hr`, `olist`, `ulist` and the rest: priority 12
+        guarantees that no existing heading, rule, fence, indented code
+        block, table or nested list is ever destroyed by this processor,
+        which is also what makes a first-line guard against blocks that are
+        already lists unnecessary. It does not guarantee what happens to the
+        lower half `run` pushes back onto the queue: that half re-enters the
+        chain at priority 100, where a processor registered above 12 can
+        still claim it.
         """
 
         def test(self, parent, block):

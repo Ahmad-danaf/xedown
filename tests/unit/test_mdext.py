@@ -181,7 +181,13 @@ def test_a_marker_with_no_content_does_not_start_a_list(convert):
 
 
 def test_a_deeply_indented_marker_does_not_interrupt(convert):
-    assert "<ul>" not in convert("Some text\n    - deep")
+    # Not just "no list": if the indent bound were widened to four spaces,
+    # `code` (priority 80) would claim the second line and render a <pre>
+    # instead -- a changed rendering "<ul> not in html" alone would miss.
+    html = convert("Some text\n    - deep")
+    assert "<ul>" not in html
+    assert "<pre>" not in html
+    assert "Some text\n    - deep" in html
 
 
 # --- The rule itself (brief 16) ---
@@ -285,6 +291,10 @@ def test_a_list_interrupts_a_paragraph_inside_a_footnote(convert):
     html = convert("Body[^1]\n\n[^1]: Footnote text\n    - item\n    - item two")
     assert "<ul>" in html
     assert html.count("<li>") >= 2
+    # The `↩` back-reference moves into its own paragraph, because the note
+    # now holds more than one block -- true of any multi-block footnote, not
+    # specific to this fix, but real enough to pin (design section 6).
+    assert '<p><a class="footnote-backref"' in html
 
 
 def test_an_unclosed_fence_does_not_protect_a_marker_line(convert):
@@ -294,6 +304,22 @@ def test_an_unclosed_fence_does_not_protect_a_marker_line(convert):
     # brief either, they were one paragraph. Teaching this processor about
     # fences is exactly the coupling priority 12 exists to avoid.
     assert "<ul>" in convert("Text.\n```\n- item")
+
+
+def test_a_setext_underline_reclaims_the_lower_half_of_a_split_marker_line(convert):
+    # Recorded, not endorsed -- see section 8 of the design. Registering at
+    # 12 only guarantees what the undivided block cannot be claimed as; the
+    # lower half `run` pushes back onto the queue re-enters the chain at
+    # priority 100 and can be claimed by `setextheader` (60) before it ever
+    # reaches 12 again, so the marker becomes literal heading text and the
+    # list never forms. Nothing regresses: this document already renders
+    # identically to "Text.\n\n- item\n===" -- the same document with a
+    # blank line inserted, which is what a preprocessor-shaped fix would have
+    # put there -- both before and after this brief.
+    html = convert("Text.\n- item\n===")
+    assert "<p>Text.</p>" in html
+    assert '<h1 id="-item">- item</h1>' in html
+    assert "<ul>" not in html
 
 
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent.parent / "fixtures"
