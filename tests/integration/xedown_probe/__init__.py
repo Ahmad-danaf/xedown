@@ -2033,7 +2033,99 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 controller.preview.widget.is_focus(),
             )
             self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
-            self._schedule(600, self.step_search_mode_switch)
+            self._schedule(600, self.step_escape_from_preview_setup)
+
+        self._marks(check)
+        return False
+
+    # --- Escape closes the search from the preview too, not just the entry -
+    #
+    # _on_window_set_focus's narrowing only closes the bar when the focus
+    # xed just stole was one of xedown's own widgets. The entry is one of
+    # them (escape-clears-every-mark, above); the preview WebView is the
+    # other, and the brief promises both -- a reader is at least as likely
+    # to press Escape while sitting in the rendered preview as while typing
+    # in the entry.
+
+    def step_escape_from_preview_setup(self):
+        controller = self._main_controller()
+        controller.searchbar.set_query("Filler")
+        self._schedule(900, self.step_escape_from_preview_focus)
+        return False
+
+    def step_escape_from_preview_focus(self):
+        controller = self._main_controller()
+        controller.preview.widget.grab_focus()
+        self._schedule(300, self.step_escape_from_preview_press)
+        return False
+
+    def step_escape_from_preview_press(self):
+        self._press(Gdk.KEY_Escape, Gdk.ModifierType(0))
+        self._schedule(700, self.step_escape_from_preview_check)
+        return False
+
+    def step_escape_from_preview_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "escape-from-the-preview-also-closes-the-search",
+                payload["total"] == 0 and not controller.is_searching,
+                f"marks left: {payload['total']}, is_searching: {controller.is_searching}",
+            )
+            self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
+            self._schedule(600, self.step_unrelated_focus_setup)
+
+        self._marks(check)
+        return False
+
+    # --- an unrelated focus move must leave a live search exactly alone ----
+    #
+    # The check that pins the narrowing itself: without it, a later change
+    # could quietly widen _on_window_set_focus back to closing on ANY focus
+    # arriving at the hidden view, and nothing above would notice. Neither
+    # the mode-bar button focus below nor the direct grab_focus() that
+    # follows it is the entry or the preview, so the search must survive
+    # both -- only focus is reclaimed for the preview, exactly as it would
+    # be if searching were not even active.
+
+    def step_unrelated_focus_setup(self):
+        controller = self._main_controller()
+        controller.searchbar.set_query("Filler")
+        self._schedule(900, self.step_unrelated_focus_move)
+        return False
+
+    def step_unrelated_focus_move(self):
+        controller = self._main_controller()
+        # Neither the entry nor the preview: a real, focusable widget in
+        # this tab's own tree standing in for "focus moved for some reason
+        # that has nothing to do with our search."
+        controller.modebar._buttons[Mode.SOURCE].grab_focus()
+        self._schedule(300, self.step_unrelated_focus_steal)
+        return False
+
+    def step_unrelated_focus_steal(self):
+        # Simulates the same hazard a real Escape triggers -- xed handing
+        # focus straight to the hidden source view -- without pressing a
+        # key at all, so this pins the narrowing's own logic rather than
+        # re-testing Escape delivery (already covered above).
+        self.view.grab_focus()
+        self._schedule(700, self.step_unrelated_focus_check)
+        return False
+
+    def step_unrelated_focus_check(self):
+        controller = self._main_controller()
+
+        def check(payload):
+            record(
+                "an-unrelated-focus-move-leaves-the-search-open",
+                payload["total"] > 0
+                and controller.is_searching
+                and controller.preview.widget.is_focus(),
+                f"marks left: {payload['total']}, is_searching: {controller.is_searching}, "
+                f"preview_is_focus: {controller.preview.widget.is_focus()}",
+            )
+            self._schedule(500, self.step_search_mode_switch)
 
         self._marks(check)
         return False

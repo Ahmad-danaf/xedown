@@ -67,6 +67,12 @@ class TabController:
         # The path this tab's remembered mode is filed under. Compared on
         # save, so a Save As moves the entry instead of stranding it.
         self._remembered_path = None
+        # The last non-None widget this window's "set-focus" reported, for
+        # this tab. See _on_window_set_focus: GTK commonly emits
+        # "set-focus(None)" between two widgets, so only a non-None value is
+        # ever remembered here -- otherwise "previous" would read None at
+        # exactly the moment it matters.
+        self._last_focus = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -527,22 +533,30 @@ class TabController:
         catch it regardless of which internal path xed took.
 
         The source view legitimately holding focus is exactly what "Preview
-        is showing" means it should never do, so this is a reliable enough
-        signal to treat as "the user just tried to dismiss whatever is
-        focused" regardless of what actually triggered it: if the search
-        bar was open, that is almost certainly Escape, and closing it is
-        what closes the marks and returns focus to the preview the way a
-        working Escape would; if it was not, the correction is simply to
-        hand focus back to the preview it was stolen from.
+        is showing" means it should never do, so the focus is always
+        reclaimed for the preview when this fires. Closing the search bar
+        over it is narrower: that only happens when the focus xed just
+        stole was one of xedown's own widgets -- the search entry, or the
+        preview itself -- which `_reclaim_focus_from_hidden_view` decides
+        from `_last_focus` below. Focus arriving from anything else (xed's
+        own find bar closing, a dialog dismissing, a mode-bar button) is not
+        this tab's Escape to react to, and must leave an open search alone.
         """
+        previous = self._last_focus
+        if widget is not None:
+            self._last_focus = widget
         if widget is not self.view:
             return
-        GLib.idle_add(self._reclaim_focus_from_hidden_view)
+        GLib.idle_add(self._reclaim_focus_from_hidden_view, previous)
 
-    def _reclaim_focus_from_hidden_view(self):
+    def _reclaim_focus_from_hidden_view(self, previous_focus):
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return False
-        if self.is_searching:
+        stolen_from_ours = previous_focus is not None and (
+            (self.searchbar is not None and self.searchbar.owns_focus(previous_focus))
+            or (self.preview is not None and previous_focus is self.preview.widget)
+        )
+        if self.is_searching and stolen_from_ours:
             self.close_search()
         elif self.preview is not None:
             self.preview.widget.grab_focus()
