@@ -46,16 +46,14 @@ Expected: same as above — a plain styled block, no highlighting, no error.
 plain text inside a fence, with no language tag
 ```
 
-## Known GFM gap: a list does not interrupt a paragraph
+## A list directly after a paragraph
 
-This is a known defect, not a mistake — it is tracked in
-[docs/known-issues.md](../../docs/known-issues.md) for v0.2. The paragraph
-and the two list markers immediately below have **no blank line** between
-them. Under GFM this should end the paragraph and start a two-item list;
-under xedown v0.1 it currently does **not** — the three lines render as one
-single paragraph instead. Do not "fix" this by inserting a blank line
-before the first `-`; that would delete the only place this defect is
-exercised.
+The paragraph and the two list markers immediately below have **no blank
+line** between them. Expected: the paragraph ends and a two-item list
+begins, the way GitHub renders it. Do not "fix" this by inserting a blank
+line before the first `-`; the missing blank line is the whole point, and
+`tests/unit/test_mdext.py` checks that this file is the one fixture whose
+rendering this changed.
 
 A paragraph immediately followed by a list, with no blank line before it.
 - item one

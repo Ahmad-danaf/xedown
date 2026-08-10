@@ -18,10 +18,9 @@ shows a broken reference here is a real regression.
 
 The document behind the manual smoke test's failure-handling checks
 (`docs/manual-smoke-test.md`, rows 16–17). It exercises unbundled and
-languageless fenced code, the known GFM paragraph/list gap
-(`docs/known-issues.md`), and a left-to-right control case for the
-bidirectional-text handling — including a Python fence with Arabic comments
-that must stay left-to-right.
+languageless fenced code, a list written directly under a paragraph, and a
+left-to-right control case for the bidirectional-text handling — including a
+Python fence with Arabic comments that must stay left-to-right.
 
 **It also contains broken references on purpose:**
 

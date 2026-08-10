@@ -218,3 +218,18 @@ def test_the_edge_cases_fixture_no_longer_claims_rtl_is_unsupported():
     # not any more; leaving it would make the fixture document a limitation
     # the plugin no longer has.
     assert "not full right-to-left support" not in EDGE_CASES_TEXT
+
+
+def test_the_edge_cases_fixture_no_longer_calls_the_list_gap_a_defect():
+    # Corrected by brief 16. The section was accurate when it was written and
+    # told the reader not to fix it; leaving that in would document a defect
+    # the plugin no longer has.
+    assert "Known GFM gap" not in EDGE_CASES_TEXT
+
+
+def test_the_edge_cases_fixture_renders_its_list_after_a_paragraph():
+    # The positive half: the construct is still in the file, and it renders
+    # as a list rather than as three lines of one paragraph.
+    body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<li>item one</li>" in body
+    assert "<li>item two</li>" in body

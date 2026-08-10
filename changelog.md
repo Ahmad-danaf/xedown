@@ -94,6 +94,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A list now starts a list when it follows a paragraph directly, with no blank
+  line between them, the way GitHub renders it. This works for `-`, `*`, `+`
+  and `1.`, and inside blockquotes, list items and footnotes as well as at the
+  top level. As on GitHub, an ordered list has to start at `1.` to interrupt a
+  paragraph — one starting at any other number still needs a blank line, which
+  is what keeps prose that wraps onto a line beginning with a number ("…was /
+  1985. What a year.") a paragraph.
 - A preview showing an error page could never be refreshed back into a
   document: the swap-in-place path cannot reach an error page, and marked the
   preview up to date anyway. It now reloads instead.
@@ -128,5 +135,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - xedown supports selected GitHub-flavored Markdown features (tables, task
   lists, strikethrough, fenced code, and footnotes), not full GFM
   compatibility. A list does not currently interrupt a paragraph without an
-  intervening blank line, unlike GFM. See
-  [docs/known-issues.md](docs/known-issues.md). Targeted for v0.2.
+  intervening blank line, unlike GFM (fixed in Unreleased).
