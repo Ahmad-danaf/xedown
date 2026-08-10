@@ -2110,19 +2110,20 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     # `_reload_preview` bumps the search token before answering 0 for an
     # error page precisely so a reply already in flight from the page being
     # replaced cannot land afterwards and overwrite that answer (see the
-    # comment above `self.search.invalidate()` in controller.py). This drives
-    # that path for real: a live search with real matches, a forced failure,
-    # and then a second look after a further beat to prove nothing crept back
-    # in. Restoring is deliberately not a bare refresh: SearchSession.set_query
-    # only re-asks the page when the text or the case flag actually changes
-    # (see search.py), so a refresh alone leaves `PreviewView._search_request`
-    # pointing at the token the invalidate moved past -- closing and reopening
-    # the bar is the same round trip step_search_escape_check /
-    # step_search_mode_switch already use above, and it is what makes the
-    # entry's still-held query count as new again.
+    # comment above `self.search.invalidate()` in controller.py). It also
+    # re-arms `PreviewView._search_request` with that same new token, so the
+    # reissue `_on_load_changed` fires once a real document loads again
+    # carries a token this session still accepts -- without that, a bare
+    # `refresh_now()` would fix the render but never bring the count back,
+    # because `SearchSession.set_query` only re-asks the page when the text
+    # or the case flag actually changes, and neither does here. This drives
+    # the whole path for real: a live search with real matches, a forced
+    # failure, a second look after a further beat to prove nothing crept
+    # back in, and then a plain refresh to prove the recovery is automatic.
 
     def step_error_search_setup(self):
         controller = self._main_controller()
+        self._error_search_baseline_total = controller.search.total
         controller._reload_preview(
             error=RuntimeError("probe-forced search failure"), restore_scroll=0.0
         )
@@ -2150,26 +2151,23 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             f"bar: {controller.searchbar._status.get_text()!r}, "
             f"session total: {controller.search.total!r}",
         )
+        # No further search interaction from here: restoring the document
+        # is the whole action, and the count is expected to come back on
+        # its own.
         controller.refresh_now()
-        # Another full reload (recovering from the error page back to a
-        # real document) -- same margin as step_reload_search_go above.
-        self._schedule(1600, self.step_error_search_restore)
-        return False
-
-    def step_error_search_restore(self):
-        controller = self._main_controller()
-        controller.close_search()
-        controller.open_search()
-        self._schedule(900, self.step_error_search_recovered)
+        # A full reload (recovering from the error page back to a real
+        # document) -- same margin as step_reload_search_go above.
+        self._schedule(1600, self.step_error_search_recovered)
         return False
 
     def step_error_search_recovered(self):
         controller = self._main_controller()
         record(
             "error-page-search-recovers-after-restore",
-            controller.search.total == 360
+            controller.search.total == self._error_search_baseline_total
             and controller.searchbar._status.get_text() != "No matches",
-            f"total: {controller.search.total}, "
+            f"before: {self._error_search_baseline_total}, "
+            f"after: {controller.search.total}, "
             f"bar: {controller.searchbar._status.get_text()!r}",
         )
         self._schedule(400, self.step_showall_search_setup)

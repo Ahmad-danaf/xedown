@@ -596,7 +596,14 @@ class TabController:
             # The page that could have answered is gone. Bump the token first,
             # so a reply already in flight from that page cannot land after
             # this one and put a count back on a document nobody can see.
-            self._report_search(0, False, self.search.invalidate())
+            token = self.search.invalidate()
+            # Re-arm the page's pending request with the same new token. An
+            # error page carries no preview.js, so this runs nowhere -- but it
+            # is what makes PreviewView reissue with a *current* token once a
+            # real document loads again, instead of one this session has
+            # already stopped believing.
+            self.preview.search(self.search.query, self.search.case_sensitive, token)
+            self._report_search(0, False, token)
 
     def _buffer_text(self):
         start, end = self.document.get_bounds()
