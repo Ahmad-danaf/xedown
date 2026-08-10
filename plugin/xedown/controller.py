@@ -35,7 +35,6 @@ class TabController:
         self.view = view
         self.document = view.get_buffer()
         self.tab = Xed.Tab.get_from_document(self.document)
-        self.window = self.tab.get_toplevel() if self.tab is not None else None
         self.frame = self.tab.get_children()[0] if self.tab is not None else None
 
         self.state = DocumentState()
@@ -73,6 +72,12 @@ class TabController:
         # ever remembered here -- otherwise "previous" would read None at
         # exactly the moment it matters.
         self._last_focus = None
+        # The window whose "set-focus" is currently being watched, and the
+        # id of that one connection. Deliberately not in `self._handlers`:
+        # this connection has to MOVE with the tab, not only be torn down
+        # with it. See _attach_focus_watch.
+        self._focus_window = None
+        self._focus_handler_id = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -96,6 +101,7 @@ class TabController:
             except (TypeError, RuntimeError):
                 pass
         self._handlers = []
+        self._detach_focus_watch()
 
         if self._settings_token is not None:
             settings.get_settings().disconnect(self._settings_token)
@@ -142,6 +148,64 @@ class TabController:
         longer exists.
         """
         self._handlers = [(o, h) for o, h in self._handlers if o is not owner]
+
+    def _attach_focus_watch(self, *_args):
+        """Watch the "set-focus" of the window this tab is in *right now*.
+
+        Why the signal is watched at all is `_on_window_set_focus`'s own
+        docstring. Why it is tracked here instead of through `_connect` is
+        the tab move: `Documents -> Move to New Window` (and dragging a tab
+        out) re-parents the very same tab into another window, and this
+        controller deliberately survives that -- see
+        `XedownWindowActivatable._on_tab_removed`. A connection made once,
+        to the window the tab happened to be in when the controller was
+        built, would still be attached to the window the tab has left, and
+        Escape would silently stop closing the search bar for that tab.
+
+        So this connection is moved rather than only torn down: called
+        again after the tab's toplevel changed (from `hierarchy-changed`,
+        connected in `_build_if_markdown`), it drops the old connection and
+        makes a new one against the new window. It is idempotent -- called
+        for the window already watched, it does nothing -- and it takes the
+        `hierarchy-changed` arguments it ignores, so it can be connected
+        directly.
+
+        No `GLib.idle_add` here, unlike `_on_tab_removed`: that handler has
+        to *wait* to learn whether a move or a close happened, because
+        "tab-removed" cannot tell them apart. This has nothing to wait for.
+        `_toplevel()` answers the only question it asks, the answer is
+        already correct at emission time (both halves of a move -- the
+        unparent and the re-parent -- emit `hierarchy-changed` in turn,
+        synchronously), and re-running it later can only produce the same
+        answer. During the unparent half, and during teardown,
+        `get_toplevel()` returns a widget that is no window at all;
+        `_toplevel()` already answers None for that, which detaches and
+        waits for the re-parent (or for `deactivate`).
+        """
+        window = self._toplevel()
+        if window is self._focus_window:
+            return
+        self._detach_focus_watch()
+        if window is None:
+            return
+        self._focus_window = window
+        self._focus_handler_id = window.connect("set-focus", self._on_window_set_focus)
+
+    def _detach_focus_watch(self):
+        """Drop the "set-focus" connection, if one is live.
+
+        Defensive about the window already being disposed, for the same
+        reason `deactivate()`'s bulk disconnect loop is: this runs during
+        teardown too, and a disconnect against a window GTK has already
+        finalised raises rather than returning quietly.
+        """
+        if self._focus_window is not None and self._focus_handler_id is not None:
+            try:
+                self._focus_window.disconnect(self._focus_handler_id)
+            except (TypeError, RuntimeError):
+                pass
+        self._focus_window = None
+        self._focus_handler_id = None
 
     # --- construction ------------------------------------------------------
 
@@ -228,9 +292,12 @@ class TabController:
 
         # See _on_window_set_focus's docstring: xed's own Escape handling
         # can hand focus straight to the hidden source view without ever
-        # reaching this controller's own key routing.
-        if self.window is not None:
-            self._connect(self.window, "set-focus", self._on_window_set_focus)
+        # reaching this controller's own key routing. The watch follows the
+        # tab from window to window (see _attach_focus_watch), so the tab's
+        # own "hierarchy-changed" -- which is tracked normally, and so is
+        # torn down with everything else -- is what re-points it.
+        self._connect(self.tab, "hierarchy-changed", self._attach_focus_watch)
+        self._attach_focus_watch()
 
         self._built = True
         self._remembered_path = self._document_path()
@@ -550,6 +617,19 @@ class TabController:
         GLib.idle_add(self._reclaim_focus_from_hidden_view, previous)
 
     def _reclaim_focus_from_hidden_view(self, previous_focus):
+        """Take the focus back, and close the search if it was ours to close.
+
+        Known drift, recorded rather than fixed: "xedown's own" is read
+        narrowly here -- the search entry, or the preview -- while
+        `shortcuts.route_key`'s own CLOSE_SEARCH branch (still shipped, and
+        still the path a bare Escape would take if some future xed stopped
+        swallowing it before ordinary key dispatch) closes the search on
+        *any* non-editable focus while searching, which includes the search
+        bar's own case toggle and step buttons. Escape pressed with one of
+        those focused would therefore close the bar through `route_key` and
+        not through here. Whichever rule is right, the two should agree;
+        today they do not.
+        """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return False
         stolen_from_ours = previous_focus is not None and (

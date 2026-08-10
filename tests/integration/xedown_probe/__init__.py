@@ -655,6 +655,23 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "move-tab-controller-present-before-move",
             hasattr(self._move_view, "_xedown_controller"),
         )
+        # Which window this tab's focus watch is on, and the id of that one
+        # connection, BEFORE the move -- captured here because after the
+        # move there is nothing left to read it from. Recorded as a check of
+        # its own so the post-move assertions below cannot pass vacuously
+        # against a pair that was never set in the first place. See
+        # TabController._attach_focus_watch, and
+        # escape-still-closes-the-search-after-a-tab-move near the end.
+        moving = self._controller_for(self._move_view)
+        self._move_source_focus_id = (
+            moving._focus_handler_id if moving is not None else None
+        )
+        record(
+            "move-tab-focus-watch-starts-on-the-source-window",
+            moving is not None
+            and moving._focus_window is self.window
+            and self._move_source_focus_id is not None,
+        )
         # A second real window is the only way to exercise a genuine
         # Notebook.move_tab(); nothing here calls window.destroy() on either
         # window, so this stays inside the "never destroy from a callback"
@@ -1625,17 +1642,22 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     # --- the four shortcuts, pressed for real ------------------------------
 
-    def _press(self, keyval, state):
+    def _press(self, keyval, state, window=None):
         """Deliver a real key press to the window, as the keyboard would.
 
         `hardware_keycode` is not decoration: GTK's accelerator lookup goes
         through its key hash by keycode, so an event without one activates
         nothing at all and every assertion below would be vacuous.
+
+        `window` defaults to this probe's own; the moved-tab checks near the
+        end of this file press into the second window instead, which is
+        where that tab now lives.
         """
-        keymap = Gdk.Keymap.get_for_display(self.window.get_display())
+        window = window or self.window
+        keymap = Gdk.Keymap.get_for_display(window.get_display())
         ok, entries = keymap.get_entries_for_keyval(keyval)
         event = Gdk.Event.new(Gdk.EventType.KEY_PRESS)
-        event.window = self.window.get_window()
+        event.window = window.get_window()
         event.send_event = True
         event.time = Gtk.get_current_event_time()
         event.state = state
@@ -1651,7 +1673,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # this attaches the display's actual keyboard so the synthetic
         # event is a genuine one, not a shortcut around xed's real event
         # pipeline.
-        seat = self.window.get_display().get_default_seat()
+        seat = window.get_display().get_default_seat()
         if seat is not None:
             keyboard = seat.get_keyboard()
             if keyboard is not None:
@@ -1844,9 +1866,13 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     # --- find in the preview ------------------------------------------------
 
-    def _marks(self, on_result):
-        """Ask the page what its search marks currently look like."""
-        preview = self._main_controller().preview
+    def _marks(self, on_result, controller=None):
+        """Ask the page what its search marks currently look like.
+
+        `controller` defaults to the main tab's; the moved-tab checks near
+        the end of this file are the one caller that asks a different tab.
+        """
+        preview = (controller or self._main_controller()).preview
 
         def finished(webview, result, _user_data):
             payload = {"total": -1, "current": -1, "text": ""}
@@ -2369,7 +2395,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 f"marks: {payload.get('marks')}, "
                 f"matched text: {payload.get('matchText')!r}{failure}",
             )
-            self._schedule(400, self.step_disable_prep_infobar)
+            self._schedule(400, self.step_moved_tab_search_open)
 
         preview.widget.run_javascript(
             "JSON.stringify({"
@@ -2383,6 +2409,89 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             on_result,
             None,
         )
+        return False
+
+    # --- Escape still closes the search after the tab changed windows ------
+    #
+    # Everything above presses Escape in the window this probe started in.
+    # The tab moved back at step_move_tab_execute is the interesting one:
+    # it kept the same TabController (that is what controller-survives-tab-
+    # move asserts) but it lives in the second window now, and the whole
+    # reason Escape closes the bar at all is a connection to ONE window's
+    # "set-focus" (see TabController._attach_focus_watch, and
+    # _on_window_set_focus for why that signal). A watch left behind on the
+    # window the tab has left fails in perfect silence -- no error, no log
+    # line, the bar simply stops closing for that tab -- so it takes a check
+    # in the window the tab actually ended up in to see it at all.
+
+    def step_moved_tab_search_open(self):
+        controller = self._controller_for(self._move_view)
+        window = self._move_dest_window
+        # The move already leaves this tab current in the destination
+        # window; asked rather than assumed, and only set when it is not,
+        # so this does not switch the active tab for no reason (that exact
+        # sequence -- move, then switch -- is what provokes the allowlisted
+        # xed-core assertion, and it is the shutdown harness's job to
+        # exercise it, not this check's).
+        if window.get_active_tab() is not self._move_tab:
+            window.set_active_tab(self._move_tab)
+        window.present()
+        # Focuses the entry, which is a "set-focus" in the DESTINATION
+        # window -- the one the watch has to be on by now for _last_focus to
+        # record it, and _last_focus is what tells the Escape below that the
+        # focus xed steals was one of xedown's own widgets.
+        controller.open_search()
+        controller.searchbar.set_query("Moved")
+        self._schedule(900, self.step_moved_tab_search_check)
+        return False
+
+    def step_moved_tab_search_check(self):
+        controller = self._controller_for(self._move_view)
+
+        def check(payload):
+            # movable.md's body says "Moved to another window mid-sequence."
+            # exactly once; its heading ("Movable") is not a match for it.
+            record(
+                "the-moved-tab-still-marks-its-matches",
+                payload["total"] == 1 and controller.is_searching,
+                f"marks: {payload['total']}, is_searching: {controller.is_searching}",
+            )
+            self._press(
+                Gdk.KEY_Escape, Gdk.ModifierType(0), window=self._move_dest_window
+            )
+            self._schedule(700, self.step_moved_tab_escape_check)
+
+        self._marks(check, controller)
+        return False
+
+    def step_moved_tab_escape_check(self):
+        controller = self._controller_for(self._move_view)
+
+        def check(payload):
+            record(
+                "escape-still-closes-the-search-after-a-tab-move",
+                payload["total"] == 0 and not controller.is_searching,
+                f"marks left: {payload['total']}, "
+                f"is_searching: {controller.is_searching}",
+            )
+            # The mechanism behind it, checked separately so a failure says
+            # which half broke: the watch is on the destination window now,
+            # and the connection to the window this tab left is gone rather
+            # than merely superseded.
+            record(
+                "the-focus-watch-moved-to-the-destination-window",
+                controller._focus_window is self._move_dest_window
+                and controller._focus_handler_id is not None,
+                f"watching: {controller._focus_window!r}",
+            )
+            old_id = self._move_source_focus_id
+            record(
+                "the-focus-watch-let-go-of-the-window-the-tab-left",
+                old_id is not None and not self.window.handler_is_connected(old_id),
+            )
+            self._schedule(400, self.step_disable_prep_infobar)
+
+        self._marks(check, controller)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
