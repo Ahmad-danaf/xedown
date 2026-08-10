@@ -164,6 +164,19 @@ def test_the_cap_is_only_shown_when_the_page_said_it_capped():
     assert session.status() == f"1 of {MATCH_CAP}"
 
 
+def test_clearing_bumps_the_token():
+    # The token bump is what stops a page answer already in flight from
+    # repopulating a count for a query the user has since emptied. This test
+    # pins the token generation directly, independent of `report()`'s active
+    # check, which would mask a missing bump.
+    session = SearchSession()
+    session.set_query("para", False)
+    token_before = session.token
+    session.clear()
+    token_after = session.token
+    assert token_after != token_before
+
+
 def test_clearing_ends_the_search_and_refuses_what_is_in_flight():
     session = SearchSession()
     session.set_query("para", False)
