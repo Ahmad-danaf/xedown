@@ -548,6 +548,12 @@ class TabController:
         self._report_search(count, capped, token)
 
     def _on_search_query_changed(self, _bar, query, case_sensitive):
+        # GtkSearchEntry debounces `search-changed` by ~150ms and does not
+        # cancel a pending emission when the bar closes, so a keystroke can
+        # land here after close_search() has already cleared the session and
+        # the marks. Acting on it would re-mark a page the user has dismissed.
+        if not self.is_searching:
+            return
         self._request_search(query, case_sensitive)
 
     def _on_search_step(self, _bar, forward):
