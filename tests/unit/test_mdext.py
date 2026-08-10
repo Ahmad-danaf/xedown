@@ -222,3 +222,38 @@ def test_a_marker_needs_content_after_it():
 
 def test_an_empty_block_has_no_interrupt():
     assert find_list_interrupt("") is None
+
+
+# --- The fix (brief 16) ---
+
+
+def test_an_unordered_list_interrupts_a_paragraph(convert):
+    # The example from the brief.
+    html = convert("Some paragraph text.\n- item one\n- item two")
+    assert "<p>Some paragraph text.</p>" in html
+    assert html.count("<li>") == 2
+
+
+def test_each_unordered_marker_interrupts(convert):
+    for marker in ("-", "*", "+"):
+        assert "<ul>" in convert(f"Text.\n{marker} item"), marker
+
+
+def test_an_ordered_list_interrupts_a_paragraph(convert):
+    html = convert("Text.\n1. one\n2. two")
+    assert "<p>Text.</p>" in html
+    assert "<ol>" in html
+    assert html.count("<li>") == 2
+
+
+def test_an_indented_marker_still_interrupts(convert):
+    assert "<ul>" in convert("Text.\n   - item")
+
+
+def test_a_task_list_interrupting_a_paragraph_still_gets_checkboxes(convert):
+    # The task-list treeprocessor and this block processor meet on the same
+    # list. Neither is aware of the other, so this is worth pinning.
+    html = convert("Text.\n- [ ] todo\n- [x] done")
+    assert "<p>Text.</p>" in html
+    assert 'class="task-list"' in html
+    assert html.count("<input") == 2

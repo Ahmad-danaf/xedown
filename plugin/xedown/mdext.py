@@ -1,4 +1,5 @@
-"""xedown's own Markdown extensions: task lists and strikethrough.
+"""xedown's own Markdown extensions: task lists, strikethrough, and
+lists that interrupt a paragraph.
 
 Built by a factory rather than at import time, because these subclass types from
 the vendored Markdown module, which only exists on sys.path once `vendoring` has
@@ -42,6 +43,7 @@ def make_extensions(markdown_module):
     """Return xedown's extension instances, bound to `markdown_module`."""
     Extension = markdown_module.extensions.Extension
     Treeprocessor = markdown_module.treeprocessors.Treeprocessor
+    BlockProcessor = markdown_module.blockprocessors.BlockProcessor
     SimpleTagInlineProcessor = markdown_module.inlinepatterns.SimpleTagInlineProcessor
 
     class TaskListTreeprocessor(Treeprocessor):
@@ -95,4 +97,33 @@ def make_extensions(markdown_module):
                 175,
             )
 
-    return [TaskListExtension(), StrikethroughExtension()]
+    class ListInterruptProcessor(BlockProcessor):
+        """Split a paragraph block where a list starts inside it.
+
+        Registered below every other block processor and just above
+        `paragraph`, so every block it is offered has already been declined by
+        `setextheader`, `hr`, `olist`, `ulist` and the rest: it only ever sees
+        blocks that were about to become a `<p>`. That is what keeps `---` a
+        heading underline or a rule, and what makes a first-line guard against
+        blocks that are already lists unnecessary.
+        """
+
+        def test(self, parent, block):
+            return find_list_interrupt(block) is not None
+
+        def run(self, parent, blocks):
+            block = blocks.pop(0)
+            lines = block.split("\n")
+            index = find_list_interrupt(block)
+            # The half above the split has no interrupting marker left in it
+            # by construction, so `test` declines it and `paragraph` takes it.
+            self.parser.parseBlocks(parent, ["\n".join(lines[:index])])
+            blocks.insert(0, "\n".join(lines[index:]))
+
+    class ListInterruptExtension(Extension):
+        def extendMarkdown(self, md):
+            md.parser.blockprocessors.register(
+                ListInterruptProcessor(md.parser), "xedown_list_interrupt", 12
+            )
+
+    return [TaskListExtension(), StrikethroughExtension(), ListInterruptExtension()]
