@@ -132,13 +132,19 @@ def test_a_nested_list_stays_tight(convert):
     # A blank line inserted before the nested list would make the outer list
     # loose and wrap every item in <p>. This is the test that would catch a
     # preprocessor-shaped mistake.
-    html = convert("- item one\n  - nested\n- item two")
+    #
+    # Four spaces, not two: tab_length is 4, so a two-space sub-item is not
+    # nested at all -- it is a third top-level sibling, and this test would
+    # then pass without ever producing a nested list.
+    html = convert("- item one\n    - nested\n- item two")
     assert "<p>" not in html
+    assert html.count("<ul>") == 2, "the nested list did not nest"
 
 
 def test_a_nested_list_under_a_continuation_line_stays_tight(convert):
-    html = convert("- item one\n  continuation\n  - nested")
+    html = convert("- item one\n    continuation\n    - nested")
     assert "<p>" not in html
+    assert html.count("<ul>") == 2, "the nested list did not nest"
 
 
 def test_a_marker_line_under_a_table_row_stays_in_the_table(convert):
@@ -148,9 +154,11 @@ def test_a_marker_line_under_a_table_row_stays_in_the_table(convert):
 
 
 def test_lazy_continuation_still_belongs_to_its_item(convert):
+    # The literal substring, not a tag count: if the continuation escaped the
+    # item and became its own paragraph, <ul> would still be present and the
+    # <li> count would still be 1.
     html = convert("- item one\nlazy continuation")
-    assert "<ul>" in html
-    assert html.count("<li>") == 1
+    assert "<li>item one\nlazy continuation</li>" in html
 
 
 def test_an_ordered_list_starting_at_three_does_not_interrupt(convert):
