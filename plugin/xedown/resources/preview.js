@@ -333,8 +333,12 @@
       character === "\r" || character === "\f";
   }
 
-  /* The rendered text as the reader sees it, plus one {node, offset} per
-     character so a match position can be turned back into a DOM range.
+  /* The rendered text as the reader sees it, plus one {node, offset} entry
+     per character so a match position can be turned back into a DOM range.
+     A collapsed space's entry also carries `end`: the extent, within that
+     same node, of the whitespace run it stands for -- so a match landing on
+     one collapsed space still highlights the whole run behind it, not just
+     the single character the map entry was built from.
 
      Whitespace is collapsed because HTML collapses it: Python-Markdown keeps
      the newline from a paragraph the author wrapped over two source lines,
@@ -378,7 +382,11 @@
       for (var i = 0; i < raw.length; i++) {
         var character = raw.charAt(i);
         if (isSpace(character)) {
-          if (!pending) { pending = { node: node, offset: i }; }
+          if (!pending) {
+            pending = { node: node, offset: i, end: i + 1 };
+          } else if (pending.node === node) {
+            pending.end = i + 1;
+          }
           continue;
         }
         if (pending) { text += " "; map.push(pending); pending = null; }
@@ -398,12 +406,12 @@
       if (!entry) { continue; }
       var last = into.length ? into[into.length - 1] : null;
       if (last && last.node === entry.node && last.index === index) {
-        last.end = entry.offset + 1;
+        last.end = entry.end || entry.offset + 1;
       } else {
         into.push({
           node: entry.node,
           start: entry.offset,
-          end: entry.offset + 1,
+          end: entry.end || entry.offset + 1,
           index: index
         });
       }
