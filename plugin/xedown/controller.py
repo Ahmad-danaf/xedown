@@ -1498,12 +1498,14 @@ class TabController:
         bar.get_content_area().add(Gtk.Label(label=message))
         if button is not None:
             bar.add_button(button, Gtk.ResponseType.APPLY)
-        bar.add_button("Close", Gtk.ResponseType.CLOSE)
-        close_button = bar.get_widget_for_response(Gtk.ResponseType.CLOSE)
-        if close_button is not None:
-            close_accessible = close_button.get_accessible()
-            if close_accessible is not None:
-                close_accessible.set_name(a11y.NAMES["info_bar_close"])
+        # `add_button` hands back the button it just made. `Gtk.InfoBar` has
+        # no `get_widget_for_response` -- that is a `Gtk.Dialog` method, and
+        # calling it here raised `AttributeError` on every info bar the
+        # plugin showed, including the one a refused link produces.
+        close_button = bar.add_button("Close", Gtk.ResponseType.CLOSE)
+        close_accessible = close_button.get_accessible()
+        if close_accessible is not None:
+            close_accessible.set_name(a11y.NAMES["info_bar_close"])
         self._connect(bar, "response", self._on_info_bar_response)
         # See `_on_info_bar_destroyed`: `Xed.Tab.set_info_bar` destroys
         # whatever bar already occupies the slot, including from xed's own
