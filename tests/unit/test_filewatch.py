@@ -8,6 +8,7 @@ safe, and `repoint` moves the path.
 """
 
 import pathlib
+import re
 
 from xedown import filewatch
 from xedown.filewatch import FileWatch
@@ -18,12 +19,16 @@ def test_the_module_imports_without_a_host():
 
     A module-level `gi` import here would take this file out of CI's reach
     entirely -- and would break `import xedown.controller` for anyone
-    inspecting the plugin outside xed. Asserted against column zero, since
-    the lazy imports inside the methods are indented.
+    inspecting the plugin outside xed. Asserted with an anchored,
+    multiline-mode regex against column zero, since the lazy imports inside
+    the methods are indented. A plain `"\\nimport gi" not in source` check
+    would miss a module-level import placed as the literal first line of the
+    file -- there is no leading newline before line 1 for that substring to
+    match -- so this looks for the pattern at the start of *any* line
+    instead of after any particular one.
     """
     source = pathlib.Path(filewatch.__file__).read_text()
-    assert "\nimport gi" not in source
-    assert "\nfrom gi" not in source
+    assert re.search(r"^(import|from) gi", source, re.MULTILINE) is None
 
 
 def test_the_settle_window_is_the_documented_one():

@@ -560,7 +560,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 value = webview.run_javascript_finish(result)
                 body = value.get_js_value().to_string()
             except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
-                body = f"<error: {exc}>"
+                # A failed run_javascript must FAIL outright, not flow into
+                # the `present` comparison below: with `present=False`, an
+                # error string containing neither `needle` gives `(needle in
+                # body) is present` == True, recording a false PASS against a
+                # WebView that never actually answered.
+                record(name, False, f"run_javascript failed: {exc}")
+                self._schedule(300, then)
+                return
             record(
                 name,
                 (needle in body) is present,
