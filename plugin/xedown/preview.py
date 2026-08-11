@@ -10,6 +10,8 @@ gi.require_version("WebKit2", "4.1")
 
 from gi.repository import GLib, Gtk, WebKit2
 
+from . import a11y
+
 _MESSAGE_HANDLER = "xedown"
 
 
@@ -44,8 +46,6 @@ class PreviewView:
         )
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
-
-        from . import a11y
 
         accessible = self.widget.get_accessible()
         if accessible is not None:
