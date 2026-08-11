@@ -1499,6 +1499,11 @@ class TabController:
         if button is not None:
             bar.add_button(button, Gtk.ResponseType.APPLY)
         bar.add_button("Close", Gtk.ResponseType.CLOSE)
+        close_button = bar.get_widget_for_response(Gtk.ResponseType.CLOSE)
+        if close_button is not None:
+            close_accessible = close_button.get_accessible()
+            if close_accessible is not None:
+                close_accessible.set_name(a11y.NAMES["info_bar_close"])
         self._connect(bar, "response", self._on_info_bar_response)
         # See `_on_info_bar_destroyed`: `Xed.Tab.set_info_bar` destroys
         # whatever bar already occupies the slot, including from xed's own

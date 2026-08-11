@@ -31,7 +31,7 @@ NAMES = {
     "search_case": "Match case",
     "search_next": "Next match",
     "search_previous": "Previous match",
-    "search_close": "Close the search bar",
+    "search_close": "Close search",
     "info_bar_close": "Close",
 }
 

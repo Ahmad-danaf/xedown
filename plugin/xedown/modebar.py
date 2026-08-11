@@ -9,6 +9,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gdk, GObject, Gtk
 
+from . import a11y
 from .document_state import Mode
 
 _STYLE = b"""
@@ -71,12 +72,17 @@ class ModeBar(Gtk.Box):
 
         self._updating = False
         self._buttons = {}
-        for mode, label, icon in (
-            (Mode.PREVIEW, "Preview", "view-reveal-symbolic"),
-            (Mode.SOURCE, "Markdown", "text-x-generic-symbolic"),
+        for mode, label, icon, key in (
+            (Mode.PREVIEW, "Preview", "view-reveal-symbolic", "mode_preview"),
+            (Mode.SOURCE, "Markdown", "text-x-generic-symbolic", "mode_source"),
         ):
             button = Gtk.ToggleButton()
             button.add(self._make_content(label, icon))
+            # The visible label stays "Markdown" -- short, and the bar is a
+            # segmented pair where the context is obvious. The accessible
+            # name is "Markdown source", because read aloud on its own
+            # "Markdown" does not say what the button shows.
+            self._name(button, a11y.NAMES[key])
             button.connect("toggled", self._on_toggled, mode)
             segments.pack_start(button, False, False, 0)
             self._buttons[mode] = button
@@ -92,12 +98,20 @@ class ModeBar(Gtk.Box):
         self._refresh_button.add(self._make_content("Refresh", "view-refresh-symbolic"))
         self._refresh_button.set_no_show_all(True)
         self._refresh_button.set_tooltip_text("Refresh the preview (Ctrl+Shift+R)")
+        # The tooltip keeps the shortcut for sighted users; the accessible
+        # name is the plain description, because a screen reader announces
+        # the shortcut itself from the accelerator.
+        self._name(self._refresh_button, a11y.NAMES["refresh"])
         self._refresh_button.connect("clicked", self._on_refresh_clicked)
         self.pack_end(self._refresh_button, False, False, 0)
 
         self._stale_dot = Gtk.Label(label="●")
         self._stale_dot.get_style_context().add_class("xedown-stale-dot")
         self._stale_dot.set_no_show_all(True)
+        # Without a name this reads as "black circle" -- a description of a
+        # shape rather than of what it means. It appears and disappears, so
+        # the name is what makes its appearing mean something.
+        self._name(self._stale_dot, a11y.NAMES["stale"])
         self.pack_end(self._stale_dot, False, False, 0)
 
         self.set_mode(Mode.PREVIEW)
@@ -115,6 +129,19 @@ class ModeBar(Gtk.Box):
             )
         content.pack_start(Gtk.Label(label=label), False, False, 0)
         return content
+
+    @staticmethod
+    def _name(widget, name):
+        """An accessible name, which a tooltip is not.
+
+        The same helper `searchbar.py` carries, for the same reason: a
+        `Gtk.Button` whose label is wrapped in a `Gtk.Box` alongside an icon
+        may or may not expose that label as its name, and "may or may not" is
+        not a standard.
+        """
+        accessible = widget.get_accessible()
+        if accessible is not None:
+            accessible.set_name(name)
 
     def set_mode(self, mode):
         """Reflect `mode` without emitting mode-selected."""

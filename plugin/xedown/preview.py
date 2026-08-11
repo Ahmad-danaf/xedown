@@ -45,6 +45,15 @@ class PreviewView:
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
 
+        from . import a11y
+
+        accessible = self.widget.get_accessible()
+        if accessible is not None:
+            # Focus lands here on every switch into Preview, so this name is
+            # what a screen reader reads out at the moment the mode changes.
+            # It is the mode announcement -- see the design's section 3.3.
+            accessible.set_name(a11y.NAMES["preview"])
+
         settings = self.widget.get_settings()
         settings.set_property("enable-javascript", True)
         settings.set_property("enable-developer-extras", False)

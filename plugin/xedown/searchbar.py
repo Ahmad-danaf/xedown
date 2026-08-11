@@ -14,6 +14,8 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Gdk, GObject, Gtk
 
+from . import a11y
+
 
 class SearchBar(Gtk.Box):
     """Entry, case toggle, two steps, a count and a close. Nothing else."""
@@ -44,8 +46,8 @@ class SearchBar(Gtk.Box):
         # and its own clear icon, which is why it is used rather than a plain
         # entry with a timer bolted on.
         self._entry.set_width_chars(28)
-        self._entry.set_placeholder_text("Find in preview")
-        self._name(self._entry, "Find in preview")
+        self._entry.set_placeholder_text(a11y.NAMES["search_entry"])
+        self._name(self._entry, a11y.NAMES["search_entry"])
         self._entry.connect("search-changed", self._on_changed)
         self._entry.connect("activate", self._on_activate)
         self._entry.connect("key-press-event", self._on_entry_key)
@@ -53,16 +55,18 @@ class SearchBar(Gtk.Box):
         row.pack_start(self._entry, False, False, 0)
 
         self._case = Gtk.ToggleButton(label="Aa")
-        self._case.set_tooltip_text("Match case")
-        self._name(self._case, "Match case")
+        self._case.set_tooltip_text(a11y.NAMES["search_case"])
+        self._name(self._case, a11y.NAMES["search_case"])
         self._case.connect("toggled", self._on_changed)
         row.pack_start(self._case, False, False, 0)
 
         self._previous = self._step_button(
-            "go-up-symbolic", "‹", "Previous match", False
+            "go-up-symbolic", "‹", a11y.NAMES["search_previous"], False
         )
         row.pack_start(self._previous, False, False, 0)
-        self._next = self._step_button("go-down-symbolic", "›", "Next match", True)
+        self._next = self._step_button(
+            "go-down-symbolic", "›", a11y.NAMES["search_next"], True
+        )
         row.pack_start(self._next, False, False, 0)
 
         self._status = Gtk.Label(label="")
@@ -70,7 +74,9 @@ class SearchBar(Gtk.Box):
         self._name(self._status, "Match count")
         row.pack_start(self._status, False, False, 6)
 
-        close = self._icon_button("window-close-symbolic", "×", "Close search")
+        close = self._icon_button(
+            "window-close-symbolic", "×", a11y.NAMES["search_close"]
+        )
         close.connect("clicked", self._on_stop)
         row.pack_end(close, False, False, 0)
 
