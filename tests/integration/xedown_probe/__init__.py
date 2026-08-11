@@ -490,6 +490,12 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         self._info_bar = controller._info_bar
         record("infobar-created-on-refused-link", self._info_bar is not None)
         if self._info_bar is not None:
+            # `info_bar_close` is otherwise unaudited: `_accessible_nodes`
+            # only reaches controls that exist for the life of the tab, and
+            # an info bar does not. This is the one moment a real bar --
+            # not a mock, the actual widget `_set_info_bar` built -- exists
+            # to be asked about, before the Close click below destroys it.
+            self._audit_info_bar_close(self._info_bar)
             # Simulate a real Close click: emit the InfoBar's own "response"
             # signal, exactly what GTK does internally on a button press.
             # Never call tab.set_info_bar(None) here -- that argument is
@@ -498,6 +504,26 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             self._info_bar.response(Gtk.ResponseType.CLOSE)
         self._schedule(300, self.step_infobar_check)
         return False
+
+    def _audit_info_bar_close(self, bar):
+        """Audit the one button `step_infobar` already raises a real bar for.
+
+        `_set_info_bar` gives this button its name from
+        `a11y.NAMES["info_bar_close"]` explicitly -- it is also the one
+        control whose naming crashed on this branch's first live run
+        (`Gtk.InfoBar` has no `get_widget_for_response`), which is exactly
+        the kind of thing `_accessible_nodes` never had a chance to catch:
+        it only ever looked at controls that live for the whole tab. A
+        refused link's bar (the one `step_infobar` raises) carries exactly
+        one button, so the first child of its action area is unambiguous.
+        """
+        buttons = bar.get_action_area().get_children()
+        if not buttons:
+            record("a11y-info-bar-close-passes-the-standard", False, "no button found")
+            record("a11y-info-bar-close-names-match-the-standard", False, "no button")
+            return
+        nodes = self._visible_state_nodes(bar, [("info_bar_close", buttons[0])])
+        self._record_audit("a11y-info-bar-close", nodes)
 
     def step_infobar_check(self):
         controller = self._main_controller()
@@ -1023,41 +1049,106 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     # is a manual row in docs/manual-smoke-test.md, and the documentation
     # says which claims rest on which.
 
-    def _accessible_nodes(self):
-        """xedown's own controls, as `a11y.node` dicts in tab order."""
-        controller = self._main_controller()
-        modebar = controller.modebar
-        buttons = [modebar._buttons[Mode.PREVIEW], modebar._buttons[Mode.SOURCE]]
-        widgets = [
-            ("mode_preview", buttons[0]),
-            ("mode_source", buttons[1]),
-            ("refresh", modebar._refresh_button),
-            ("preview", controller.preview.widget),
-        ]
+    def _tab_order_index(self, root, widget):
+        """`widget`'s position in a depth-first walk of `root`'s own tree.
+
+        Not `enumerate()` over a Python list: that stays 0, 1, 2, 3 no
+        matter what the real widget tree does, which is exactly why the
+        tab-order rule this feeds could never fail before. `get_children()`
+        is verified live (not merely read from the docs) to already return
+        each container's children in *visual* order rather than call
+        order: two `pack_end` calls -- `modebar._refresh_button` first,
+        `modebar._stale_dot` second -- come back dot-then-button, matching
+        what actually renders (the dot sits immediately before the button,
+        both anchored to the trailing edge). Walking that depth-first from
+        a shared ancestor gives every widget below a real, comparable
+        position, so a future change that reorders the real tree without
+        updating the list a caller passes to `a11y.check_tree` shows up as
+        a genuine "does not follow visual order" failure instead of two
+        indices that were never anything but their place in a list.
+        """
+        order = []
+
+        def visit(node):
+            order.append(node)
+            if isinstance(node, Gtk.Container):
+                for child in node.get_children():
+                    visit(child)
+
+        visit(root)
+        return order.index(widget) if widget in order else -1
+
+    def _visible_state_nodes(self, root, entries):
+        """`a11y.node` dicts for `[(key, widget), ...]`, real state throughout.
+
+        `focusable` ANDs `can_focus` with `get_visible()` for the reason
+        `a11y.check_node`'s own comment gives: GTK leaves `can_focus` True on
+        a hidden widget even though its focus chain skips it regardless, so
+        `can_focus` alone overstates what a real Tab key-press can reach.
+        `index` comes from `_tab_order_index` against `root` -- a real
+        position in the tree this probe is actually driving, not a
+        placeholder.
+        """
         nodes = []
-        for index, (key, widget) in enumerate(widgets):
+        for key, widget in entries:
             accessible = widget.get_accessible()
             nodes.append(
                 xedown_a11y.node(
                     key=key,
                     name=accessible.get_name() if accessible else "",
                     role=accessible.get_role().value_nick if accessible else "",
-                    # `can_focus` alone is not what matters: GTK leaves it
-                    # True on a hidden widget even though its focus chain
-                    # skips invisible widgets entirely, so `can_focus` on its
-                    # own overstates what a real Tab key-press can reach.
-                    # ANDing with `get_visible()` reports what is actually
-                    # true -- effective focusability -- which is what
-                    # `a11y.check_node` assumes it is being handed. The
-                    # refresh button is deliberately hidden while
-                    # auto-refresh is on; without this AND it used to be
-                    # misreported as a defect for exactly that reason.
                     focusable=widget.get_can_focus() and widget.get_visible(),
                     visible=widget.get_visible(),
-                    index=index,
+                    index=self._tab_order_index(root, widget),
                 )
             )
         return nodes
+
+    def _record_audit(self, prefix, nodes):
+        """`check_tree` plus "every name came from NAMES", under one prefix.
+
+        Shared by every audit below the main one: the pass/fail shape is
+        identical each time, only which controls and which moment in the
+        sequence differ.
+        """
+        problems = xedown_a11y.check_tree(nodes)
+        record(
+            f"{prefix}-passes-the-standard",
+            not problems,
+            "; ".join(problems) if problems else f"{len(nodes)} controls checked",
+        )
+        mismatched = [
+            f"{item['key']}={item['name']!r}"
+            for item in nodes
+            if item["name"] != xedown_a11y.NAMES[item["key"]]
+        ]
+        record(
+            f"{prefix}-names-match-the-standard",
+            not mismatched,
+            "; ".join(mismatched) if mismatched else "every name came from NAMES",
+        )
+
+    def _accessible_nodes(self):
+        """xedown's own controls, as `a11y.node` dicts in tab order.
+
+        `stale`, the five `search_*` names and `info_bar_close` are
+        deliberately absent here: every one of them is hidden, closed or
+        simply nonexistent at the point in the sequence `step_a11y_tree`
+        runs. Each is audited later instead, at the step that already puts
+        it on screen for its own reason -- `_audit_stale_and_refresh`,
+        `_audit_search_bar`, `_audit_info_bar_close` -- rather than forced
+        into visibility here just to be checked.
+        """
+        controller = self._main_controller()
+        modebar = controller.modebar
+        buttons = [modebar._buttons[Mode.PREVIEW], modebar._buttons[Mode.SOURCE]]
+        entries = [
+            ("mode_preview", buttons[0]),
+            ("mode_source", buttons[1]),
+            ("refresh", modebar._refresh_button),
+            ("preview", controller.preview.widget),
+        ]
+        return self._visible_state_nodes(self.tab, entries)
 
     def step_a11y_tree(self):
         controller = self._main_controller()
@@ -1135,8 +1226,20 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         preview = controller.preview if controller is not None else None
         if preview is None:
             record("a11y-page-has-a-landmark", False, "no preview")
+            record("a11y-page-has-a-language", False, "no preview")
             self._schedule(300, self.step_content_integrity)
             return False
+
+        # The independent answer to compare the page against: exactly what
+        # `_reload_preview` called to decide the `lang` this same page was
+        # rendered with, read again here rather than guessed at from the
+        # locale rules directly. Comparing the page against a *fixed*
+        # expectation ("a tag, or nothing") is what let a `_page_language()`
+        # that silently started returning the wrong thing -- or nothing, on
+        # a machine that plainly has a locale -- go on recording PASS
+        # forever: an empty `lang` is only a legitimate answer when this
+        # call also returns None, never merely when it returns *something*.
+        expected_lang = controller._page_language() or ""
 
         def on_result(webview, result, _user_data):
             try:
@@ -1157,14 +1260,15 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 self._schedule(300, self.step_content_integrity)
                 return
             role, _, lang = found.partition("|")
-            record("a11y-page-has-a-landmark", role == "document", f"role={role!r}")
-            # `lang` may legitimately be empty when the desktop locale names
-            # no language (a C locale): absent beats wrong. Asserted as "a
-            # tag or nothing", never as "some tag".
+            # `main`, not `document`: a document-structure role is not a
+            # landmark, and this is the one place that would have kept
+            # passing throughout the whole time the page shipped the wrong
+            # one -- the DOM was never asked what role actually landed.
+            record("a11y-page-has-a-landmark", role == "main", f"role={role!r}")
             record(
                 "a11y-page-has-a-language",
-                lang == "" or "-" in lang or lang.isalpha(),
-                f"lang={lang!r}",
+                lang == expected_lang,
+                f"lang={lang!r} expected={expected_lang!r}",
             )
             self._schedule(300, self.step_content_integrity)
 
@@ -2096,9 +2200,28 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record("stale-dot-shows-when-behind", bar._stale_dot.get_visible())
         # With automatic refresh off, nothing rendered it.
         record("no-render-while-auto-is-off", controller.state.preview_stale)
+        # `stale` and `refresh` are both hidden everywhere `_accessible_nodes`
+        # runs (auto-refresh is on by default there), so their `focusable`
+        # rules never actually fired against real state until now: this is
+        # the one point in the sequence both are genuinely visible, auto-off
+        # and behind, which is the only combination that shows either at
+        # all.
+        self._audit_stale_and_refresh(bar)
         controller.refresh_now()
         self._schedule(900, self.step_manual_refresh_check)
         return False
+
+    def _audit_stale_and_refresh(self, bar):
+        """`stale` before `refresh`: that is the real order the box packs
+        them in (both anchored `pack_end`, with the dot packed second so it
+        lands immediately to the button's left) -- verified live via
+        `_tab_order_index`'s own docstring, not assumed from the packing
+        calls alone.
+        """
+        nodes = self._visible_state_nodes(
+            bar, [("stale", bar._stale_dot), ("refresh", bar._refresh_button)]
+        )
+        self._record_audit("a11y-stale-and-refresh", nodes)
 
     def step_manual_refresh_check(self):
         controller = self._main_controller()
@@ -2603,6 +2726,13 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             controller.is_searching
             and controller.searchbar.owns_focus(self.window.get_focus()),
         )
+        # The five `search_*` names -- and `search_status`, the label the
+        # session status text lands in -- are otherwise unaudited: every
+        # one of them is hidden everywhere `_accessible_nodes` runs, since
+        # that step runs before the bar is ever opened. The bar is
+        # genuinely open here (a real `Ctrl+F` a moment ago), which is the
+        # one state where any of this can be checked at all.
+        self._audit_search_bar(controller)
         # "Paragraph 7" alone would also match "Paragraph 70" through
         # "Paragraph 79", which is exactly the kind of accident that makes a
         # count assertion meaningless -- the trailing period rules those out.
@@ -2613,6 +2743,28 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         controller.searchbar.set_query("Paragraph 7.")
         self._schedule(900, self.step_search_count_check)
         return False
+
+    def _audit_search_bar(self, controller):
+        """The bar's own six controls, in the real order the row packs them.
+
+        `search_status` (the "N of M" label) is not focusable and so never
+        trips `check_node`'s role/name rules, but it is still walked here:
+        the mismatch check below is what actually pins its name against
+        `NAMES["search_status"]` -- the one this brief's Finding 4 moved out
+        of a bare string literal -- regardless of whether anything can tab
+        to it.
+        """
+        bar = controller.searchbar
+        entries = [
+            ("search_entry", bar._entry),
+            ("search_case", bar._case),
+            ("search_previous", bar._previous),
+            ("search_next", bar._next),
+            ("search_status", bar._status),
+            ("search_close", bar._close),
+        ]
+        nodes = self._visible_state_nodes(bar, entries)
+        self._record_audit("a11y-search-bar", nodes)
 
     def step_search_count_check(self):
         controller = self._main_controller()
