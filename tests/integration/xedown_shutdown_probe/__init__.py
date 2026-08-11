@@ -312,16 +312,24 @@ def _scenario_preview_active(probe):
     monitor that outlived its controller would show up in any of them, with
     no change to any scenario.
 
-    A settle timer still *armed* at close is deliberately NOT reached here,
-    and cannot be. Arming one means writing the document's file from outside,
-    and xed then refuses to close that tab without asking the user first --
-    it checks the file when the view takes focus, marks the tab
-    externally-modified, and raises a prompt no scripted scenario can answer,
-    so the window never closes. That is xed's own behaviour rather than
-    xedown's: this scenario was run with `XEDOWN_CONTROL=1`, the plugin
-    uninstalled entirely, and hung in exactly the same way. The timer's
-    teardown is covered instead by `FileWatch.stop()` being unconditional in
-    `deactivate()`, which every scenario above exercises.
+    The last step reaches the one state nothing else here does: a settle
+    timer still *armed* when the close request arrives. A timer that outlived
+    `deactivate()` would fire into a torn-down controller, and it is the only
+    branch of `FileWatch._cancel_settle` that is ever taken -- every other
+    scenario stops an unarmed watch, so deleting that call would pass them
+    all.
+
+    It arms the timer by poking the monitor's own handler rather than by
+    writing the file, and the distinction is the whole reason this works.
+    Writing the document's file from outside makes xed refuse to close that
+    tab without asking the user: it checks the file when the view takes
+    focus, marks the tab externally-modified, and raises a prompt no scripted
+    scenario can answer, so the window never closes. That is xed's own
+    behaviour rather than xedown's -- this scenario was run with
+    `XEDOWN_CONTROL=1`, the plugin uninstalled entirely, and hung in exactly
+    the same way. Poking the handler leaves the file untouched, so xed has
+    nothing to object to, while xedown's timer is armed exactly as a real
+    write would have armed it.
     """
 
     def open_them():
@@ -333,7 +341,25 @@ def _scenario_preview_active(probe):
     def verify():
         _check_live_preview("preview-active", _state["tabs"])
 
-    return [(2500, open_them), (3500, verify)]
+    def arm_settle_timer():
+        # Not asserted in control mode: there is no plugin to arm.
+        if CONTROL:
+            return
+        controller = _controller(_state["tabs"][1])
+        watch = getattr(controller, "_watch", None)
+        if watch is None:
+            _record("preview-active-timer-armed", False, "no watch to arm")
+            return
+        watch._on_changed()
+        _record(
+            "preview-active-timer-armed",
+            watch._settle_source != 0,
+            "the close below must arrive with a settle timer still pending",
+        )
+
+    # 100ms, well inside FileWatch's 300ms settle: the runner asks the window
+    # to close as soon as this returns READY.
+    return [(2500, open_them), (3500, verify), (100, arm_settle_timer)]
 
 
 SCENARIOS = {

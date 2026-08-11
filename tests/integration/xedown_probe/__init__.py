@@ -759,9 +759,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         controller = self._main_controller()
         record(
             "external-reload-retires-bar",
-            controller._external_bar is None and not self.document.get_modified(),
+            controller._external_bar is None
+            # The discriminating half: `modified` was cleared by hand a
+            # moment ago, so only the buffer's content proves the revert
+            # actually happened rather than the flag merely being false.
+            and "Mine wins" not in self._buffer_text(),
             f"bar {controller._external_bar!r}, "
-            f"modified {self.document.get_modified()}",
+            f"modified {self.document.get_modified()}, "
+            f"reverted {'Mine wins' not in self._buffer_text()}",
         )
         record(
             "external-reload-clears-the-disk-cache",
@@ -1053,6 +1058,20 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "save-preserves-preview-scroll",
             current > 0.05 and abs(current - self._scroll_baseline) < 0.2,
             f"baseline={self._scroll_baseline!r} current={current!r}",
+        )
+        # Without this, the assertion above passes *vacuously* if the save
+        # never happened: no save means no reload, and no reload means the
+        # scroll trivially matches. That is not hypothetical -- the external
+        # section above rewrites this document's file from outside, and xed
+        # refuses to overwrite a file whose modification time has moved
+        # unless its own externally-modified notification has been raised
+        # first. Reorder the steps above and this save starts being refused
+        # while the scroll assertion goes on passing.
+        record(
+            "scroll-save-actually-saved",
+            not self.document.get_modified()
+            and self.tab.get_state() == Xed.TabState.STATE_NORMAL,
+            f"modified={self.document.get_modified()} state={self.tab.get_state()}",
         )
         controller.toggle()  # -> SOURCE
         self._schedule(400, self.step_scroll_edit)
