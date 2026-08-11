@@ -244,3 +244,22 @@ accept xed's own **Reload** bar — the source view taking keyboard focus is
 what triggers xed's own check; neither `Ctrl+Shift+R` nor a plain mode switch
 re-reads the file themselves. If the watching is costing more than it gives on
 such a mount, set `"watch_external_changes": false`.
+
+## A document opened through a symbolic link never follows changes to its file
+
+**What you see:** you open `notes.md`, which is a symbolic link to a file
+somewhere else, and edit that file from a terminal. The preview does not
+update, and no bar appears. Opening the same file by its real name works
+normally.
+
+**Why:** the watch is placed on the path the document was opened with, and a
+file monitor on a symbolic link watches the link itself rather than what it
+points at. Nothing writes to the link — a write goes to the target — so no
+event is ever raised. This is not limited to writes that use the target's own
+name: measured on this system, a monitor on a link saw nothing whether the
+file was written by its real name *or* through the link.
+
+**What to do about it:** open the file by its real path if you want the preview
+to follow it. Failing that, use *File → Revert*, or switch to Markdown mode and
+accept xed's own **Reload** bar. Nothing is lost either way — this affects only
+whether a change is *noticed*, never the document's contents.
