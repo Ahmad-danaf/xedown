@@ -1096,16 +1096,23 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # Orca speaks it is the manual row.
         controller = self._main_controller()
         preview_button = controller.modebar._buttons[Mode.PREVIEW]
+        # ATK's accessor for a widget's state is `ref_state_set` -- a
+        # `ref_`-prefixed getter, unlike almost everything else in the API --
+        # and the object it returns is queried with `contains_state`, not
+        # `contains`. Verified directly against this machine's GTK: neither
+        # `get_state_set` nor `contains` exists on these objects, and both
+        # got this wrong the first time it was written, which reads
+        # plausibly either way until it is actually run.
         before = (
             preview_button.get_accessible()
-            .get_state_set()
-            .contains(Atk.StateType.CHECKED)
+            .ref_state_set()
+            .contains_state(Atk.StateType.CHECKED)
         )
         controller.set_mode(Mode.SOURCE)
         after = (
             preview_button.get_accessible()
-            .get_state_set()
-            .contains(Atk.StateType.CHECKED)
+            .ref_state_set()
+            .contains_state(Atk.StateType.CHECKED)
         )
         record(
             "a11y-mode-switch-changes-checked-state",
