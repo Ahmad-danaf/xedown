@@ -647,12 +647,27 @@ class TabController:
         the file. Cleared before the call, so a tab that goes busy again
         mid-flight re-defers rather than losing the event: both handlers
         re-check `_tab_is_quiet` for themselves.
+
+        With both flags set and the buffer clean, one call covers both:
+        `_on_modified_changed`'s clean branch ends by asking
+        `_on_file_settled` itself, and running it again in the same turn
+        would re-read the file and re-render the body for an answer that
+        cannot have changed. Harmless but not free -- a body render is a full
+        Markdown conversion.
         """
-        if self._modified_deferred:
-            self._modified_deferred = False
+        modified_deferred = self._modified_deferred
+        settle_deferred = self._settle_deferred
+        self._modified_deferred = False
+        self._settle_deferred = False
+        if modified_deferred:
+            # Read before the call: the clean branch is the one that chains
+            # into `_on_file_settled`, and the call itself can change what
+            # `get_modified()` answers.
+            chains_into_settle = not self.document.get_modified()
             self._on_modified_changed()
-        if self._settle_deferred:
-            self._settle_deferred = False
+            if chains_into_settle:
+                return False
+        if settle_deferred:
             self._on_file_settled()
         return False
 
