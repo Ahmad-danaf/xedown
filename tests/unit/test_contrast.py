@@ -27,7 +27,7 @@ of this file refuses to do.
 import re
 
 import pytest
-from xedown import themes, vendoring
+from xedown import a11y, themes, vendoring
 
 from . import wcag
 from .cssparse import declarations
@@ -41,7 +41,11 @@ SEMANTIC_PAIRS = (
     ("--xedown-link", "--xedown-bg", 4.5),
     ("--xedown-muted", "--xedown-code-bg", 4.5),
     ("--xedown-error-fg", "--xedown-error-bg", 4.5),
-    ("--xedown-focus-ring", "--xedown-bg", 3.0),
+    ("--xedown-focus-ring", "--xedown-bg", a11y.FOCUS_RING_MINIMUM),
+    # The ring is drawn on copy buttons too, and those sit on a code block
+    # rather than on the page background. Passing against one surface says
+    # nothing about the other.
+    ("--xedown-focus-ring", "--xedown-code-bg", a11y.FOCUS_RING_MINIMUM),
     ("--xedown-selection-fg", "--xedown-selection-bg", 4.5),
 )
 
