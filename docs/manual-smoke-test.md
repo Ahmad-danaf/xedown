@@ -83,6 +83,13 @@ Rows 47–53 use `tests/fixtures/rtl.md` and `tests/fixtures/mixed-direction.md`
 Both are clean documents like `showcase.md` — an error placeholder in either is
 a real regression. Row 53 restores the settings file, like row 46.
 
+Rows 95–101 need Orca (Linux Mint's screen reader) actually running, and are
+the one part of this checklist no script can perform. Everything the `a11y-*`
+checks in `scripts/run-integration-tests.sh` can reach — names, focus,
+checked state, landmark, language — is confirmed structurally before you ever
+get here; what only a human with headphones can confirm is whether Orca says
+any of it out loud, and what words it actually uses.
+
 | # | Step | Expected |
 | --- | --- | --- |
 | 1 | Enable **Xedown** in *Preferences → Plugins* | Enables with no error dialog and no terminal output |
@@ -179,6 +186,13 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 92 | `rm` the file, then recreate it with new content | No error dialog and no error page while it is gone; the preview catches up once it is back |
 | 93 | Save the file under a new name (*File → Save As*), then edit the **new** file from a terminal | The preview follows the new file. Editing the old path changes nothing |
 | 94 | Set `"watch_external_changes": false`, restart xed, repeat the first row | Nothing happens until you refresh by hand |
+| 95 | Reset `~/.config/xedown/settings.json` to defaults (row 94 turned `watch_external_changes` off) and restart xed. Start Orca (<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>, or `orca &`), then open `tests/fixtures/showcase.md` | Orca announces the window and the preview |
+| 96 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> to switch modes, twice | Orca says which surface is now showing, both ways. **Write down what it actually said** — the documentation must match it |
+| 97 | <kbd>Tab</kbd> through the mode bar | Each control is announced by name; nothing is announced as "black circle" or otherwise unnamed |
+| 98 | With the preview showing, press <kbd>Down</kbd> and <kbd>Page Down</kbd> without clicking first | The document scrolls, and Orca reads as it goes |
+| 99 | Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, tab through the search bar | Every button is announced by name, not by icon |
+| 100 | Set `"auto_refresh": false`, restart xed, open the file in Preview, switch to Markdown, type a line, switch back to Preview (it renders), then press <kbd>Ctrl</kbd>+<kbd>Z</kbd> so the stale dot appears | Orca announces the stale indicator as *Preview is out of date*, not as a symbol |
+| 101 | Remove `auto_refresh` from `~/.config/xedown/settings.json`, restart xed, then trigger the external-change bar (edit the file from a terminal while it has unsaved edits) | The bar and its **Reload…** button are announced |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

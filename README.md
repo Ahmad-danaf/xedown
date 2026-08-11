@@ -175,6 +175,36 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   prompt after an external change — re-renders the preview regardless of this
   setting.
 
+## Accessibility
+
+xedown is built to be driven entirely from the keyboard, and every control it
+creates — the mode buttons, the refresh button, the stale indicator, the
+search bar and the info bars — takes its accessible name from a single source
+of truth. Switching modes moves keyboard focus to the surface you land on and
+changes that surface's checked state to match; both are mechanisms a screen
+reader can use to signal what happened. The rendered page carries a
+`role="document"` landmark and, when your desktop's language is known, a
+`lang` attribute. The focus ring's contrast against every surface it is drawn
+on meets WCAG's 3:1 non-text threshold, in all four preview themes, light and
+dark.
+
+**The screen-reader speech itself has not been tested.** Everything above is
+checked against xed's live accessible tree or by unit test — not by listening
+with a screen reader. **Orca on Linux Mint** is the only screen reader this
+project targets or has any plan to test against; it has not been run yet, and
+until it has, this file will not claim that xedown "works with" or "is
+accessible to" a screen reader. See
+[docs/known-issues.md](docs/known-issues.md) and the Orca rows in
+[docs/manual-smoke-test.md](docs/manual-smoke-test.md).
+
+The rendered preview's *content* is exposed to a screen reader by WebKit
+rather than by xedown, so how well a given document reads is largely WebKit's
+behaviour, not something xedown controls or has measured.
+
+The `lang` attribute is taken from your desktop's language, not from the
+document: xedown does not detect what language a document is written in, and
+a wrong `lang` reads worse than none.
+
 ## Documentation
 
 See [docs/index.md](docs/index.md) for the documentation index, including the

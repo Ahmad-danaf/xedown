@@ -110,6 +110,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dismissing something that had focus — the preview takes it back, so the
   arrow keys and <kbd>Page Down</kbd> scroll what you are reading straight
   away.
+- An accessibility pass over everything v0.2 built. Every control xedown
+  creates takes its accessible name from a single source of truth — the mode
+  buttons, the refresh button, the stale indicator, the search bar and the
+  info bars — and the preview itself is named; a live audit against xed's own
+  accessible tree confirms every one of those names, and confirms that
+  switching modes moves keyboard focus to the surface you land on and changes
+  its checked state to match — both mechanisms a screen reader can use to
+  signal what happened. The same live audit confirms the rendered page
+  carries a `role="document"` landmark and, when your desktop's language is
+  known, a `lang` attribute. Focus is visible on everything focusable, and
+  the focus ring's contrast — against the page background and the code-block
+  background, in all four themes, light and dark — meets WCAG 1.4.11's 3:1
+  non-text threshold, along with every semantic colour pair xedown draws,
+  checked by unit test. **Screen-reader speech itself has not yet been
+  checked**, with Orca or any other reader — see
+  [docs/known-issues.md](docs/known-issues.md).
 
 ### Fixed
 

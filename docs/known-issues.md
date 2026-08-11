@@ -245,6 +245,65 @@ what triggers xed's own check; neither `Ctrl+Shift+R` nor a plain mode switch
 re-reads the file themselves. If the watching is costing more than it gives on
 such a mount, set `"watch_external_changes": false`.
 
+## The accessibility pass has not been checked with a screen reader
+
+**What you see:** nothing wrong, necessarily — this is a gap in verification,
+not a reported bug. v0.2's accessibility work gives every control xedown
+creates a name, moves keyboard focus to the preview on a mode switch and
+changes its checked state to match, exposes a `role="document"` landmark and
+a `lang` attribute on the rendered page, and meets WCAG 1.4.11's 3:1 non-text
+contrast for the focus ring in every theme, light and dark. All of that is
+checked mechanically: the `a11y-*` assertions in
+`scripts/run-integration-tests.sh` walk xed's live accessible tree, and
+`tests/unit/test_contrast.py` checks colour. Nobody has yet run a screen
+reader against any of it. Whether Orca actually announces a mode switch,
+names a control correctly, or reads the stale indicator as *Preview is out of
+date* rather than staying silent or reading a symbol, is unverified.
+
+**Why:** the audit checks the accessible tree — names, roles, focus, checked
+state — because that is what a script can reach. It cannot listen. What it
+confirms are the mechanisms a screen reader is supposed to use, not proof
+that one does.
+
+**What to do about it:** run the Orca rows in
+[`docs/manual-smoke-test.md`](manual-smoke-test.md) (rows 95–101) with Orca
+on Linux Mint, write down what it actually says, and update this entry, the
+changelog and the README's *Accessibility* section to match. Until that
+happens, treat every claim in this project about screen-reader *behaviour* —
+as opposed to accessible names, focus, checked state, landmark, language and
+contrast, all of which are measured — as unverified.
+
+**Status:** outstanding. Delete this entry once the Orca pass has run and its
+findings are folded into the docs above.
+
+## A preview update that moves no focus cannot be announced
+
+**What you see:** the debounced auto-refresh path (`update_body()` /
+`window.xedown.replaceBody()`) updates the rendered page in place while
+Preview is already showing and already has focus. Nothing about that update
+moves focus or changes any control's accessible state, so there is no
+accessible event for a screen reader to react to.
+
+**Why:** GTK 3's accessibility layer (ATK) has no equivalent of an ARIA live
+region — no API to say "this content changed, say so anyway." The only
+mechanisms it exposes are focus changes and object/state-change
+notifications, and WebKit2's own accessibility bridge does not add one on
+top. xedown's other accessibility work leans on exactly those two mechanisms
+because they are the only ones GTK 3 gives a plugin access to: the mode
+switch moves focus to the named preview widget and changes the toggle's
+checked state; an in-place refresh does neither.
+
+**What to do about it:** nothing xedown can do within GTK 3 — there is no
+live-region mechanism to hook into. Anyone who needs to notice an edit as it
+renders should trigger it through a mode switch
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> twice) rather than waiting on
+auto-refresh: a mode switch moves focus and changes checked state, which an
+in-place update does not.
+
+**Status:** platform limitation. GTK 3 gives xedown no way to signal a change
+that moves no focus; fixing this would need a different accessibility API
+than the one xed's plugin host provides.
+
 ## A document opened through a symbolic link never follows changes to its file
 
 **What you see:** you open `notes.md`, which is a symbolic link to a file
