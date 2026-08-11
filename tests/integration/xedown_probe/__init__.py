@@ -582,13 +582,37 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "document.body.textContent", None, on_result, None
         )
 
+    def _reconcile_without_saving(self):
+        """Leave the buffer clean and the file matching it, byte for byte.
+
+        Emphatically NOT `Xed.commands_save_document`, which the first cut of
+        these steps used and which cannot work here. Every step in this
+        section writes the document's file from outside, and xed's saver
+        refuses to overwrite a file whose modification time has moved since
+        it was loaded: it raises its own "the file has changed on disk"
+        confirmation instead and parks the tab in
+        `XED_TAB_STATE_SAVING_ERROR`, where `_xed_tab_save_async` refuses
+        every later save for the rest of the session. That is xed behaving
+        correctly -- confirmed live, twice, as a CRITICAL in xed's own log
+        plus a document that could never be saved again.
+
+        Writing the buffer's text to the file and clearing the modified flag
+        by hand reaches the same end state a save would have reached, without
+        asking xed to do the one thing it is entitled to refuse. The trailing
+        newline is added because the buffer's implicit one is stripped on
+        load and restored on save, so a file without it would not compare
+        equal -- which is exactly what `diskstate.normalize` exists for.
+        """
+        self._write_document_file(self._buffer_text() + "\n")
+        self.document.set_modified(False)
+
     def step_external_watch_setup(self):
-        # A clean buffer is what makes the next write an UPDATE rather than a
-        # WARN, and step_external_change deliberately left the file ahead of
-        # the buffer. Saving reconciles them and gives every assertion below a
-        # known starting point, whatever ran before.
+        # A clean buffer whose file matches it is what makes the next write an
+        # UPDATE rather than a WARN, and step_external_change deliberately
+        # left the file ahead of the buffer. This gives every assertion below
+        # a known starting point, whatever ran before.
         self._main_controller().set_mode(Mode.PREVIEW)
-        Xed.commands_save_document(self.window, self.document)
+        self._reconcile_without_saving()
         self._schedule(1200, self.step_external_watch_write)
         return False
 
@@ -596,7 +620,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record(
             "external-setup-buffer-is-clean",
             not self.document.get_modified(),
-            "the save did not settle; later assertions would test the wrong branch",
+            "the reconcile did not take; later assertions would test the wrong branch",
         )
         self._write_document_file("# Rewritten outside\n\nBy something else.\n")
         self._schedule(1200, self.step_external_watch_check)
@@ -684,45 +708,67 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             controller._external_bar is None,
             "a bar must not outlive the divergence it warned about",
         )
-        self._schedule(300, self.step_external_save_type)
+        self._schedule(300, self.step_external_reload_type)
         return False
 
-    # --- saving is the other way the divergence ends -----------------------
+    # --- reloading is the other way the divergence ends --------------------
     #
     # The undo above proves `_on_modified_changed`. This proves
-    # `_on_document_saved`, which is the resolution a user actually reaches
-    # for: their version wins, the file matches the buffer again, and the bar
-    # has nothing left to say. No fresh external write is needed -- the undo
-    # step left `_disk_text` set, so one keystroke is enough to diverge again.
+    # `_on_document_loaded`, which is where the bar's own Reload... button
+    # ends up: xed's Revert replaces the buffer, and the bar has nothing left
+    # to say. No fresh external write is needed -- the undo step left
+    # `_disk_text` set, so one keystroke is enough to diverge again.
+    #
+    # Deliberately NOT a save. Every step in this section has written the
+    # document's file from outside, so xed's saver would refuse to overwrite
+    # it without its own confirmation (see `_reconcile_without_saving`) --
+    # which is xed working correctly, and which no scripted step can answer.
+    # The modified flag is cleared by hand first for the same reason xed's
+    # own revert asks before discarding: with it set, FileRevert raises a
+    # modal dialog nothing here can dismiss.
 
-    def step_external_save_type(self):
+    def step_external_reload_type(self):
         self.document.insert(self.document.get_end_iter(), "\nMine wins.\n", -1)
-        self._schedule(900, self.step_external_save_do)
+        self._schedule(900, self.step_external_reload_do)
         return False
 
-    def step_external_save_do(self):
+    def step_external_reload_do(self):
         controller = self._main_controller()
         record(
             "external-typing-shows-bar-again",
             controller._external_bar is not None,
             "the bar must come back for a second divergence",
         )
-        Xed.commands_save_document(self.window, self.document)
-        self._schedule(1400, self.step_external_save_retired)
+        # xed's revert command acts on `xed_window_get_active_tab`, not on any
+        # tab handed to it, and earlier steps in this sequence leave a second
+        # tab open. Making this tab active first is what aims the command at
+        # the document these assertions are about.
+        self.window.set_active_tab(self.tab)
+        self.document.set_modified(False)
+        action = self._activate_named_action("FileRevert")
+        record(
+            "external-reload-action-was-usable",
+            action is not None and action.get_sensitive(),
+            f"action={action!r}, "
+            f"active_tab_is_ours={self.window.get_active_tab() is self.tab}",
+        )
+        self._schedule(2000, self.step_external_reload_retired)
         return False
 
-    def step_external_save_retired(self):
+    def step_external_reload_retired(self):
         controller = self._main_controller()
         record(
-            "external-save-retires-bar",
+            "external-reload-retires-bar",
             controller._external_bar is None and not self.document.get_modified(),
             f"bar {controller._external_bar!r}, "
             f"modified {self.document.get_modified()}",
         )
         record(
-            "external-save-clears-the-disk-cache",
+            "external-reload-clears-the-disk-cache",
             controller._disk_text is None,
-            "after a save the buffer is the truth again",
+            f"after a reload the buffer is the truth again; "
+            f"buffer starts {self._buffer_text()[:30]!r}, "
+            f"reverted={'Mine wins' not in self._buffer_text()}",
         )
         self._schedule(300, self.step_external_burst)
         return False
@@ -811,11 +857,11 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     # next keystroke would raise the bar over a file the user already has.
 
     def step_external_returned_setup(self):
-        # A known buffer to come back to. Saving makes disk match it, so the
+        # A known buffer to come back to, with the file matching it, so the
         # write below is a genuine divergence and the one after it a genuine
         # return.
         self.document.set_text("# Round trip\n\nThe buffer's own text.\n")
-        Xed.commands_save_document(self.window, self.document)
+        self._reconcile_without_saving()
         self._schedule(1400, self.step_external_returned_diverge)
         return False
 
@@ -840,8 +886,13 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_external_returned_restore(self):
-        # Byte for byte what the buffer holds, so diskstate answers UNCHANGED.
-        self._write_document_file("# Round trip\n\nThe buffer's own text.\n")
+        # Byte for byte what the setup wrote, so diskstate answers UNCHANGED.
+        # Built from the buffer rather than repeating the literal: the setup
+        # went through `_reconcile_without_saving`, which appends the implicit
+        # trailing newline, and a hand-written literal that omitted it read as
+        # an UPDATE of the same visible text -- the preview looked right while
+        # the cache silently stayed set.
+        self._write_document_file(self._buffer_text() + "\n")
         self._schedule(1400, self.step_external_returned_final)
         return False
 
@@ -875,7 +926,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "typing over a file that matches the buffer must not warn",
         )
         # Leave the buffer clean for the steps that follow.
-        Xed.commands_save_document(self.window, self.document)
+        self._reconcile_without_saving()
         self._schedule(1400, self.step_external_repoint)
         return False
 
