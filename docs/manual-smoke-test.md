@@ -173,11 +173,12 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 86 | Type a character, then run the same `echo` again | A bar appears: *This file changed on disk. Your unsaved edits are still showing.* The preview still shows what you typed |
 | 87 | Click **Reload…**, then **Cancel** in xed's dialog | Nothing changes. Your edits are still there |
 | 88 | Click **Reload…** again, then **Revert** | The document and the preview both show the file on disk, and the bar is gone |
-| 89 | Undo back to an unmodified document after an external change | The bar goes and the preview picks up the file |
-| 90 | Run a loop of ten quick writes to the file | One settled update. xed stays responsive throughout |
-| 91 | `rm` the file, then recreate it with new content | No error dialog and no error page while it is gone; the preview catches up once it is back |
-| 92 | Save the file under a new name (*File → Save As*), then edit the **new** file from a terminal | The preview follows the new file. Editing the old path changes nothing |
-| 93 | Set `"watch_external_changes": false`, restart xed, repeat the first row | Nothing happens until you refresh by hand |
+| 89 | Make the bar appear again (edit, then `echo` to the file), then press <kbd>Ctrl</kbd>+<kbd>S</kbd> and accept xed's *Save Anyway* | The bar goes, the preview shows **your** text, and the file on disk matches it — the other way a divergence ends, and the one the probe cannot script because xed's confirmation is modal |
+| 90 | Undo back to an unmodified document after an external change | The bar goes and the preview picks up the file |
+| 91 | Run a loop of ten quick writes to the file | One settled update. xed stays responsive throughout |
+| 92 | `rm` the file, then recreate it with new content | No error dialog and no error page while it is gone; the preview catches up once it is back |
+| 93 | Save the file under a new name (*File → Save As*), then edit the **new** file from a terminal | The preview follows the new file. Editing the old path changes nothing |
+| 94 | Set `"watch_external_changes": false`, restart xed, repeat the first row | Nothing happens until you refresh by hand |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion
