@@ -85,10 +85,11 @@ a real regression. Row 53 restores the settings file, like row 46.
 
 Rows 95–101 need Orca (Linux Mint's screen reader) actually running, and are
 the one part of this checklist no script can perform. Everything the `a11y-*`
-checks in `scripts/run-integration-tests.sh` can reach — names, focus,
-checked state, landmark, language — is confirmed structurally before you ever
-get here; what only a human with headphones can confirm is whether Orca says
-any of it out loud, and what words it actually uses.
+checks in `tests/integration/xedown_probe/__init__.py` (run through
+`scripts/run-integration-tests.sh`) can reach — names, focus, checked state,
+landmark, language — is confirmed structurally before you ever get here;
+what only a human with headphones can confirm is whether Orca says any of it
+out loud, and what words it actually uses.
 
 | # | Step | Expected |
 | --- | --- | --- |

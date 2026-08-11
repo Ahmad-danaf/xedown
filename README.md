@@ -182,11 +182,12 @@ creates — the mode buttons, the refresh button, the stale indicator, the
 search bar and the info bars — takes its accessible name from a single source
 of truth. Switching modes moves keyboard focus to the surface you land on and
 changes that surface's checked state to match; both are mechanisms a screen
-reader can use to signal what happened. The rendered page carries a
-`role="document"` landmark and, when your desktop's language is known, a
-`lang` attribute. The focus ring's contrast against every surface it is drawn
-on meets WCAG's 3:1 non-text threshold, in all four preview themes, light and
-dark.
+reader can use to signal what happened. The rendered document page carries a
+`role="main"` landmark and, when your desktop's language is known, a `lang`
+attribute — an error page carries neither: it is xedown speaking, not the
+document, and there is no document to detect a language from. The focus
+ring's contrast against every surface it is drawn on meets WCAG's 3:1
+non-text threshold, in all four preview themes, light and dark.
 
 **The screen-reader speech itself has not been tested.** Everything above is
 checked against xed's live accessible tree or by unit test — not by listening

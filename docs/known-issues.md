@@ -250,11 +250,13 @@ such a mount, set `"watch_external_changes": false`.
 **What you see:** nothing wrong, necessarily — this is a gap in verification,
 not a reported bug. v0.2's accessibility work gives every control xedown
 creates a name, moves keyboard focus to the preview on a mode switch and
-changes its checked state to match, exposes a `role="document"` landmark and
-a `lang` attribute on the rendered page, and meets WCAG 1.4.11's 3:1 non-text
-contrast for the focus ring in every theme, light and dark. All of that is
-checked mechanically: the `a11y-*` assertions in
-`scripts/run-integration-tests.sh` walk xed's live accessible tree, and
+changes its checked state to match, and exposes a `role="main"` landmark and
+a `lang` attribute on the rendered document page (never on an error page,
+which is xedown speaking rather than the document). It also meets WCAG
+1.4.11's 3:1 non-text contrast for the focus ring in every theme, light and
+dark. All of that is checked mechanically: the `a11y-*` assertions in
+`tests/integration/xedown_probe/__init__.py` (run through
+`scripts/run-integration-tests.sh`) walk xed's live accessible tree, and
 `tests/unit/test_contrast.py` checks colour. Nobody has yet run a screen
 reader against any of it. Whether Orca actually announces a mode switch,
 names a control correctly, or reads the stale indicator as *Preview is out of
