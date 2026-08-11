@@ -91,9 +91,11 @@ class TabController:
         self._disk_text = None
         self._watch = None
         self._watch_external = True
-        # A settle that arrived while xed was mid-load or mid-save, waiting
-        # for the tab to go quiet again. See `_tab_is_quiet`.
+        # Work that arrived while xed was mid-load or mid-save, waiting for
+        # the tab to go quiet again. Two flags, not one: see
+        # `_run_deferred_work`. See `_tab_is_quiet` for why either defers.
         self._settle_deferred = False
+        self._modified_deferred = False
         # The path this tab's remembered mode is filed under. Compared on
         # save, so a Save As moves the entry instead of stranding it.
         self._remembered_path = None
@@ -128,6 +130,8 @@ class TabController:
         self._cancel_refresh()
         self._stop_watch()
         self._disk_text = None
+        self._settle_deferred = False
+        self._modified_deferred = False
         for owner, handler_id in self._handlers:
             try:
                 owner.disconnect(handler_id)
@@ -623,18 +627,33 @@ class TabController:
     def _on_tab_state_changed(self, *_args):
         """xed forces the frame visible on save and revert. Undo that.
 
-        Also the moment a settle deferred by `_tab_is_quiet` gets its turn:
-        the tab has just finished whatever it was doing, so a question that
-        could not be answered honestly during a load or a save can be asked
-        again now.
+        Also the moment work deferred by `_tab_is_quiet` gets its turn: the
+        tab has just finished whatever it was doing, so a question that could
+        not be answered honestly during a load or a save can be asked again
+        now.
         """
         GLib.idle_add(self._enforce_visibility)
-        if self._settle_deferred and self._tab_is_quiet():
-            GLib.idle_add(self._run_deferred_settle)
+        if (self._settle_deferred or self._modified_deferred) and self._tab_is_quiet():
+            GLib.idle_add(self._run_deferred_work)
 
-    def _run_deferred_settle(self):
-        self._settle_deferred = False
-        self._on_file_settled()
+    def _run_deferred_work(self):
+        """Re-run what was skipped, each cause through its own handler.
+
+        Two flags rather than one, because the two are not
+        interchangeable: `_on_modified_changed`'s modified branch forces a
+        body render so the bar's "your unsaved edits are still showing" is
+        true when it appears, and `_on_file_settled` alone would raise the
+        bar without it -- leaving that sentence over a preview still showing
+        the file. Cleared before the call, so a tab that goes busy again
+        mid-flight re-defers rather than losing the event: both handlers
+        re-check `_tab_is_quiet` for themselves.
+        """
+        if self._modified_deferred:
+            self._modified_deferred = False
+            self._on_modified_changed()
+        if self._settle_deferred:
+            self._settle_deferred = False
+            self._on_file_settled()
         return False
 
     def _tab_is_quiet(self):
@@ -652,8 +671,24 @@ class TabController:
         later save was refused. Confirmed live -- the CRITICAL landed in the
         same log turn as the `set_info_bar` call that caused it.
 
-        The two states allowed here are the two xed's own `save_async`
-        accepts as a settled tab: nothing in flight in either.
+        The two states allowed are exactly the two in which the bar's own
+        button can work: `FileRevert`'s sensitivity in xed is
+        `(state == NORMAL || state == EXTERNALLY_MODIFIED_NOTIFICATION) &&
+        !document_is_untitled`, and `_xed_tab_revert` asserts the same pair.
+        Raising a bar whose Reload… xed would refuse would be worse than
+        raising none.
+
+        `EXTERNALLY_MODIFIED_NOTIFICATION` is deliberately allowed even
+        though xed's own externally-modified bar sits in the slot there: xed
+        raises no progress bar and calls no `info_bar_set_progress` in that
+        state, so nothing is broken by replacing it, and xedown's bar carries
+        the same warning and offers the same Revert. One consequence is worth
+        knowing: xed's own bar is what returns the tab to `NORMAL`, so
+        replacing it can leave the tab parked in this state, where
+        `_xed_tab_save_async` ignores the modification time -- a later
+        external change followed by a save would then not raise xed's "save
+        anyway?" confirmation. Pre-existing rather than introduced here, and
+        the user has been told about the divergence either way.
         """
         if self.tab is None:
             return False
@@ -963,7 +998,7 @@ class TabController:
         if not self._built:
             return
         if not self._tab_is_quiet():
-            self._settle_deferred = True
+            self._modified_deferred = True
             return
         if self.document.get_modified():
             if self._disk_text is not None:
