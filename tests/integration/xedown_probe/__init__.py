@@ -21,12 +21,13 @@ import traceback
 
 import gi
 
+gi.require_version("Atk", "1.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("Xed", "1.0")
 gi.require_version("WebKit2", "4.1")
 
-from gi.repository import Gdk, Gio, GLib, GObject, Gtk, WebKit2, Xed
+from gi.repository import Atk, Gdk, Gio, GLib, GObject, Gtk, WebKit2, Xed
 
 REPORT = os.environ.get("XEDOWN_PROBE_REPORT", "/tmp/xedown-probe-report.txt")
 # Nested under the runner's own mktemp workdir when run through
@@ -58,6 +59,7 @@ _sequence_started = False
 TabController = None
 Mode = None
 ModeBar = None
+xedown_a11y = None
 xedown_settings = None
 xedown_shortcuts = None
 xedown_stylewatcher = None
@@ -65,9 +67,10 @@ XedownWindowActivatable = None
 
 
 def _lazy_imports():
-    global TabController, Mode, ModeBar, xedown_settings, xedown_shortcuts
-    global xedown_stylewatcher, XedownWindowActivatable
+    global TabController, Mode, ModeBar, xedown_a11y, xedown_settings
+    global xedown_shortcuts, xedown_stylewatcher, XedownWindowActivatable
     from xedown import XedownWindowActivatable as _XedownWindowActivatable
+    from xedown import a11y as _a11y
     from xedown import settings as _settings
     from xedown import shortcuts as _shortcuts
     from xedown import stylewatcher as _stylewatcher
@@ -76,6 +79,7 @@ def _lazy_imports():
     from xedown.modebar import ModeBar as _ModeBar
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
+    xedown_a11y = _a11y
     xedown_settings = _settings
     xedown_shortcuts = _shortcuts
     xedown_stylewatcher = _stylewatcher
@@ -1005,7 +1009,153 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             controller._watch is not None,
             "switching the setting back on must restart the watch",
         )
-        self._schedule(300, self.step_content_integrity)
+        self._schedule(300, self.step_a11y_tree)
+        return False
+
+    # --- the accessibility standard, checked against the live tree ---------
+    #
+    # `Gtk.Widget.get_accessible()` returns the ATK object the at-spi bridge
+    # would hand to Orca -- the same object, before it crosses a bus. So this
+    # needs no bridge, no `toolkit-accessibility` gsetting and no second
+    # process: it walks the widgets this probe already built.
+    #
+    # What it cannot do is hear anything. Whether Orca *speaks* a mode change
+    # is a manual row in docs/manual-smoke-test.md, and the documentation
+    # says which claims rest on which.
+
+    def _accessible_nodes(self):
+        """xedown's own controls, as `a11y.node` dicts in tab order."""
+        controller = self._main_controller()
+        modebar = controller.modebar
+        buttons = [modebar._buttons[Mode.PREVIEW], modebar._buttons[Mode.SOURCE]]
+        widgets = [
+            ("mode_preview", buttons[0]),
+            ("mode_source", buttons[1]),
+            ("refresh", modebar._refresh_button),
+            ("preview", controller.preview.widget),
+        ]
+        nodes = []
+        for index, (key, widget) in enumerate(widgets):
+            accessible = widget.get_accessible()
+            nodes.append(
+                xedown_a11y.node(
+                    key=key,
+                    name=accessible.get_name() if accessible else "",
+                    role=accessible.get_role().value_nick if accessible else "",
+                    focusable=widget.get_can_focus(),
+                    # The refresh button is deliberately hidden while
+                    # auto-refresh is on, and a hidden widget that cannot be
+                    # focused is not a finding -- see `check_node`.
+                    visible=widget.get_visible(),
+                    index=index,
+                )
+            )
+        return nodes
+
+    def step_a11y_tree(self):
+        controller = self._main_controller()
+        controller.set_mode(Mode.PREVIEW)
+        nodes = self._accessible_nodes()
+        problems = xedown_a11y.check_tree(nodes)
+        record(
+            "a11y-tree-passes-the-standard",
+            not problems,
+            "; ".join(problems) if problems else f"{len(nodes)} controls checked",
+        )
+        mismatched = [
+            f"{item['key']}={item['name']!r}"
+            for item in nodes
+            if item["name"] != xedown_a11y.NAMES[item["key"]]
+        ]
+        record(
+            "a11y-names-match-the-standard",
+            not mismatched,
+            "; ".join(mismatched) if mismatched else "every name came from NAMES",
+        )
+        self._schedule(300, self.step_a11y_focus)
+        return False
+
+    def step_a11y_focus(self):
+        # "Switching to Preview puts focus where arrow keys and Page Down
+        # scroll the document" -- the brief. A user must not have to click
+        # the preview before they can scroll it.
+        controller = self._main_controller()
+        controller.set_mode(Mode.SOURCE)
+        controller.set_mode(Mode.PREVIEW)
+        record(
+            "a11y-preview-takes-focus-on-switch",
+            self.window.get_focus() is controller.preview.widget,
+            f"focus is {self.window.get_focus()!r}",
+        )
+        self._schedule(300, self.step_a11y_checked_state)
+        return False
+
+    def step_a11y_checked_state(self):
+        # The second of the two announcement mechanisms the design names: a
+        # toggle's checked state. This asserts the state *changes* -- whether
+        # Orca speaks it is the manual row.
+        controller = self._main_controller()
+        preview_button = controller.modebar._buttons[Mode.PREVIEW]
+        before = (
+            preview_button.get_accessible()
+            .get_state_set()
+            .contains(Atk.StateType.CHECKED)
+        )
+        controller.set_mode(Mode.SOURCE)
+        after = (
+            preview_button.get_accessible()
+            .get_state_set()
+            .contains(Atk.StateType.CHECKED)
+        )
+        record(
+            "a11y-mode-switch-changes-checked-state",
+            before and not after,
+            f"checked before={before} after={after}",
+        )
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(400, self.step_a11y_page)
+        return False
+
+    def step_a11y_page(self):
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record("a11y-page-has-a-landmark", False, "no preview")
+            self._schedule(300, self.step_content_integrity)
+            return False
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                found = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                found = f"<error: {exc}>"
+            role, _, lang = found.partition("|")
+            record("a11y-page-has-a-landmark", role == "document", f"role={role!r}")
+            # `lang` may legitimately be empty when the desktop locale names
+            # no language (a C locale): absent beats wrong. Asserted as "a
+            # tag or nothing", never as "some tag".
+            record(
+                "a11y-page-has-a-language",
+                lang == "" or "-" in lang or lang.isalpha(),
+                f"lang={lang!r}",
+            )
+            self._schedule(300, self.step_content_integrity)
+
+        preview.widget.run_javascript(
+            # Written without optional chaining: this string is evaluated by
+            # whatever WebKit the host ships, and the probe should not be the
+            # thing that discovers a syntax floor.
+            "(function () {"
+            "  var a = document.querySelector('.xedown-document');"
+            "  var role = a ? (a.getAttribute('role') || '') : '';"
+            "  var lang = document.documentElement.getAttribute('lang') || '';"
+            "  return role + '|' + lang;"
+            "})()",
+            None,
+            on_result,
+            None,
+        )
         return False
 
     # --- content integrity: viewing never mutates the buffer ---------------
