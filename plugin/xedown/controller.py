@@ -736,16 +736,26 @@ class TabController:
         the buffer goes clean. Everything that decides is in `diskstate`; this
         method does no comparing of its own.
 
-        `UNCHANGED` usually does nothing, silently: it is what a save from xed
-        itself looks like, and what a `touch` looks like. The exception is a
-        cached disk text, which means the file has come back into agreement
-        with the buffer on its own -- `git checkout --` on the open file, an
-        agent undoing its own edit, a rebase landing where it started. That is
-        as reconciling as a save, and the cache has to go with it: left in
-        place it would keep the preview rendering an intermediate version that
-        is now on neither disk nor buffer, with nothing to mark it stale, and
-        the user's next keystroke would raise the bar over a file that matches
-        what they already had.
+        `UNCHANGED` usually does nothing beyond the bar dismissal below,
+        silently: it is what a save from xed itself looks like, and what a
+        `touch` looks like. The exception is a cached disk text, which means
+        the file has come back into agreement with the buffer on its own --
+        `git checkout --` on the open file, an agent undoing its own edit, a
+        rebase landing where it started. That is as reconciling as a save,
+        and the cache has to go with it: left in place it would keep the
+        preview rendering an intermediate version that is now on neither disk
+        nor buffer, with nothing to mark it stale, and the user's next
+        keystroke would raise the bar over a file that matches what they
+        already had.
+
+        `UNCHANGED` also always dismisses the external-change bar, whether or
+        not `_disk_text` was cached. It means disk and buffer agree right
+        now, so a bar still claiming they differ can only be lying -- and
+        that can happen with no cache to clear: the bar is raised by `WARN`,
+        which never touches `_disk_text`, so a later write that reconciles
+        the file with the modified buffer reaches here with the cache still
+        None while the bar is still standing over a file that no longer
+        disagrees with it.
 
         `UNREADABLE` does nothing in every case. A file mid-write, deleted, or
         moved away has agreed with nothing, and the brief requires all three to
@@ -753,8 +763,17 @@ class TabController:
         stuck -- so the last good render stays. The next settle asks again, and
         the watch has already re-armed on the path by the time this runs, so a
         file that comes back is seen.
+
+        Guarded on `_watch_external` here, and only here, so the one guard
+        covers both callers: `FileWatch` cannot reach this while the setting
+        is off, since `_start_watch` never runs, but `_on_modified_changed`
+        calls this directly on every transition to unmodified regardless of
+        the setting. Without this check, typing a character and undoing it
+        after an external rewrite would still read the file, cache
+        `_disk_text`, and arm a bar on the next keystroke -- with watching
+        supposedly off.
         """
-        if not self._built:
+        if not self._built or not self._watch_external:
             return
         outcome, text = diskstate.evaluate(
             diskstate.read(self._document_path()),
@@ -766,13 +785,15 @@ class TabController:
         if outcome == diskstate.WARN:
             self._show_external_change_bar()
             return
-        if outcome == diskstate.UNCHANGED and self._disk_text is not None:
-            self._disk_text = None
-            self.state.preview_stale = True
-            if self.state.mode is Mode.PREVIEW:
-                self._refresh_body_now()
-            else:
-                self._update_refresh_cue()
+        if outcome == diskstate.UNCHANGED:
+            self._dismiss_external_bar()
+            if self._disk_text is not None:
+                self._disk_text = None
+                self.state.preview_stale = True
+                if self.state.mode is Mode.PREVIEW:
+                    self._refresh_body_now()
+                else:
+                    self._update_refresh_cue()
             return
         if outcome != diskstate.UPDATE:
             return
@@ -804,6 +825,11 @@ class TabController:
         for the same divergence from the other direction. Rebuilding an
         identical bar would take the focus out of whatever the user had it in,
         so a bar already saying exactly this is left where it is.
+
+        The guard below is only trustworthy because `_on_info_bar_destroyed`
+        keeps `_external_bar`/`_info_bar` pointing at a live widget or at
+        None -- never at one already destroyed. See its docstring for the
+        xed-side hazard that makes that promise necessary.
         """
         if self._external_bar is not None and self._external_bar is self._info_bar:
             return
@@ -882,6 +908,16 @@ class TabController:
             return
         if self.document.get_modified():
             if self._disk_text is not None:
+                if self.state.mode is Mode.PREVIEW:
+                    # The bar text says "your unsaved edits are still
+                    # showing", but nothing has re-rendered yet in this same
+                    # turn: the preview is still displaying `_disk_text`
+                    # until the debounce timer fires, and with
+                    # `auto_refresh: false` it never would. This corrects a
+                    # display already known to be wrong, not a debounced
+                    # reaction to a keystroke, so it deliberately skips the
+                    # `_auto_refresh` gate `_on_buffer_changed` uses.
+                    self._refresh_body_now()
                 self._show_external_change_bar()
             return
         self._dismiss_external_bar()
@@ -1060,6 +1096,10 @@ class TabController:
             return
         self._disk_text = None
         self._dismiss_external_bar()
+        # No watch repoint here, unlike `_on_document_saved` just above:
+        # `loaded` fires for a revert or reload, both of which reuse the
+        # tab's existing path -- there is no Save-As-style path change for
+        # the watch to follow.
         self.state.preview_stale = True
         if self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
@@ -1324,6 +1364,10 @@ class TabController:
             bar.add_button(button, Gtk.ResponseType.APPLY)
         bar.add_button("Close", Gtk.ResponseType.CLOSE)
         self._connect(bar, "response", self._on_info_bar_response)
+        # See `_on_info_bar_destroyed`: `Xed.Tab.set_info_bar` destroys
+        # whatever bar already occupies the slot, including from xed's own
+        # code, and that destroy emits no "response" signal.
+        self._connect(bar, "destroy", self._on_info_bar_destroyed)
         self._info_bar = bar
         self._info_bar_action = on_activate
         self.tab.set_info_bar(bar)
@@ -1366,3 +1410,37 @@ class TabController:
                 self._external_bar = None
             self._untrack(bar)
             bar.destroy()
+
+    def _on_info_bar_destroyed(self, bar):
+        """Drop every field naming `bar`, however it came to be destroyed.
+
+        `Xed.Tab.set_info_bar` destroys whatever bar already occupies the
+        tab's one slot before storing a new one -- disassembly of
+        `xed_tab_set_info_bar` shows a plain `gtk_widget_destroy` on the old
+        bar, with no "response" signal involved. xed takes that route for
+        bars of its *own* -- its "file changed on disk" bar appears the
+        moment the source view takes keyboard focus (see the "source buffer
+        keeps its old text" entry in docs/known-issues.md), which is exactly
+        when a user switches to Markdown mode to look at xedown's bar -- and
+        that silently destroys xedown's bar out from under it without ever
+        running `_on_info_bar_response`. Left unhandled,
+        `_info_bar` and `_external_bar` would go on pointing at a destroyed
+        widget forever, and `_show_external_change_bar`'s idempotence guard
+        (`self._external_bar is self._info_bar`) would keep comparing two
+        equal dangling pointers and read "already showing" for the rest of
+        the tab's life -- wedging every later warning off for good.
+
+        Harmlessly re-entrant: `_on_info_bar_response` and `_dismiss_info_bar`
+        both null these same fields out *before* calling `bar.destroy()`
+        themselves, precisely so that this handler firing as part of that
+        same call finds nothing left of `bar` to clear. It only ever has
+        work to do when the destroy came from somewhere else. It only clears
+        fields that already name `bar` -- it never assigns into them -- so it
+        cannot resurrect a bar a newer one has already replaced.
+        """
+        if self._info_bar is bar:
+            self._info_bar = None
+            self._info_bar_action = None
+        if self._external_bar is bar:
+            self._external_bar = None
+        self._untrack(bar)
