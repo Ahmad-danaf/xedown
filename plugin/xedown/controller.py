@@ -11,6 +11,7 @@ from gi.repository import GLib, Gtk, Xed
 
 from . import (
     direction,
+    diskstate,
     errors,
     images,
     modestore,
@@ -21,11 +22,24 @@ from . import (
 )
 from .appearance import AppearanceWatcher
 from .document_state import DocumentState, Mode, is_markdown_path, mode_from_setting
+from .filewatch import FileWatch
 from .links import LinkAction, classify_link
 from .modebar import ModeBar
 from .preview import PreviewView
 from .search import SearchSession
 from .searchbar import SearchBar
+
+# xed's own Revert command, looked up by the name it is registered under
+# rather than by its menu path: the path is UI XML a future xed is free to
+# rearrange, while the name is what the command *is*.
+REVERT_ACTION = "FileRevert"
+EXTERNAL_CHANGE_MESSAGE = (
+    "This file changed on disk. Your unsaved edits are still showing."
+)
+# The ellipsis is honest rather than decorative: xed's own confirmation
+# dialog follows, and that dialog -- not xedown -- is what discards the
+# user's work.
+RELOAD_LABEL = "Reload…"
 
 
 class TabController:
@@ -65,6 +79,18 @@ class TabController:
         self._info_bar = None
         # What the current bar's action button does, if it has one.
         self._info_bar_action = None
+        # The external-change bar specifically, when it is the one in the
+        # tab's single slot. Tracked apart from `_info_bar` so that retiring
+        # it can never destroy a link-error bar showing in its place.
+        self._external_bar = None
+        # The text of the file on disk, as of the last settled external
+        # change that differed from the buffer -- and None at every other
+        # time. `_render_text` is the only reader; see its docstring for what
+        # it means, and `_on_document_saved`/`_on_document_loaded` for the two
+        # events that clear it.
+        self._disk_text = None
+        self._watch = None
+        self._watch_external = True
         # The path this tab's remembered mode is filed under. Compared on
         # save, so a Save As moves the entry instead of stranding it.
         self._remembered_path = None
@@ -97,6 +123,8 @@ class TabController:
         # handler) must see this and refuse to build after teardown.
         self._active = False
         self._cancel_refresh()
+        self._stop_watch()
+        self._disk_text = None
         for owner, handler_id in self._handlers:
             try:
                 owner.disconnect(handler_id)
@@ -270,6 +298,7 @@ class TabController:
         self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
         self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
+        self._watch_external = bool(store.get(settings.WATCH_EXTERNAL_CHANGES))
         # The desktop's own direction, which xedown's chrome inside the page
         # follows -- the mode bar already gets this free from GTK. Read once:
         # a desktop's text direction is fixed at login, and nothing in xed
@@ -304,6 +333,7 @@ class TabController:
         self._connect(self.searchbar, "close-requested", self._on_search_close)
 
         self._connect(self.document, "changed", self._on_buffer_changed)
+        self._connect(self.document, "modified-changed", self._on_modified_changed)
 
         # See _on_window_set_focus's docstring: xed's own Escape handling
         # can hand focus straight to the hidden source view without ever
@@ -316,6 +346,9 @@ class TabController:
 
         self._built = True
         self._remembered_path = self._document_path()
+        # After `_built`, because `_on_file_settled` refuses to act before it.
+        if self._watch_external:
+            self._start_watch()
         self.set_mode(self._initial_mode(), initial=True)
         return False
 
@@ -666,6 +699,177 @@ class TabController:
             self.preview.widget.grab_focus()
         return False
 
+    # --- changes made outside xed ------------------------------------------
+
+    def _start_watch(self):
+        """Watch this document's file, if there is one and none is watched.
+
+        A document with no path cannot be Markdown (`is_markdown_path(None)`
+        is False), so in practice this only declines for a tab being torn
+        down -- and for a document that has never been saved, which has
+        nothing on disk to watch.
+        """
+        if self._watch is not None:
+            return
+        path = self._document_path()
+        if not path:
+            return
+        self._watch = FileWatch(path, self._on_file_settled)
+        self._watch.start()
+
+    def _stop_watch(self):
+        """Drop the watch and its pending timer. Idempotent."""
+        if self._watch is not None:
+            self._watch.stop()
+            self._watch = None
+
+    def _document_charset(self):
+        """The document's own encoding name, or None if xed has not set one."""
+        encoding = self.document.get_encoding()
+        return encoding.get_charset() if encoding is not None else None
+
+    def _on_file_settled(self):
+        """The file stopped changing. Decide what that means, once.
+
+        Reached from `FileWatch`, which has already coalesced a save's several
+        file events into this one call, and from `_on_modified_changed` when
+        the buffer goes clean. Everything that decides is in `diskstate`; this
+        method does no comparing of its own.
+
+        `UNCHANGED` and `UNREADABLE` both do nothing, and deliberately do it
+        silently. `UNCHANGED` is the common case -- it is what a save from xed
+        itself looks like, and what a `touch` looks like. `UNREADABLE` is a
+        file mid-write, deleted, or moved away: the brief requires all three
+        to be handled without an error dialog and without leaving the preview
+        stuck, and doing nothing at all is exactly that. The next settle asks
+        again, and the watch has already re-armed on the path by the time this
+        runs, so a file that comes back is seen.
+        """
+        if not self._built:
+            return
+        outcome, text = diskstate.evaluate(
+            diskstate.read(self._document_path()),
+            self._buffer_text(),
+            self.document.get_modified(),
+            self._document_charset(),
+            self.document.get_implicit_trailing_newline(),
+        )
+        if outcome == diskstate.WARN:
+            self._show_external_change_bar()
+            return
+        if outcome != diskstate.UPDATE:
+            return
+        self._disk_text = text
+        self._dismiss_external_bar()
+        self.state.preview_stale = True
+        if self.state.mode is Mode.PREVIEW:
+            # In place, not a reload: the scroll position survives, which is
+            # the whole value of watching a file being rewritten. That path
+            # already falls back to a full reload when an error page is
+            # showing, so that case needs nothing here.
+            #
+            # Deliberately not gated on `_auto_refresh`. That setting governs
+            # re-rendering after a change to the buffer; a change on disk is
+            # not one, and the documented rule for the reload-from-disk family
+            # is that it always re-renders while the preview is showing.
+            # `watch_external_changes` is this feature's own control.
+            self._refresh_body_now()
+        else:
+            # Nothing is rendered while the source is showing. The staleness
+            # set above is what makes the switch back render the new content.
+            self._update_refresh_cue()
+
+    def _show_external_change_bar(self):
+        """Say the file changed, and offer xed's Revert.
+
+        Re-entrant by design: `_on_file_settled` can reach `WARN` several
+        times over a burst of writes, and `_on_modified_changed` can reach it
+        for the same divergence from the other direction. Rebuilding an
+        identical bar would take the focus out of whatever the user had it in,
+        so a bar already saying exactly this is left where it is.
+        """
+        if self._external_bar is not None and self._external_bar is self._info_bar:
+            return
+        has_revert = self._find_revert_action() is not None
+        self._external_bar = self._set_info_bar(
+            EXTERNAL_CHANGE_MESSAGE,
+            button=RELOAD_LABEL if has_revert else None,
+            on_activate=self._reload_from_disk if has_revert else None,
+        )
+
+    def _dismiss_external_bar(self):
+        """Retire the external-change bar, and only that bar."""
+        if self._external_bar is not None and self._external_bar is self._info_bar:
+            self._dismiss_info_bar()
+        self._external_bar = None
+
+    def _find_revert_action(self):
+        """xed's own Revert command, or None on a build without it.
+
+        Walks the window's action groups by name, the same route
+        `XedownWindowActivatable` reaches its own actions by. A build where
+        this is not found gets the bar without its button, rather than a
+        button that does nothing.
+        """
+        window = self._toplevel()
+        if window is None:
+            return None
+        manager = window.get_ui_manager()
+        if manager is None:
+            return None
+        for group in manager.get_action_groups():
+            action = group.get_action(REVERT_ACTION)
+            if action is not None:
+                return action
+        return None
+
+    def _reload_from_disk(self):
+        """Hand off to xed's own Revert. xedown never discards the user's text.
+
+        Guarded on this tab being the window's active one, because xed's
+        revert command acts on `xed_window_get_active_tab` rather than on any
+        tab handed to it -- activating it from a background tab would revert
+        somebody else's document. In practice the bar is only clickable in the
+        visible tab, so the guard costs nothing and forecloses the one way
+        this could go badly wrong.
+
+        Cancelling xed's dialog leaves everything as it was. The bar has
+        already retired by the time that dialog opens, and the next settled
+        change puts it back if the file still differs.
+        """
+        window = self._toplevel()
+        action = self._find_revert_action()
+        if window is None or action is None:
+            return
+        if window.get_active_tab() is not self.tab:
+            return
+        action.activate()
+
+    def _on_modified_changed(self, *_args):
+        """The buffer gained or lost unsaved edits.
+
+        Both directions matter, and each covers a hole the other leaves.
+
+        **Gaining them** turns an `UPDATE` the user has now overtaken with
+        their own edit into a `WARN`. `_render_text` has already gone back to
+        showing the buffer in the same turn, and without the bar the user
+        would simply watch the preview change under them with no explanation.
+
+        **Losing them** -- a revert, or an undo back to clean -- retires the
+        bar and asks the question again from scratch, re-reading the file
+        rather than trusting `_disk_text`, which may have moved on since.
+        Without it, a user who undid their way back to a clean buffer would be
+        left looking at a preview of text that is no longer anywhere.
+        """
+        if not self._built:
+            return
+        if self.document.get_modified():
+            if self._disk_text is not None:
+                self._show_external_change_bar()
+            return
+        self._dismiss_external_bar()
+        self._on_file_settled()
+
     # --- content updates ---------------------------------------------------
 
     def _on_buffer_changed(self, *_args):
@@ -704,7 +908,7 @@ class TabController:
             # route back to a document.
             self._reload_preview(restore_scroll=self._current_preview_scroll())
             return
-        text = self._buffer_text()
+        text = self._render_text()
         try:
             fragment = renderer.render_fragment(
                 text,
@@ -736,7 +940,7 @@ class TabController:
             )
         else:
             html = renderer.render_document(
-                self._buffer_text(),
+                self._render_text(),
                 base_dir=self._base_dir(),
                 dark=self._dark,
                 style=self._style,
@@ -782,6 +986,24 @@ class TabController:
         start, end = self.document.get_bounds()
         return self.document.get_text(start, end, False)
 
+    def _render_text(self):
+        """The user's version of this document.
+
+        Their edits if they have any, the file on disk if they do not. With no
+        external change the two are the same text, so this rule only has
+        visible consequences after one -- and then it says the right thing in
+        both directions: an untouched buffer follows the file, and the first
+        keystroke takes the preview back to what the user is actually typing.
+
+        `_disk_text` is deliberately *not* cleared by that keystroke. The
+        `get_modified()` test below already stops it being rendered, and
+        keeping it is what lets `_on_modified_changed` know the file diverged
+        when an `UPDATE` turns into a `WARN`.
+        """
+        if self._disk_text is not None and not self.document.get_modified():
+            return self._disk_text
+        return self._buffer_text()
+
     def _on_document_saved(self, *_args):
         """A save does not change the buffer, so it never warrants a full
         page reload — that would re-parse the whole bundle and jump the
@@ -792,6 +1014,12 @@ class TabController:
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
+        # A save reconciles the two: whatever the user has is now what is on
+        # disk. The monitor will fire for xedown's own write, and `diskstate`
+        # will answer UNCHANGED for it -- which is why no ignore-flag is
+        # needed anywhere in this feature.
+        self._disk_text = None
+        self._dismiss_external_bar()
         path = self._document_path()
         if path != self._remembered_path:
             # A Save As. Follow the file rather than leaving an entry keyed
@@ -801,6 +1029,8 @@ class TabController:
             ):
                 modestore.get_store().rename(self._remembered_path, path)
             self._remembered_path = path
+            if self._watch is not None:
+                self._watch.repoint(path)
         if self.state.preview_stale and self.state.mode is Mode.PREVIEW:
             self._refresh_body_now()
 
@@ -811,6 +1041,8 @@ class TabController:
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
+        self._disk_text = None
+        self._dismiss_external_bar()
         self.state.preview_stale = True
         if self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
@@ -884,6 +1116,18 @@ class TabController:
         self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
         self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
+        was_watching = self._watch_external
+        self._watch_external = bool(store.get(settings.WATCH_EXTERNAL_CHANGES))
+        if self._watch_external and not was_watching:
+            self._start_watch()
+        elif was_watching and not self._watch_external:
+            # Off means off: no monitor, no timer, no bar, no cached text.
+            # What is already rendered stays rendered -- walking the preview
+            # back to older buffer text, as the visible effect of turning a
+            # watch *off*, would be the opposite of what was asked for.
+            self._stop_watch()
+            self._dismiss_external_bar()
+            self._disk_text = None
 
         reloaded = False
         # Two independent branches below can each want a body render out of
@@ -1083,6 +1327,8 @@ class TabController:
         if self._info_bar is bar:
             self._info_bar = None
             self._info_bar_action = None
+        if self._external_bar is bar:
+            self._external_bar = None
         self._untrack(bar)
         bar.destroy()
         # After the bar is gone, not before: an action can open a modal
@@ -1099,5 +1345,7 @@ class TabController:
         if self._info_bar is not None:
             bar, self._info_bar = self._info_bar, None
             self._info_bar_action = None
+            if self._external_bar is bar:
+                self._external_bar = None
             self._untrack(bar)
             bar.destroy()
