@@ -91,6 +91,9 @@ class TabController:
         self._disk_text = None
         self._watch = None
         self._watch_external = True
+        # A settle that arrived while xed was mid-load or mid-save, waiting
+        # for the tab to go quiet again. See `_tab_is_quiet`.
+        self._settle_deferred = False
         # The path this tab's remembered mode is filed under. Compared on
         # save, so a Save As moves the entry instead of stranding it.
         self._remembered_path = None
@@ -618,8 +621,47 @@ class TabController:
     # --- the verified host hazard -----------------------------------------
 
     def _on_tab_state_changed(self, *_args):
-        """xed forces the frame visible on save and revert. Undo that."""
+        """xed forces the frame visible on save and revert. Undo that.
+
+        Also the moment a settle deferred by `_tab_is_quiet` gets its turn:
+        the tab has just finished whatever it was doing, so a question that
+        could not be answered honestly during a load or a save can be asked
+        again now.
+        """
         GLib.idle_add(self._enforce_visibility)
+        if self._settle_deferred and self._tab_is_quiet():
+            GLib.idle_add(self._run_deferred_settle)
+
+    def _run_deferred_settle(self):
+        self._settle_deferred = False
+        self._on_file_settled()
+        return False
+
+    def _tab_is_quiet(self):
+        """True when the tab is not in the middle of one of xed's own jobs.
+
+        Everything this feature does is founded on two things being settled:
+        the buffer's text and the file's bytes. While xed is loading, saving,
+        reverting or printing, **neither is** -- the loader replaces the
+        buffer in pieces and toggles its modified flag as it goes, and the
+        saver has not finished writing the file. Every conclusion drawn from
+        that half-state is wrong, and one of them was actively destructive:
+        a bar raised mid-revert replaced the `XedProgressInfoBar` xed had put
+        in the tab's single info-bar slot, which broke xed's own save/load
+        state machine and left the tab wedged in `SAVING_ERROR`, where every
+        later save was refused. Confirmed live -- the CRITICAL landed in the
+        same log turn as the `set_info_bar` call that caused it.
+
+        The two states allowed here are the two xed's own `save_async`
+        accepts as a settled tab: nothing in flight in either.
+        """
+        if self.tab is None:
+            return False
+        state = self.tab.get_state()
+        return state in (
+            Xed.TabState.STATE_NORMAL,
+            Xed.TabState.STATE_EXTERNALLY_MODIFIED_NOTIFICATION,
+        )
 
     def _enforce_visibility(self):
         if not self._built or self.state.mode is not Mode.PREVIEW:
@@ -775,6 +817,13 @@ class TabController:
         """
         if not self._built or not self._watch_external:
             return
+        if not self._tab_is_quiet():
+            # Mid-load or mid-save: the buffer and the file are both in
+            # flight, so there is no honest answer to be had. Remembered
+            # rather than dropped -- `_on_tab_state_changed` asks again the
+            # moment the tab settles.
+            self._settle_deferred = True
+            return
         outcome, text = diskstate.evaluate(
             diskstate.read(self._document_path()),
             self._buffer_text(),
@@ -903,8 +952,18 @@ class TabController:
         rather than trusting `_disk_text`, which may have moved on since.
         Without it, a user who undid their way back to a clean buffer would be
         left looking at a preview of text that is no longer anywhere.
+
+        Neither direction means anything while xed is loading, saving or
+        reverting: the loader sets and clears the modified flag as it
+        replaces the buffer, so this signal fires several times during one
+        revert with no user anywhere near it. Acting on those transient
+        toggles is what raised a bar into the tab's info-bar slot mid-revert
+        and wedged xed's own state machine -- see `_tab_is_quiet`.
         """
         if not self._built:
+            return
+        if not self._tab_is_quiet():
+            self._settle_deferred = True
             return
         if self.document.get_modified():
             if self._disk_text is not None:
@@ -1355,6 +1414,16 @@ class TabController:
         keep hold of it. Returns None when there is no tab to put it in.
         """
         if self.tab is None:
+            return None
+        if not self._tab_is_quiet():
+            # The slot is xed's while it is working: during a load or a save
+            # it holds a `XedProgressInfoBar` that xed goes on calling
+            # `info_bar_set_progress` against, and `Xed.Tab.set_info_bar`
+            # destroys whatever is already there. Taking the slot mid-job
+            # broke xed's state machine outright -- see `_tab_is_quiet`. The
+            # callers above are the last line of defence; this is the choke
+            # point that makes it true of every caller, including
+            # `_show_error`.
             return None
         self._dismiss_info_bar()
         bar = Gtk.InfoBar()
