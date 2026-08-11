@@ -1130,6 +1130,18 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 found = value.get_js_value().to_string()
             except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
                 found = f"<error: {exc}>"
+            if "|" not in found:
+                # The round trip failed, so both halves are unknown -- and an
+                # unknown language must not read as "no language known". An
+                # empty `lang` is a legitimate answer when the desktop names
+                # no language, which is exactly why it cannot also be the
+                # answer when the question never got asked. `check_tree`
+                # encodes the same rule: an audit that learned nothing is not
+                # a pass.
+                record("a11y-page-has-a-landmark", False, found)
+                record("a11y-page-has-a-language", False, found)
+                self._schedule(300, self.step_content_integrity)
+                return
             role, _, lang = found.partition("|")
             record("a11y-page-has-a-landmark", role == "document", f"role={role!r}")
             # `lang` may legitimately be empty when the desktop locale names
