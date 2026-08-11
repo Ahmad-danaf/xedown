@@ -736,14 +736,23 @@ class TabController:
         the buffer goes clean. Everything that decides is in `diskstate`; this
         method does no comparing of its own.
 
-        `UNCHANGED` and `UNREADABLE` both do nothing, and deliberately do it
-        silently. `UNCHANGED` is the common case -- it is what a save from xed
-        itself looks like, and what a `touch` looks like. `UNREADABLE` is a
-        file mid-write, deleted, or moved away: the brief requires all three
-        to be handled without an error dialog and without leaving the preview
-        stuck, and doing nothing at all is exactly that. The next settle asks
-        again, and the watch has already re-armed on the path by the time this
-        runs, so a file that comes back is seen.
+        `UNCHANGED` usually does nothing, silently: it is what a save from xed
+        itself looks like, and what a `touch` looks like. The exception is a
+        cached disk text, which means the file has come back into agreement
+        with the buffer on its own -- `git checkout --` on the open file, an
+        agent undoing its own edit, a rebase landing where it started. That is
+        as reconciling as a save, and the cache has to go with it: left in
+        place it would keep the preview rendering an intermediate version that
+        is now on neither disk nor buffer, with nothing to mark it stale, and
+        the user's next keystroke would raise the bar over a file that matches
+        what they already had.
+
+        `UNREADABLE` does nothing in every case. A file mid-write, deleted, or
+        moved away has agreed with nothing, and the brief requires all three to
+        be handled without an error dialog and without leaving the preview
+        stuck -- so the last good render stays. The next settle asks again, and
+        the watch has already re-armed on the path by the time this runs, so a
+        file that comes back is seen.
         """
         if not self._built:
             return
@@ -756,6 +765,14 @@ class TabController:
         )
         if outcome == diskstate.WARN:
             self._show_external_change_bar()
+            return
+        if outcome == diskstate.UNCHANGED and self._disk_text is not None:
+            self._disk_text = None
+            self.state.preview_stale = True
+            if self.state.mode is Mode.PREVIEW:
+                self._refresh_body_now()
+            else:
+                self._update_refresh_cue()
             return
         if outcome != diskstate.UPDATE:
             return
