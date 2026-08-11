@@ -307,9 +307,21 @@ def _scenario_preview_active(probe):
     nothing is disabled, nothing is closed by hand, the previews are live
     and on screen when the close request arrives.
 
-    The last step is the one state nothing else here reaches. Every scenario
-    now carries a live file monitor, because `watch_external_changes` is on by
-    default -- but only this one closes with a settle timer still *armed*.
+    Every scenario here now closes with a live `Gio.FileMonitor` on each
+    Markdown tab, because `watch_external_changes` is on by default -- so a
+    monitor that outlived its controller would show up in any of them, with
+    no change to any scenario.
+
+    A settle timer still *armed* at close is deliberately NOT reached here,
+    and cannot be. Arming one means writing the document's file from outside,
+    and xed then refuses to close that tab without asking the user first --
+    it checks the file when the view takes focus, marks the tab
+    externally-modified, and raises a prompt no scripted scenario can answer,
+    so the window never closes. That is xed's own behaviour rather than
+    xedown's: this scenario was run with `XEDOWN_CONTROL=1`, the plugin
+    uninstalled entirely, and hung in exactly the same way. The timer's
+    teardown is covered instead by `FileWatch.stop()` being unconditional in
+    `deactivate()`, which every scenario above exercises.
     """
 
     def open_them():
@@ -321,15 +333,7 @@ def _scenario_preview_active(probe):
     def verify():
         _check_live_preview("preview-active", _state["tabs"])
 
-    def write_during_settle():
-        # Rewritten from outside and deliberately NOT waited out: the runner
-        # asks the window to close as soon as this step returns READY, which
-        # is well inside FileWatch's 300ms settle window. A timer that
-        # outlived `deactivate()` would fire into a torn-down controller, and
-        # a monitor left connected would hold the tab.
-        _md("live-1.md", "# Live 1\n\nRewritten from outside.\n")
-
-    return [(2500, open_them), (3500, verify), (100, write_during_settle)]
+    return [(2500, open_them), (3500, verify)]
 
 
 SCENARIOS = {
