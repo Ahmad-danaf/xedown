@@ -574,3 +574,23 @@ def test_an_empty_language_is_treated_as_unknown():
 def test_the_language_is_escaped_into_the_attribute():
     html = renderer.render_document("# Title\n", lang='en" onload="x')
     assert 'onload="x"' not in html
+
+
+def test_a_language_that_is_not_a_string_is_ignored_rather_than_raising():
+    """`render_document` never raises, and `lang` is a public parameter."""
+
+    class Explode:
+        def __bool__(self):
+            raise RuntimeError("boom")
+
+        def __str__(self):
+            raise RuntimeError("boom")
+
+    html_out = renderer.render_document("# Title\n", lang=Explode())
+    assert "lang=" not in html_out
+
+
+def test_angle_brackets_and_newlines_cannot_escape_the_language_attribute():
+    html_out = renderer.render_document("# Title\n", lang="en><script>\nx")
+    assert "<script>" not in html_out.split("<body")[0]
+    assert "lang=" in html_out

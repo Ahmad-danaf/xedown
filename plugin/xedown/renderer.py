@@ -130,6 +130,14 @@ def render_document(
     second is the *desktop's*, and lands on `<html>`, so xedown's own chrome —
     the stylesheet notice, and the error pages — follows GTK rather than
     whatever language the document happens to be in.
+
+    `lang` is the *reader's* language, taken from the desktop the same way
+    `ui_direction` is — xedown has no way to detect what language a document
+    is written in, and a wrong guess would make a screen reader mispronounce
+    the whole page, which is worse than leaving it on its own default voice.
+    A value that is not a non-empty string produces no `lang` attribute at
+    all rather than an empty one, which a screen reader would treat as a
+    language it does not recognise.
     """
     token = nonce or secrets.token_urlsafe(16)
     style = style if style is not None else stylesheets.PreviewStyle()
@@ -183,12 +191,15 @@ def render_document(
         )
 
     lang_attribute = ""
-    if lang:
-        # Escaped like every other author-influenced value that reaches the
-        # template: the locale comes from the environment, not from the
-        # document, but the escaping costs nothing and the rule is that
-        # nothing reaches an attribute unescaped.
-        lang_attribute = f' lang="{html.escape(str(lang), quote=True)}"'
+    # `isinstance` rather than a truth test: this runs outside the guarded
+    # render above, and `render_document` promises never to raise. A bare
+    # `if lang:` calls `__bool__` and `str(lang)` calls `__str__`, either of
+    # which is arbitrary code on an object this function did not create.
+    # Same reasoning as `settings.BoolSetting.coerce` and
+    # `direction.coerce_ui`, which guard their template-bound values the
+    # same way and for the same reason.
+    if isinstance(lang, str) and lang.strip():
+        lang_attribute = f' lang="{html.escape(lang.strip(), quote=True)}"'
 
     return _DOCUMENT.format(
         csp=_CSP.format(nonce=token),
