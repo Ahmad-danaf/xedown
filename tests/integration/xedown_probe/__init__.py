@@ -529,7 +529,420 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "Appended outside" not in self._buffer_text(),
             "the plugin must not reload the buffer on its own",
         )
-        self._schedule(400, self.step_content_integrity)
+        self._schedule(400, self.step_external_watch_setup)
+        return False
+
+    # --- changes made outside xed reach the preview, and only the preview ---
+    #
+    # Every write below goes through the filesystem and every assertion runs
+    # a full settle window later (FileWatch.SETTLE_DELAY_MS is 300ms), for the
+    # reason step_external_change already records: an update that lands
+    # asynchronously cannot be observed from the callback that triggered it.
+
+    def _document_file(self):
+        return self.document.get_location().get_path()
+
+    def _write_document_file(self, body):
+        with open(self._document_file(), "w") as handle:
+            handle.write(body)
+
+    def _preview_text(self, name, needle, present, then):
+        """Assert `needle` is (or is not) in the rendered document."""
+        controller = self._main_controller()
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            record(name, False, "no preview")
+            self._schedule(300, then)
+            return
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                body = value.get_js_value().to_string()
+            except Exception as exc:  # noqa: BLE001 - a probe never crashes xed
+                body = f"<error: {exc}>"
+            record(
+                name,
+                (needle in body) is present,
+                f"{'expected' if present else 'did not expect'} {needle!r}",
+            )
+            self._schedule(300, then)
+
+        # `textContent`, not `innerText`: it does not depend on the element
+        # having been laid out, so an assertion cannot fail merely because
+        # the WebView had not painted yet.
+        preview.widget.run_javascript(
+            "document.body.textContent", None, on_result, None
+        )
+
+    def step_external_watch_setup(self):
+        # A clean buffer is what makes the next write an UPDATE rather than a
+        # WARN, and step_external_change deliberately left the file ahead of
+        # the buffer. Saving reconciles them and gives every assertion below a
+        # known starting point, whatever ran before.
+        self._main_controller().set_mode(Mode.PREVIEW)
+        Xed.commands_save_document(self.window, self.document)
+        self._schedule(1200, self.step_external_watch_write)
+        return False
+
+    def step_external_watch_write(self):
+        record(
+            "external-setup-buffer-is-clean",
+            not self.document.get_modified(),
+            "the save did not settle; later assertions would test the wrong branch",
+        )
+        self._write_document_file("# Rewritten outside\n\nBy something else.\n")
+        self._schedule(1200, self.step_external_watch_check)
+        return False
+
+    def step_external_watch_check(self):
+        record(
+            "external-buffer-untouched",
+            "Rewritten outside" not in self._buffer_text(),
+            "the buffer must not follow the file",
+        )
+        self._preview_text(
+            "external-preview-followed",
+            "Rewritten outside",
+            True,
+            self.step_external_scroll_setup,
+        )
+        return False
+
+    # --- the scroll survives, which is the point of an in-place update ------
+
+    def step_external_scroll_setup(self):
+        self._write_document_file("# Tall\n\n" + ("A paragraph of prose.\n\n" * 120))
+        self._schedule(1400, self.step_external_scroll_set)
+        return False
+
+    def step_external_scroll_set(self):
+        self._main_controller().preview.set_scroll(0.5)
+        self._schedule(900, self.step_external_scroll_rewrite)
+        return False
+
+    def step_external_scroll_rewrite(self):
+        self._scroll_before = self._main_controller().preview.last_scroll
+        self._write_document_file(
+            "# Tall\n\n" + ("A paragraph of prose.\n\n" * 120) + "Appended tail.\n"
+        )
+        self._schedule(1400, self.step_external_scroll_check)
+        return False
+
+    def step_external_scroll_check(self):
+        after = self._main_controller().preview.last_scroll
+        record(
+            "external-scroll-preserved",
+            abs(after - self._scroll_before) < 0.05,
+            f"{self._scroll_before:.3f} -> {after:.3f}",
+        )
+        self._schedule(300, self.step_external_typing)
+        return False
+
+    # --- the user's own edits win, and the bar says so ---------------------
+
+    def step_external_typing(self):
+        # The explicit -1 length keeps this working whatever PyGObject does
+        # with the argument's default.
+        self.document.insert(self.document.get_end_iter(), "\nTyped by the user.\n", -1)
+        self._schedule(1000, self.step_external_typing_check)
+        return False
+
+    def step_external_typing_check(self):
+        controller = self._main_controller()
+        record(
+            "external-typing-shows-bar",
+            controller._external_bar is not None,
+            "typing over a silently-updated preview must be explained",
+        )
+        self._preview_text(
+            "external-typing-preview-follows-buffer",
+            "Typed by the user",
+            True,
+            self.step_external_undo,
+        )
+        return False
+
+    def step_external_undo(self):
+        # Back to a clean buffer without xedown touching it: the undo is the
+        # document's own, exactly as a user pressing Ctrl+Z would drive it.
+        self.document.undo()
+        self._schedule(1000, self.step_external_undo_check)
+        return False
+
+    def step_external_undo_check(self):
+        controller = self._main_controller()
+        record(
+            "external-undo-retires-bar",
+            controller._external_bar is None,
+            "a bar must not outlive the divergence it warned about",
+        )
+        self._schedule(300, self.step_external_save_type)
+        return False
+
+    # --- saving is the other way the divergence ends -----------------------
+    #
+    # The undo above proves `_on_modified_changed`. This proves
+    # `_on_document_saved`, which is the resolution a user actually reaches
+    # for: their version wins, the file matches the buffer again, and the bar
+    # has nothing left to say. No fresh external write is needed -- the undo
+    # step left `_disk_text` set, so one keystroke is enough to diverge again.
+
+    def step_external_save_type(self):
+        self.document.insert(self.document.get_end_iter(), "\nMine wins.\n", -1)
+        self._schedule(900, self.step_external_save_do)
+        return False
+
+    def step_external_save_do(self):
+        controller = self._main_controller()
+        record(
+            "external-typing-shows-bar-again",
+            controller._external_bar is not None,
+            "the bar must come back for a second divergence",
+        )
+        Xed.commands_save_document(self.window, self.document)
+        self._schedule(1400, self.step_external_save_retired)
+        return False
+
+    def step_external_save_retired(self):
+        controller = self._main_controller()
+        record(
+            "external-save-retires-bar",
+            controller._external_bar is None and not self.document.get_modified(),
+            f"bar {controller._external_bar!r}, "
+            f"modified {self.document.get_modified()}",
+        )
+        record(
+            "external-save-clears-the-disk-cache",
+            controller._disk_text is None,
+            "after a save the buffer is the truth again",
+        )
+        self._schedule(300, self.step_external_burst)
+        return False
+
+    # --- a burst settles once ----------------------------------------------
+
+    def step_external_burst(self):
+        controller = self._main_controller()
+        self._renders = 0
+        self._render_original = controller._refresh_body_now
+
+        def counting():
+            self._renders += 1
+            return self._render_original()
+
+        controller._refresh_body_now = counting
+        for index in range(10):
+            self._write_document_file(f"# Burst {index}\n\nWrite number {index}.\n")
+        self._schedule(1500, self.step_external_burst_check)
+        return False
+
+    def step_external_burst_check(self):
+        controller = self._main_controller()
+        controller._refresh_body_now = self._render_original
+        record(
+            "external-burst-settles-once",
+            self._renders == 1,
+            f"{self._renders} renders for ten writes",
+        )
+        self._preview_text(
+            "external-burst-shows-the-last-write",
+            "Burst 9",
+            True,
+            self.step_external_delete,
+        )
+        return False
+
+    # --- delete, and come back ---------------------------------------------
+
+    def step_external_delete(self):
+        os.unlink(self._document_file())
+        self._schedule(1400, self.step_external_delete_check)
+        return False
+
+    def step_external_delete_check(self):
+        controller = self._main_controller()
+        record(
+            "external-delete-leaves-no-bar",
+            controller._info_bar is None,
+            "a deleted file is not an error to report",
+        )
+        record(
+            "external-delete-keeps-the-document-page",
+            controller._page_is_document,
+            "a deleted file must not produce an error page",
+        )
+        self._preview_text(
+            "external-delete-is-quiet",
+            "Burst 9",
+            True,
+            self.step_external_restore,
+        )
+        return False
+
+    def step_external_restore(self):
+        self._write_document_file("# Restored\n\nThe file came back.\n")
+        self._schedule(1400, self.step_external_restore_check)
+        return False
+
+    def step_external_restore_check(self):
+        self._preview_text(
+            "external-restore-catches-up",
+            "The file came back",
+            True,
+            self.step_external_returned_setup,
+        )
+        return False
+
+    # --- the file coming back to what the buffer holds ---------------------
+    #
+    # The case a review caught in the design: an agent that undoes its own
+    # edit, or `git checkout -- file.md`, leaves disk matching the buffer
+    # again. That answers UNCHANGED, and if the cached disk text survived it
+    # the preview would go on showing an intermediate version that is now on
+    # neither disk nor buffer, with nothing left to mark it stale -- and the
+    # next keystroke would raise the bar over a file the user already has.
+
+    def step_external_returned_setup(self):
+        # A known buffer to come back to. Saving makes disk match it, so the
+        # write below is a genuine divergence and the one after it a genuine
+        # return.
+        self.document.set_text("# Round trip\n\nThe buffer's own text.\n")
+        Xed.commands_save_document(self.window, self.document)
+        self._schedule(1400, self.step_external_returned_diverge)
+        return False
+
+    def step_external_returned_diverge(self):
+        self._write_document_file("# Interloper\n\nWritten by something else.\n")
+        self._schedule(1400, self.step_external_returned_check_diverged)
+        return False
+
+    def step_external_returned_check_diverged(self):
+        controller = self._main_controller()
+        record(
+            "external-returned-cached-the-divergence",
+            controller._disk_text is not None,
+            "the setup did not reach UPDATE; the return below would prove nothing",
+        )
+        self._preview_text(
+            "external-returned-shows-the-interloper",
+            "Interloper",
+            True,
+            self.step_external_returned_restore,
+        )
+        return False
+
+    def step_external_returned_restore(self):
+        # Byte for byte what the buffer holds, so diskstate answers UNCHANGED.
+        self._write_document_file("# Round trip\n\nThe buffer's own text.\n")
+        self._schedule(1400, self.step_external_returned_final)
+        return False
+
+    def step_external_returned_final(self):
+        controller = self._main_controller()
+        record(
+            "external-returned-drops-the-cache",
+            controller._disk_text is None,
+            "a file back in agreement with the buffer must not stay cached",
+        )
+        self._preview_text(
+            "external-returned-preview-follows-back",
+            "Interloper",
+            False,
+            self.step_external_returned_no_false_bar,
+        )
+        return False
+
+    def step_external_returned_no_false_bar(self):
+        # The second symptom: typing must NOT raise "this file changed on
+        # disk" when the file matches what the user already had.
+        self.document.insert(self.document.get_end_iter(), "\nA fresh edit.\n", -1)
+        self._schedule(900, self.step_external_returned_no_false_bar_check)
+        return False
+
+    def step_external_returned_no_false_bar_check(self):
+        controller = self._main_controller()
+        record(
+            "external-returned-no-false-warning",
+            controller._external_bar is None,
+            "typing over a file that matches the buffer must not warn",
+        )
+        # Leave the buffer clean for the steps that follow.
+        Xed.commands_save_document(self.window, self.document)
+        self._schedule(1400, self.step_external_repoint)
+        return False
+
+    # --- Save As moves the watch -------------------------------------------
+    #
+    # The mechanical contract only. A real Save As goes through xed's file
+    # chooser, which nothing here can drive; the end-to-end path is a row in
+    # docs/manual-smoke-test.md instead. What is asserted here is what
+    # `_on_document_saved` calls into: that repoint moves the path and builds
+    # a new monitor, and that the old one is cancelled rather than left live.
+
+    def step_external_repoint(self):
+        watch = self._main_controller()._watch
+        if watch is None:
+            record("external-repoint-re-arms", False, "no watch")
+            self._schedule(300, self.step_external_watch_off)
+            return False
+        before = watch._monitor
+        original = watch.path
+        moved = os.path.join(os.path.dirname(original), "moved-under-the-watch.md")
+        with open(moved, "w") as handle:
+            handle.write("# Moved\n")
+        watch.repoint(moved)
+        record(
+            "external-repoint-re-arms",
+            watch.path == moved
+            and watch._monitor is not None
+            and watch._monitor is not before,
+            f"path {watch.path!r}, monitor replaced: {watch._monitor is not before}",
+        )
+        # Put it back, so the assertions after this one watch the file this
+        # tab's document actually has.
+        watch.repoint(original)
+        os.unlink(moved)
+        self._schedule(500, self.step_external_watch_off)
+        return False
+
+    # --- off means off ------------------------------------------------------
+
+    def step_external_watch_off(self):
+        store = xedown_settings.get_settings()
+        store.set(xedown_settings.WATCH_EXTERNAL_CHANGES, False)
+        controller = self._main_controller()
+        record(
+            "external-watch-off-drops-the-monitor",
+            controller._watch is None,
+            "the setting must reach a tab that is already open",
+        )
+        self._write_document_file("# Never seen\n\nWatching is off.\n")
+        self._schedule(1400, self.step_external_watch_off_check)
+        return False
+
+    def step_external_watch_off_check(self):
+        self._preview_text(
+            "external-watch-off-is-inert",
+            "Never seen",
+            False,
+            self.step_external_watch_restore,
+        )
+        return False
+
+    def step_external_watch_restore(self):
+        # Leave the setting and the tab as the rest of the sequence expects
+        # to find them, and leave the buffer clean: step_content_integrity
+        # asserts that viewing does not change the text.
+        store = xedown_settings.get_settings()
+        store.set(xedown_settings.WATCH_EXTERNAL_CHANGES, True)
+        controller = self._main_controller()
+        record(
+            "external-watch-on-re-arms",
+            controller._watch is not None,
+            "switching the setting back on must restart the watch",
+        )
+        self._schedule(300, self.step_content_integrity)
         return False
 
     # --- content integrity: viewing never mutates the buffer ---------------
