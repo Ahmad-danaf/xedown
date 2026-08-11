@@ -12,6 +12,13 @@ next. It asserts almost nothing about the widget tree -- `xedown_probe`
 already covers that, and re-asserting it here would prove nothing new. What
 this probe produces is *attribution*: the marker file that lets
 `tests/unit/orca_transcript.py` say which utterance belongs to which action.
+
+Every row below follows the same shape: prepare -> settle -> mark + act ->
+settle -> next. Preparation (mode corrections, focus corrections, settings
+writes) never shares a callback turn with the mark it precedes -- fix round 1
+found two rows where it did, and in one of them (row 97) that was not merely
+an attribution smell but the reason the row measured the wrong thing
+entirely: see `step_row_97_focus_mode_bar`'s docstring.
 """
 
 import datetime
@@ -132,6 +139,33 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         view = self.window.get_active_view()
         return getattr(view, "_xedown_controller", None) if view is not None else None
 
+    def _in_modebar(self, modebar, widget):
+        """True when `widget` is the mode bar itself or somewhere inside it.
+
+        `Gtk.Widget.is_ancestor` is asked of the descendant, with the
+        candidate ancestor as its argument -- the same direction
+        `searchbar.py`'s own `contains_focus` uses it in.
+        """
+        return (
+            modebar is not None
+            and widget is not None
+            and (widget is modebar or widget.is_ancestor(modebar))
+        )
+
+    def _modebar_focusables(self, modebar):
+        """The mode bar's own controls a real Tab key press can reach, in
+        pack order.
+
+        `_stale_dot` is a `Gtk.Label` and never focusable regardless of
+        visibility. `_refresh_button` only joins the chain while visible --
+        the same condition `set_refresh_visible` uses -- because GTK's own
+        focus traversal skips widgets that are not currently showing.
+        """
+        controls = [modebar._buttons[Mode.PREVIEW], modebar._buttons[Mode.SOURCE]]
+        if modebar._refresh_button.get_visible():
+            controls.append(modebar._refresh_button)
+        return controls
+
     def _press(self, keyval, state):
         """Deliver a real key press.
 
@@ -178,57 +212,206 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
             Gio.File.new_for_path(path), None, 0, False, True
         )
         record("orca-setup-opened-a-document", True, path)
-        self._schedule(SETTLE_MS, self.step_row_96_mode_switch)
+        self._schedule(SETTLE_MS, self.step_row_96_switch_to_source)
         return False
 
-    def step_row_96_mode_switch(self):
-        """Row 96: Ctrl+Shift+M twice. Does Orca say which mode is now on?"""
+    def step_row_96_switch_to_source(self):
+        """Row 96 (1 of 2): Ctrl+Shift+M. Does Orca say Markdown is now showing?
+
+        `DEFAULT_MODE` is "preview" (`settings.py:123`) and this tab's path is
+        new, so it opens in Preview -- no prep needed before this first press.
+        """
         controller = self._controller()
         before = controller.state.mode if controller is not None else None
-        mark("row-96-mode-switch")
+        mark("row-96-switch-to-source")
         self._press(
             Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
         )
         after = self._controller().state.mode if self._controller() else None
         record(
-            "orca-mode-actually-switched",
-            before is not None and after is not None and before is not after,
+            "orca-row-96-switched-to-source",
+            before is Mode.PREVIEW and after is Mode.SOURCE,
             f"{before} -> {after}",
         )
+        self._schedule(SETTLE_MS, self.step_row_96_switch_back_to_preview)
+        return False
+
+    def step_row_96_switch_back_to_preview(self):
+        """Row 96 (2 of 2): Ctrl+Shift+M again. Does Orca say Preview is back?
+
+        The two directions get their own markers -- `row-96-switch-to-source`
+        and this one -- so the transcript can attribute each announcement to
+        the direction that produced it, rather than one window covering both
+        and leaving which-said-what to guesswork.
+        """
+        controller = self._controller()
+        before = controller.state.mode if controller is not None else None
+        mark("row-96-switch-back-to-preview")
+        self._press(
+            Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        after = self._controller().state.mode if self._controller() else None
+        record(
+            "orca-row-96-switched-back-to-preview",
+            before is Mode.SOURCE and after is Mode.PREVIEW,
+            f"{before} -> {after}",
+        )
+        self._schedule(SETTLE_MS, self.step_row_97_focus_mode_bar)
+        return False
+
+    def step_row_97_focus_mode_bar(self):
+        """Row 97, prepare: put focus on the mode bar's own first control.
+
+        Fix round 1 found this row silently measuring the wrong thing: with
+        mode left in SOURCE by (the old, single-press) row 96, `set_mode`'s
+        SOURCE branch hands focus to `self.view` -- the source `GtkSource.View`
+        -- whose `accepts-tab` property defaults to True, so the "Tab through
+        the mode bar" presses inserted literal tab characters into the
+        document instead of ever reaching the bar. Orca then correctly said
+        nothing about the mode bar, and that silence would have been
+        published as a naming defect. Row 96 now always ends back in Preview,
+        which removes the accepts-tab hazard, but this step does not lean on
+        that alone: it grabs focus onto the bar's first control explicitly,
+        so where Tab starts is never again "wherever focus happens to be".
+        """
+        controller = self._controller()
+        if controller is not None and controller.modebar is not None:
+            self._modebar_focusables(controller.modebar)[0].grab_focus()
         self._schedule(SETTLE_MS, self.step_row_97_mode_bar_tab)
         return False
 
     def step_row_97_mode_bar_tab(self):
-        """Row 97: Tab through the mode bar. Is each control named aloud?"""
+        """Row 97: Tab through the mode bar. Is each control named aloud?
+
+        Both containment checks are real: `self.window.get_focus()` is asked
+        before the first press and again after the last, and each answer is
+        compared against the live tree (`_in_modebar`) rather than assumed.
+        Exactly enough Tab presses are sent to walk from the first focusable
+        control to the last one currently visible (`_modebar_focusables`) --
+        not a fixed guess, so the "after" check stays meaningful whether the
+        refresh button happens to be showing or not.
+        """
+        controller = self._controller()
+        modebar = controller.modebar if controller is not None else None
+        before = self.window.get_focus()
+        before_in_bar = self._in_modebar(modebar, before)
         mark("row-97-mode-bar-tab")
-        for _ in range(4):
+        record(
+            "orca-mode-bar-focus-starts-in-the-bar",
+            before_in_bar,
+            f"focus: {before!r}",
+        )
+        presses = max(0, len(self._modebar_focusables(modebar)) - 1) if modebar else 0
+        for _ in range(presses):
             self._press(Gdk.KEY_Tab, 0)
-        record("orca-mode-bar-tabbed", True, "4 Tab presses delivered")
+        after = self.window.get_focus()
+        after_in_bar = self._in_modebar(modebar, after)
+        record(
+            "orca-mode-bar-tabbed",
+            before_in_bar and after_in_bar,
+            f"{presses} Tab press(es); focus after: {after!r}",
+        )
+        self._schedule(SETTLE_MS, self.step_row_98_prepare_preview)
+        return False
+
+    def step_row_98_prepare_preview(self):
+        """Row 98, prepare: make sure Preview is showing and actually focused.
+
+        Row 97 deliberately leaves focus inside the mode bar, not the
+        WebView, and docs/manual-smoke-test.md's row 98 is keyboard-only ("no
+        click first") for the human tester -- it says nothing about where
+        this probe's own synthetic focus should already be. Left alone, the
+        Down/Page_Down presses below would land on whatever the mode bar's
+        buttons do with them, not the document. The mode check is defensive:
+        by construction mode is already Preview here, but a future reordering
+        of these steps should not silently start scrolling a hidden pane.
+        """
+        controller = self._controller()
+        if controller is not None and controller.state.mode is not Mode.PREVIEW:
+            self._press(
+                Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+            )
+            controller = self._controller()
+        if controller is not None and controller.preview is not None:
+            controller.preview.widget.grab_focus()
         self._schedule(SETTLE_MS, self.step_row_98_preview_scroll)
         return False
 
     def step_row_98_preview_scroll(self):
-        """Row 98: Down and Page Down with the preview showing, no click first."""
+        """Row 98: Down and Page Down with the preview showing, no click first.
+
+        The precondition -- Preview mode, focus on the WebView -- is checked
+        for real immediately before the scroll keys, not assumed. The keys
+        are still delivered either way, so the sequence keeps moving and
+        Orca still gets a chance to speak, but a broken precondition FAILs
+        loudly here instead of the transcript being read as though it held.
+        """
         controller = self._controller()
-        if controller is not None and controller.state.mode is not Mode.PREVIEW:
-            self._press(
-                Gdk.KEY_m,
-                Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK,
-            )
+        mode_ok = controller is not None and controller.state.mode is Mode.PREVIEW
+        focus = self.window.get_focus()
+        focus_ok = (
+            controller is not None
+            and controller.preview is not None
+            and focus is controller.preview.widget
+        )
         mark("row-98-preview-scroll")
+        record(
+            "orca-preview-scroll-precondition",
+            mode_ok and focus_ok,
+            f"mode is Mode.PREVIEW: {mode_ok}, focus is the WebView: {focus_ok} ({focus!r})",
+        )
         self._press(Gdk.KEY_Down, 0)
         self._press(Gdk.KEY_Page_Down, 0)
-        record("orca-preview-scroll-keys-delivered", True, "Down, Page_Down")
         self._schedule(SETTLE_MS, self.step_row_99_search_bar_tab)
         return False
 
     def step_row_99_search_bar_tab(self):
-        """Row 99: Ctrl+F, then Tab through the search bar."""
+        """Row 99: Ctrl+F, then Tab through the search bar.
+
+        The bar's opening is checked for real right after Ctrl+F -- visible,
+        and actually holding focus (`SearchBar.owns_focus`, the same
+        predicate `shortcuts.route_key` itself relies on to tell xedown's own
+        entry apart from xed's) -- rather than assumed True regardless of
+        what the key press actually did.
+        """
         mark("row-99-search-bar-tab")
         self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
+        controller = self._controller()
+        visible = (
+            controller is not None
+            and controller.searchbar is not None
+            and controller.searchbar.get_visible()
+        )
+        focus = self.window.get_focus()
+        focused = (
+            controller is not None
+            and controller.searchbar is not None
+            and controller.searchbar.owns_focus(focus)
+        )
+        record(
+            "orca-search-bar-opened",
+            visible and focused,
+            f"visible: {visible}, focus is the search entry: {focused} ({focus!r})",
+        )
         for _ in range(6):
             self._press(Gdk.KEY_Tab, 0)
-        record("orca-search-bar-tabbed", True, "Ctrl+F then 6 Tab presses")
+        self._schedule(SETTLE_MS, self.step_row_100_prepare_stale)
+        return False
+
+    def step_row_100_prepare_stale(self):
+        """Row 100, prepare: close any open bar, ensure Preview, auto off.
+
+        Escape closes whatever row 99 left open. The mode guard and the
+        `AUTO_REFRESH` write are the same two steps
+        `xedown_probe.step_manual_refresh_setup` takes before its own
+        equivalent buffer edit. None of the three should share a window with
+        the mark that follows -- fix round 1 found them doing exactly that.
+        """
+        self._press(Gdk.KEY_Escape, 0)
+        controller = self._controller()
+        if controller is not None and controller.state.mode is not Mode.PREVIEW:
+            controller.set_mode(Mode.PREVIEW)
+        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, False)
         self._schedule(SETTLE_MS, self.step_row_100_stale)
         return False
 
@@ -236,16 +419,12 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         """Row 100: the stale indicator.
 
         Uses the mechanism `xedown_probe.step_manual_refresh_setup` already
-        establishes: turn AUTO_REFRESH off through the settings store, then
-        change the buffer while Preview is showing. That is exactly what an
-        automatic refresh would have picked up, so the preview falls behind
-        and both the stale dot and the refresh button become visible.
+        establishes: `AUTO_REFRESH` is off (from the prepare step above), so
+        this buffer change is exactly what an automatic refresh would have
+        picked up, and both the stale dot and the refresh button become
+        visible.
         """
-        self._press(Gdk.KEY_Escape, 0)
         controller = self._controller()
-        if controller is not None and controller.state.mode is not Mode.PREVIEW:
-            controller.set_mode(Mode.PREVIEW)
-        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, False)
         mark("row-100-stale")
         if controller is not None:
             document = controller.document
@@ -271,6 +450,13 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_done(self):
+        """End of sequence. Restores `AUTO_REFRESH` before finishing, the way
+        `xedown_probe.step_manual_refresh_check` restores it after its own
+        equivalent detour -- this probe must not leave a developer's real
+        setting flipped, independently of whatever config sandboxing Task 3's
+        harness adds.
+        """
+        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, True)
         mark("done")
         record("done", True)
         return False
