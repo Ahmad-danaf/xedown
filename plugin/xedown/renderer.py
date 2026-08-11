@@ -37,7 +37,7 @@ _DOCUMENT = """<!DOCTYPE html>
 </style>
 </head>
 <body class="{appearance} xedown-theme-{theme}">
-{notice}<article class="xedown-document" role="document" id="{content_id}" dir="{doc_direction}">
+{notice}<article class="xedown-document" role="main" id="{content_id}" dir="{doc_direction}">
 {body}
 </article>
 <script nonce="{nonce}">

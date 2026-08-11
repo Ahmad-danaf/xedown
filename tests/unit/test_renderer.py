@@ -553,7 +553,7 @@ def test_a_render_failure_page_still_carries_the_desktop_direction(monkeypatch):
 def test_the_article_is_a_landmark():
     """A screen reader needs something to jump to; the article is the document."""
     html = renderer.render_document("# Title\n")
-    assert 'role="document"' in html
+    assert 'role="main"' in html
 
 
 def test_a_language_is_emitted_when_one_is_known():
