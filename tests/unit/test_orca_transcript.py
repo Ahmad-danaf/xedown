@@ -102,3 +102,21 @@ def test_missing_matches_inside_a_longer_utterance_and_ignores_case():
 
 def test_missing_returns_nothing_when_everything_was_said():
     assert ot.missing(["Match case", "Close search"], ["Match case"]) == []
+
+
+def test_asymmetric_midnight_crossing_does_not_drop_utterances():
+    """Regression: three markers and utterances with asymmetric crossing.
+
+    A critical bug silently dropped u2 when sorting by raw time grouped
+    early-morning events before late-night ones. This tests the exact
+    case from the crash report.
+    """
+    # 23:00:00, 23:59:00, 00:30:00 for markers
+    # 23:30:00, 00:01:00, 00:45:00 for utterances
+    markers = [(82800.0, "A"), (86340.0, "B"), (1800.0, "C")]
+    utterances = [(84600.0, "u1"), (60.0, "u2"), (2700.0, "u3")]
+    assert ot.slice_by_marker(utterances, markers) == {
+        "A": ["u1"],
+        "B": ["u2"],
+        "C": ["u3"],
+    }

@@ -90,38 +90,39 @@ def slice_by_marker(utterances, markers):
     if not markers:
         return {}
 
-    # Collect all events with metadata
-    all_events = []
-    for idx, (time, name) in enumerate(markers):
-        all_events.append((time, "marker", idx, name))
-    for idx, (time, text) in enumerate(utterances):
-        all_events.append((time, "utterance", idx, text))
+    # Unwrap markers and utterances independently by their own file order,
+    # since each sequence is append-only and therefore chronological within
+    # itself. The day rolls over exactly where each sequence's timestamps
+    # step backwards.
+    marker_times = [t for t, _ in markers]
+    marker_times_unwrapped = _unwrapped(marker_times)
+    markers_with_unwrapped = list(
+        zip(marker_times_unwrapped, [name for _, name in markers])
+    )
 
-    # Sort by time to get chronological order
-    sorted_events = sorted(all_events, key=lambda x: x[0])
+    utterance_times = [t for t, _ in utterances]
+    utterance_times_unwrapped = _unwrapped(utterance_times)
+    utterances_with_unwrapped = list(
+        zip(utterance_times_unwrapped, [text for _, text in utterances])
+    )
 
-    # Unwrap the times from the chronologically sorted sequence
-    times_sorted = [t for t, _, _, _ in sorted_events]
-    unwrapped_times_sorted = _unwrapped(times_sorted)
-
-    # Process in chronological order
-    utterance_markers = {}  # utterance_idx -> marker_name
-    current_marker = None
-
-    for (orig_time, event_type, idx, value), unwrapped_time in zip(
-        sorted_events, unwrapped_times_sorted
-    ):
-        if event_type == "marker":
-            current_marker = value
-        else:  # utterance
-            if current_marker is not None:
-                utterance_markers[idx] = current_marker
-
-    # Rebuild result in utterance order
+    # For each utterance, find the most recent marker that preceded it
     sliced = {name: [] for _, name in markers}
-    for idx, (time, text) in enumerate(utterances):
-        if idx in utterance_markers:
-            sliced[utterance_markers[idx]].append(text)
+
+    for utt_unwrapped, utt_text in utterances_with_unwrapped:
+        # Find the most recent marker before this utterance
+        best_marker_idx = -1
+        for marker_idx, (marker_unwrapped, marker_name) in enumerate(
+            markers_with_unwrapped
+        ):
+            if marker_unwrapped <= utt_unwrapped:
+                best_marker_idx = marker_idx
+            else:
+                break
+
+        if best_marker_idx >= 0:
+            sliced[markers_with_unwrapped[best_marker_idx][1]].append(utt_text)
+
     return sliced
 
 
@@ -134,7 +135,7 @@ def missing(spoken, expected):
 
 
 def _main(argv):
-    """`python -m orca_transcript <orca.log> <markers> [--json]`.
+    """`python -m orca_transcript <orca.log> <markers>`.
 
     The harness shells out to this rather than re-implementing the slicing
     in bash, so there is one parser with one set of tests behind it.
