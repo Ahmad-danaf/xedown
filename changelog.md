@@ -119,12 +119,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its checked state to match — both mechanisms a screen reader can use to
   signal what happened. The same live audit confirms the rendered page
   carries a `role="document"` landmark and, when your desktop's language is
-  known, a `lang` attribute. Focus is visible on everything focusable, and
-  the focus ring's contrast — against the page background and the code-block
-  background, in all four themes, light and dark — meets WCAG 1.4.11's 3:1
-  non-text threshold, along with every semantic colour pair xedown draws,
-  checked by unit test. **Screen-reader speech itself has not yet been
-  checked**, with Orca or any other reader — see
+  known, a `lang` attribute. The focus ring's contrast — against the page
+  background and the code-block background, in all four themes, light and
+  dark — meets WCAG 1.4.11's 3:1 non-text threshold, along with every
+  semantic colour pair xedown draws, checked by unit test. **Screen-reader
+  speech itself has not yet been checked**, with Orca or any other reader —
+  see
   [docs/known-issues.md](docs/known-issues.md).
 
 ### Fixed

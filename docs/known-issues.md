@@ -276,33 +276,44 @@ contrast, all of which are measured — as unverified.
 **Status:** outstanding. Delete this entry once the Orca pass has run and its
 findings are folded into the docs above.
 
-## A preview update that moves no focus cannot be announced
+## Whether an in-place preview update can reach a screen reader is untested
 
 **What you see:** the debounced auto-refresh path (`update_body()` /
-`window.xedown.replaceBody()`) updates the rendered page in place while
-Preview is already showing and already has focus. Nothing about that update
-moves focus or changes any control's accessible state, so there is no
-accessible event for a screen reader to react to.
+`window.xedown.replaceBody()`, `plugin/xedown/preview.py:91-106`) updates the
+rendered page in place while Preview is already showing and already has
+focus. Reading `update_body()` confirms it only runs a JavaScript body swap:
+nothing about it moves keyboard focus or changes any GTK widget's accessible
+state, so no GTK-widget-level accessible event fires for a screen reader to
+react to.
 
-**Why:** GTK 3's accessibility layer (ATK) has no equivalent of an ARIA live
-region — no API to say "this content changed, say so anyway." The only
-mechanisms it exposes are focus changes and object/state-change
-notifications, and WebKit2's own accessibility bridge does not add one on
-top. xedown's other accessibility work leans on exactly those two mechanisms
-because they are the only ones GTK 3 gives a plugin access to: the mode
-switch moves focus to the named preview widget and changes the toggle's
-checked state; an in-place refresh does neither.
+**Why:** GTK 3's accessibility layer (ATK) has no widget-level equivalent of
+an ARIA live region — no API to say "this GTK widget's content changed, say
+so anyway." Focus changes and object/state-change notifications are the only
+two mechanisms it gives a plugin at that level, and xedown's other
+accessibility work leans on exactly those: the mode switch moves focus to
+the named preview widget and changes the toggle's checked state; an in-place
+refresh does neither. That much is measured.
 
-**What to do about it:** nothing xedown can do within GTK 3 — there is no
-live-region mechanism to hook into. Anyone who needs to notice an edit as it
-renders should trigger it through a mode switch
-(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> twice) rather than waiting on
-auto-refresh: a mode switch moves focus and changes checked state, which an
-in-place update does not.
+What is **not** measured is whether the update is unreachable by any means.
+The rendered page is xedown's own markup (`renderer.py`), and WebKit
+implements ARIA on the pages it renders, independently of GTK's ATK layer —
+an `aria-live` region on the preview's `<article>` is something xedown could
+add to that markup. Whether such a region would actually reach Orca through
+WebKitGTK's own accessibility bridge has not been tried, and nobody has run
+Orca against this preview at all yet (see the entry above). Calling this
+unannounceable outright would be exactly the kind of claim this project does
+not make without checking it.
 
-**Status:** platform limitation. GTK 3 gives xedown no way to signal a change
-that moves no focus; fixing this would need a different accessibility API
-than the one xed's plugin host provides.
+**What to do about it:** today, a mode switch
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> twice) is the update path
+known to move focus and change a control's checked state, so it is the one
+an Orca user can rely on. Whether an `aria-live` region would let auto-refresh
+be heard too is open future work — add it, then check it against Orca,
+before any document claims it works or doesn't.
+
+**Status:** open question, not a settled limitation. GTK 3 gives xedown no
+*widget-level* way to signal a change that moves no focus; whether the
+rendered page's own ARIA support closes that gap has not been investigated.
 
 ## A document opened through a symbolic link never follows changes to its file
 
