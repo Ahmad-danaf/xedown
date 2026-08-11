@@ -90,8 +90,16 @@ def check_node(item):
     # worth catching -- a control described only by a tooltip, with no
     # accessible name -- is the first rule above.
 
-    if focusable and not item["visible"]:
-        problems.append(f"{key}: focusable while invisible")
+    # Deliberately NOT a rule: `focusable and not item["visible"]`. GTK
+    # leaves `can_focus` True on a hidden widget, but its focus chain skips
+    # invisible widgets regardless, so that combination is not a defect --
+    # it is what a normal `set_no_show_all(True)` control looks like while
+    # hidden. `focusable` here is meant to describe *effective*
+    # focusability (the live audit ANDs `can_focus` with `get_visible()`
+    # before building this dict), so a focusable-and-invisible node cannot
+    # legitimately arise at all. This rule existed once, fired exactly
+    # once -- against the refresh button, which is correct, deliberately
+    # hidden code -- and was removed rather than the button changed.
 
     if focusable and not (item["role"] or "").strip():
         problems.append(f"{key}: no accessible role")

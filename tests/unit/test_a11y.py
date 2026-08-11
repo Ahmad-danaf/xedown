@@ -95,14 +95,16 @@ def test_an_unfocusable_node_needs_no_name():
     assert a11y.check_node(node(name="", focusable=False)) == []
 
 
-def test_a_focusable_but_invisible_node_is_reported():
-    problems = a11y.check_node(node(visible=False))
-    assert len(problems) == 1
-    assert "invisible" in problems[0]
+def test_an_invisible_widget_is_not_reported_for_being_focusable():
+    """GTK leaves `can_focus` True on hidden widgets and skips them anyway.
 
-
-def test_an_unfocusable_invisible_node_is_fine():
+    The refresh button is hidden whenever auto-refresh is on, and the live
+    audit reported it until this rule was removed -- a false finding against
+    correct code, which is the more damaging direction for a check whose
+    output becomes somebody's task list.
+    """
     assert a11y.check_node(node(focusable=False, visible=False)) == []
+    assert a11y.check_node(node(focusable=True, visible=True)) == []
 
 
 def test_a_node_with_no_role_is_reported():

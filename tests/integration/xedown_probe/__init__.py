@@ -1042,10 +1042,17 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                     key=key,
                     name=accessible.get_name() if accessible else "",
                     role=accessible.get_role().value_nick if accessible else "",
-                    focusable=widget.get_can_focus(),
-                    # The refresh button is deliberately hidden while
-                    # auto-refresh is on, and a hidden widget that cannot be
-                    # focused is not a finding -- see `check_node`.
+                    # `can_focus` alone is not what matters: GTK leaves it
+                    # True on a hidden widget even though its focus chain
+                    # skips invisible widgets entirely, so `can_focus` on its
+                    # own overstates what a real Tab key-press can reach.
+                    # ANDing with `get_visible()` reports what is actually
+                    # true -- effective focusability -- which is what
+                    # `a11y.check_node` assumes it is being handed. The
+                    # refresh button is deliberately hidden while
+                    # auto-refresh is on; without this AND it used to be
+                    # misreported as a defect for exactly that reason.
+                    focusable=widget.get_can_focus() and widget.get_visible(),
                     visible=widget.get_visible(),
                     index=index,
                 )
