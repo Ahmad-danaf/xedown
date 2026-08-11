@@ -63,6 +63,8 @@ class TabController:
         self._ui_direction = direction.LTR
         self._stylesheet_token = None
         self._info_bar = None
+        # What the current bar's action button does, if it has one.
+        self._info_bar_action = None
         # The path this tab's remembered mode is filed under. Compared on
         # save, so a Save As moves the entry instead of stranding it.
         self._remembered_path = None
@@ -1038,30 +1040,56 @@ class TabController:
         dialog.destroy()
         return response == Gtk.ResponseType.OK
 
-    def _show_error(self, message):
+    def _set_info_bar(self, message, button=None, on_activate=None):
+        """Put one of xedown's own info bars in the tab's single slot.
+
+        Two of xedown's own bars never coexist -- there is one slot, and
+        `Xed.Tab.set_info_bar` is how it is filled -- so the newer replaces
+        the older. xed fills the same slot with bars of its own, and whichever
+        was set last is the one on screen; there is nothing to reconcile,
+        because in the one case where both can appear they offer the same
+        thing by the same route.
+
+        Returns the bar, so a caller that needs to recognise its own later can
+        keep hold of it. Returns None when there is no tab to put it in.
+        """
         if self.tab is None:
-            return
+            return None
         self._dismiss_info_bar()
         bar = Gtk.InfoBar()
         bar.set_message_type(Gtk.MessageType.WARNING)
         bar.get_content_area().add(Gtk.Label(label=message))
+        if button is not None:
+            bar.add_button(button, Gtk.ResponseType.APPLY)
         bar.add_button("Close", Gtk.ResponseType.CLOSE)
         self._connect(bar, "response", self._on_info_bar_response)
         self._info_bar = bar
+        self._info_bar_action = on_activate
         self.tab.set_info_bar(bar)
         bar.show_all()
         if self.modebar is not None:
             self.tab.reorder_child(self.modebar, 0)
+        return bar
 
-    def _on_info_bar_response(self, bar, _response):
+    def _show_error(self, message):
+        self._set_info_bar(message)
+
+    def _on_info_bar_response(self, bar, response):
         # `Xed.Tab.set_info_bar` does not accept None (its `info_bar`
         # argument is marshaled as non-nullable), so the bar is retired by
         # destroying it directly rather than trying to clear the tab's
         # info-bar slot.
+        action = self._info_bar_action if self._info_bar is bar else None
         if self._info_bar is bar:
             self._info_bar = None
+            self._info_bar_action = None
         self._untrack(bar)
         bar.destroy()
+        # After the bar is gone, not before: an action can open a modal
+        # dialog, and it can reload the document out from under this
+        # controller. Neither should find a half-retired bar behind it.
+        if action is not None and response == Gtk.ResponseType.APPLY:
+            action()
 
     def _dismiss_info_bar(self):
         """Remove the info bar this controller created, if any is showing.
@@ -1070,5 +1098,6 @@ class TabController:
         """
         if self._info_bar is not None:
             bar, self._info_bar = self._info_bar, None
+            self._info_bar_action = None
             self._untrack(bar)
             bar.destroy()
