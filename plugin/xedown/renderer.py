@@ -1,5 +1,6 @@
 """Markdown source to a sanitized, self-contained HTML document."""
 
+import html
 import json
 import secrets
 
@@ -27,7 +28,7 @@ _CSP = (
 # above `pre code.hljs` in preview.css for why that ordering, and not just
 # the extra rule, is what makes the override actually win.
 _DOCUMENT = """<!DOCTYPE html>
-<html dir="{ui_direction}">
+<html{lang} dir="{ui_direction}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{csp}">
@@ -36,7 +37,7 @@ _DOCUMENT = """<!DOCTYPE html>
 </style>
 </head>
 <body class="{appearance} xedown-theme-{theme}">
-{notice}<article class="xedown-document" id="{content_id}" dir="{doc_direction}">
+{notice}<article class="xedown-document" role="document" id="{content_id}" dir="{doc_direction}">
 {body}
 </article>
 <script nonce="{nonce}">
@@ -100,6 +101,7 @@ def render_document(
     code_copy_buttons=True,
     text_direction=direction.AUTO,
     ui_direction=direction.LTR,
+    lang=None,
 ):
     """Build the complete preview page. Never raises — failures become a page.
 
@@ -180,6 +182,14 @@ def render_document(
             + "\n"
         )
 
+    lang_attribute = ""
+    if lang:
+        # Escaped like every other author-influenced value that reaches the
+        # template: the locale comes from the environment, not from the
+        # document, but the escaping costs nothing and the rule is that
+        # nothing reaches an attribute unescaped.
+        lang_attribute = f' lang="{html.escape(str(lang), quote=True)}"'
+
     return _DOCUMENT.format(
         csp=_CSP.format(nonce=token),
         nonce=token,
@@ -194,4 +204,5 @@ def render_document(
         highlight_js=highlight_js,
         ui_direction=ui,
         doc_direction=doc_direction,
+        lang=lang_attribute,
     )

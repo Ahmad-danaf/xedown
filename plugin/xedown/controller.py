@@ -10,6 +10,7 @@ gi.require_version("Xed", "1.0")
 from gi.repository import GLib, Gtk, Xed
 
 from . import (
+    a11y,
     direction,
     diskstate,
     errors,
@@ -820,6 +821,21 @@ class TabController:
         encoding = self.document.get_encoding()
         return encoding.get_charset() if encoding is not None else None
 
+    def _page_language(self):
+        """The desktop's language as a BCP-47 tag, or None.
+
+        `GLib.get_language_names()` returns the user's languages most
+        specific first, so the first one that parses is the best answer.
+        This is the *reader's* language rather than the document's -- xedown
+        does not detect what language a document is written in, and guessing
+        would be worse than the default voice. Documented as such.
+        """
+        for name in GLib.get_language_names():
+            tag = a11y.lang_tag(name)
+            if tag is not None:
+                return tag
+        return None
+
     def _on_file_settled(self):
         """The file stopped changing. Decide what that means, once.
 
@@ -1110,6 +1126,7 @@ class TabController:
                 code_copy_buttons=self._copy_buttons,
                 text_direction=self._text_direction,
                 ui_direction=self._ui_direction,
+                lang=self._page_language(),
             )
         base_dir = self._base_dir()
         self.preview.load_document(

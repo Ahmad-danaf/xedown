@@ -548,3 +548,29 @@ def test_a_render_failure_page_still_carries_the_desktop_direction(monkeypatch):
     page = renderer.render_document(ENGLISH_DOC, ui_direction="rtl")
     assert "Cannot render this document" in page
     assert '<html dir="rtl">' in page
+
+
+def test_the_article_is_a_landmark():
+    """A screen reader needs something to jump to; the article is the document."""
+    html = renderer.render_document("# Title\n")
+    assert 'role="document"' in html
+
+
+def test_a_language_is_emitted_when_one_is_known():
+    html = renderer.render_document("# Title\n", lang="ar-EG")
+    assert 'lang="ar-EG"' in html
+
+
+def test_no_language_attribute_at_all_when_none_is_known():
+    """Absent beats wrong: the reader keeps its own default voice."""
+    html = renderer.render_document("# Title\n", lang=None)
+    assert "lang=" not in html
+
+
+def test_an_empty_language_is_treated_as_unknown():
+    assert "lang=" not in renderer.render_document("# Title\n", lang="")
+
+
+def test_the_language_is_escaped_into_the_attribute():
+    html = renderer.render_document("# Title\n", lang='en" onload="x')
+    assert 'onload="x"' not in html
