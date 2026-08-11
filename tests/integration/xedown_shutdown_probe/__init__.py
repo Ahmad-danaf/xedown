@@ -306,6 +306,10 @@ def _scenario_preview_active(probe):
     The plainest scenario, and the one the older probe could never reach:
     nothing is disabled, nothing is closed by hand, the previews are live
     and on screen when the close request arrives.
+
+    The last step is the one state nothing else here reaches. Every scenario
+    now carries a live file monitor, because `watch_external_changes` is on by
+    default -- but only this one closes with a settle timer still *armed*.
     """
 
     def open_them():
@@ -317,7 +321,15 @@ def _scenario_preview_active(probe):
     def verify():
         _check_live_preview("preview-active", _state["tabs"])
 
-    return [(2500, open_them), (3500, verify)]
+    def write_during_settle():
+        # Rewritten from outside and deliberately NOT waited out: the runner
+        # asks the window to close as soon as this step returns READY, which
+        # is well inside FileWatch's 300ms settle window. A timer that
+        # outlived `deactivate()` would fire into a torn-down controller, and
+        # a monitor left connected would hold the tab.
+        _md("live-1.md", "# Live 1\n\nRewritten from outside.\n")
+
+    return [(2500, open_them), (3500, verify), (100, write_during_settle)]
 
 
 SCENARIOS = {
