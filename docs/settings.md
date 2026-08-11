@@ -3,14 +3,12 @@
 xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
-**One of these values has no consumer yet.** `watch_external_changes` is not
-read by anything in this release; it exists so that the feature which will use
-it, and the settings window that will edit it, have one place to look. Every
-other setting here is read as of v0.2: `preview_theme`, `custom_stylesheet`,
+Every value here is read as of v0.2: `preview_theme`, `custom_stylesheet`,
 `content_width_rem`, `text_size_px`, `remote_images`, `code_copy_buttons` and
 `text_direction` — see [themes.md](themes.md); `default_mode`,
 `remember_mode_per_file`, `auto_refresh` and `refresh_delay_ms` — see
-[Modes and refreshing](#modes-and-refreshing) below.
+[Modes and refreshing](#modes-and-refreshing) below; `watch_external_changes` —
+see [Changes made outside xed](#changes-made-outside-xed).
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -53,10 +51,9 @@ in particular that nothing in it can reach the network.
 
 Two have no v0.1 equivalent, because the capability did not exist in v0.1 —
 `remember_mode_per_file` and `watch_external_changes`. Each ships **On**.
-`remember_mode_per_file` is read as of v0.2 — see
-[Modes and refreshing](#modes-and-refreshing) below. `watch_external_changes`
-is not read yet; when the feature that uses it arrives it will be active
-without you doing anything. Set either of them to `false` here to opt out.
+Both are read as of v0.2 — see [Modes and refreshing](#modes-and-refreshing)
+and [Changes made outside xed](#changes-made-outside-xed) below. Set either of
+them to `false` here to opt out.
 
 `remote_images` decides how **any** image that cannot be displayed appears —
 not only a remote one. Its name is older than its job:
@@ -157,6 +154,44 @@ Unlike `default_mode` — the one setting on this page whose effect is entirely
 deferred to the next file you open — it reaches tabs that are already open:
 the next change uses the new value. A wait already under way keeps the delay
 it started with.
+
+## Changes made outside xed
+
+`watch_external_changes`, on by default, keeps the preview honest when
+something other than xed rewrites the file you have open — git, a terminal
+command, another editor, a coding agent.
+
+**With no unsaved edits** the preview simply updates, in place, at the scroll
+position it had. There is no dialog and no button to press. One save by another
+program often reaches the filesystem as several separate changes; xedown waits
+for them to stop before rendering, so you see one update rather than a flicker
+of three, and a rapid burst of writes settles into a single render.
+
+**With unsaved edits xedown replaces nothing.** The preview keeps showing your
+work, and a bar appears saying the file changed on disk. Its **Reload…** button
+hands off to xed's own *Revert*, which asks for confirmation before discarding
+anything. Cancelling that dialog leaves everything as it was. **xedown never
+writes to your text**, in either case.
+
+The bar retires by itself as soon as it has nothing left to say: when you save,
+when you revert, and when you undo back to a document with no unsaved edits.
+
+One thing this does **not** do is reload the document. The preview follows the
+file; the buffer keeps the text you had until you ask xed to reload it. You will
+meet that difference only by switching to Markdown mode — and xed itself notices
+at exactly that moment and offers you its own **Reload**, because the source
+view taking focus is what xed's own check waits for. See
+[known-issues.md](known-issues.md).
+
+Deleting the file, replacing it, and moving it away and back are all handled
+without an error dialog: the preview keeps showing what it has, and catches up
+when the file is there again.
+
+Set `"watch_external_changes": false` to switch it off — worth doing on a
+network filesystem, or in a directory where watching is expensive. Unlike most
+settings here, this one reaches tabs that are already open: switching it off
+stops the watching immediately, and switching it back on starts it again.
+Nothing is watched at all for a file that has never been saved.
 
 ## Editing the file by hand
 

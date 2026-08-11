@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The preview follows changes made to the file outside xed — by git, by a
+  terminal command, by another editor, by an AI coding agent. With no unsaved
+  edits it simply updates, at the scroll position it had, with no dialog and
+  no button to press. With unsaved edits nothing is replaced: the preview
+  keeps showing your work and a dismissible bar says the file changed on disk,
+  offering **Reload…**, which hands off to xed's own Revert and its own
+  confirmation. **xedown never writes to your text.** One save by another
+  program is one update, not a flicker of several, and a burst of writes
+  settles into a single render. Deleting the file, replacing it, and moving it
+  away and back are all handled quietly. Set `"watch_external_changes": false`
+  to switch the whole thing off, and it stops in every tab already open.
 - Four keyboard shortcuts, all of them also in the *View* menu with their keys
   shown: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> switches between the
   two modes, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> goes to Preview,
@@ -89,8 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A settings file at `~/.config/xedown/settings.json`, shared by every window
   and applied everywhere the moment it changes. See
   [docs/settings.md](docs/settings.md) for what each one does; the settings
-  window that will edit them, and `watch_external_changes`, are still to come
-  later in v0.2.
+  window that will edit them is still to come later in v0.2.
 - Find in the preview: `Ctrl+F` searches the rendered document, with match
   counting, wrapping navigation, a case toggle and highlighting themed for all
   four themes in both appearances. `Ctrl+F` over the Markdown source is still

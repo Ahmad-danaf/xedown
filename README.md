@@ -128,6 +128,12 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
 - Go-to-line operates on the source text and is inert while Preview is
   showing; switch to Markdown mode to use it. Find is no longer among them —
   `Ctrl+F` in Preview searches the rendered document (see *Finding text*).
+- The preview follows changes made to the file outside xed, but the **source
+  buffer does not**: xedown never writes to your text. After an external
+  change the preview shows the file and the editor still holds what you had.
+  Switching to Markdown mode is where you meet that, and it is also where xed
+  itself offers to reload. Turn the whole behaviour off with
+  `"watch_external_changes": false`.
 - There is no scroll synchronisation between Preview and Markdown modes —
   each mode keeps its own independent scroll position.
 - **Remote images are never fetched.** A `https://` image shows a

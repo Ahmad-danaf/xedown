@@ -167,6 +167,17 @@ a real regression. Row 53 restores the settings file, like row 46.
 | 80 | In `tests/fixtures/showcase.md`, search `with bold text` — it starts in plain text and crosses into the bold word — and step to it so it is the current match | The highlight, outline included, reads as one continuous run across the boundary, not two boxes with a seam |
 | 81 | Search `Hello` (it appears inside the Python fenced block in `tests/fixtures/showcase.md`), in each of the four themes, light and dark | The match highlight stays readable against the syntax-highlighting colours behind it, in every combination |
 | 82 | With a search open and a match highlighted, switch the desktop between light and dark | The preview comes back themed to match, the highlighting and match count are still there, and it settles at a sensible scroll position rather than jumping |
+| 83 | With a `.md` file open in Preview and nothing unsaved, run `echo '# Changed' >> file.md` in a terminal | The preview updates within a moment. No dialog, no bar, and the scroll position does not jump |
+| 84 | Switch to Markdown mode | The editor still shows the old text, and xed puts up its own **Reload** bar |
+| 85 | Accept xed's **Reload**, switch back to Preview | Both show the new text |
+| 86 | Type a character, then run the same `echo` again | A bar appears: *This file changed on disk. Your unsaved edits are still showing.* The preview still shows what you typed |
+| 87 | Click **Reload…**, then **Cancel** in xed's dialog | Nothing changes. Your edits are still there |
+| 88 | Click **Reload…** again, then **Revert** | The document and the preview both show the file on disk, and the bar is gone |
+| 89 | Undo back to an unmodified document after an external change | The bar goes and the preview picks up the file |
+| 90 | Run a loop of ten quick writes to the file | One settled update. xed stays responsive throughout |
+| 91 | `rm` the file, then recreate it with new content | No error dialog and no error page while it is gone; the preview catches up once it is back |
+| 92 | Save the file under a new name (*File → Save As*), then edit the **new** file from a terminal | The preview follows the new file. Editing the old path changes nothing |
+| 93 | Set `"watch_external_changes": false`, restart xed, repeat the first row | Nothing happens until you refresh by hand |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

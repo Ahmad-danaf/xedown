@@ -201,3 +201,43 @@ longer matches all-caps `ΟΔΟΣ`; typed `οδοσ` instead, it does.
 Case-sensitive search, and every other language, are unaffected. This was
 taken deliberately, not missed: a Greek query occasionally needing its other
 spelling costs less than a search that can highlight the wrong text.
+
+## The source buffer keeps its old text after an external change
+
+**What you see.** Something rewrites the open file. The preview updates. You
+switch to Markdown mode and the editor still shows the previous text — and xed
+puts up its own bar offering to reload it.
+
+**Why.** xedown never writes to the text buffer. It renders the preview from
+the file on disk when the buffer has no unsaved edits, and leaves the buffer to
+xed, which owns it. xed checks the file when the source view takes keyboard
+focus, and switching to Markdown mode is precisely when that happens — so the
+offer to reload arrives exactly when the stale text becomes visible.
+
+**What to do.** Accept xed's **Reload**, or use *File → Revert*. Nothing is
+lost either way: with unsaved edits, xed asks first.
+
+## A file written continuously updates only when the writing pauses
+
+**What you see.** A program appends to the open file without stopping. The
+preview does not update until it stops.
+
+**Why.** Every file event restarts a 300 ms settle window, so that one save
+arriving as several filesystem events becomes one update rather than three.
+A writer that never pauses never lets that window expire. This is the
+deliberate trade against runaway refreshing; every real case — a rebase, an
+editor saving, an agent working in a loop — writes in bursts with gaps.
+
+**What to do.** Nothing. The preview catches up as soon as the writing stops.
+
+## An external change on a network filesystem may go unnoticed
+
+**What you see.** A file on an NFS or SMB mount is changed from another
+machine, and the preview does not follow it.
+
+**Why.** The watch is built on the kernel's own file-change notifications,
+which see writes made on this machine and not writes made on another.
+
+**What to do.** Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, or switch
+modes and back. If the watching is costing more than it gives on such a mount,
+set `"watch_external_changes": false`.
