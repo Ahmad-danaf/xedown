@@ -21,10 +21,6 @@ _UTTERANCE = re.compile(r"^(\d{2}):(\d{2}):(\d{2}\.\d+) - SPEECH OUTPUT: '(.*)$"
 _TRAILING_VOICE = re.compile(r"'\s*\{.*\}\s*$")
 _MARKER = re.compile(r"^(\d{2}):(\d{2}):(\d{2}\.\d+)\s+(\S+)\s*$")
 
-# A run that starts before midnight and ends after it would otherwise slice
-# backwards, silently attributing every later utterance to no marker at all.
-_DAY = 86400.0
-
 
 class EmptyTranscript(Exception):
     """No speech at all was captured.
@@ -33,6 +29,16 @@ class EmptyTranscript(Exception):
     it means the capture failed, and reporting "no utterance matched" for
     every row would look like a set of real findings instead of a broken
     instrument.
+    """
+
+
+class AmbiguousTimeline(Exception):
+    """A transcript's timestamps step backwards, preventing safe attribution.
+
+    This can indicate a genuine midnight crossing, or corrupted/out-of-order
+    input. The module refuses both cases rather than silently losing data:
+    a component that exists to make silence trustworthy must never
+    manufacture silence.
     """
 
 
@@ -66,62 +72,53 @@ def parse_markers(text):
     return found
 
 
-def _unwrapped(stamps):
-    """The same times, made monotonic by adding a day at each wrap."""
-    out = []
-    days = 0
-    previous = None
-    for stamp in stamps:
-        if previous is not None and stamp < previous:
-            days += 1
-        out.append(stamp + days * _DAY)
-        previous = stamp
-    return out
-
-
 def slice_by_marker(utterances, markers):
     """Marker name -> what was spoken between it and the next marker.
 
     Utterances before the first marker are dropped: Orca's own startup
     announcement and the window appearing are not evidence about any row.
+
+    Raises AmbiguousTimeline if either the marker or utterance timestamps
+    step backwards. This catches genuine midnight crossings, corrupted input,
+    and out-of-order logs — all cases where silent data loss would be worse
+    than a loud failure.
     """
     if not utterances:
         raise EmptyTranscript("no SPEECH OUTPUT lines were captured")
     if not markers:
         return {}
 
-    # Unwrap markers and utterances independently by their own file order,
-    # since each sequence is append-only and therefore chronological within
-    # itself. The day rolls over exactly where each sequence's timestamps
-    # step backwards.
     marker_times = [t for t, _ in markers]
-    marker_times_unwrapped = _unwrapped(marker_times)
-    markers_with_unwrapped = list(
-        zip(marker_times_unwrapped, [name for _, name in markers])
-    )
-
     utterance_times = [t for t, _ in utterances]
-    utterance_times_unwrapped = _unwrapped(utterance_times)
-    utterances_with_unwrapped = list(
-        zip(utterance_times_unwrapped, [text for _, text in utterances])
-    )
 
-    # For each utterance, find the most recent marker that preceded it
+    # Check for backwards steps in markers (catches midnight, corruption, etc.)
+    for i in range(1, len(marker_times)):
+        if marker_times[i] < marker_times[i - 1]:
+            raise AmbiguousTimeline(
+                f"marker times step backwards: {marker_times[i - 1]} -> {marker_times[i]}"
+            )
+
+    # Check for backwards steps in utterances
+    for i in range(1, len(utterance_times)):
+        if utterance_times[i] < utterance_times[i - 1]:
+            raise AmbiguousTimeline(
+                f"utterance times step backwards: {utterance_times[i - 1]} -> {utterance_times[i]}"
+            )
+
+    # Both lists are now guaranteed monotonic; slice safely
     sliced = {name: [] for _, name in markers}
 
-    for utt_unwrapped, utt_text in utterances_with_unwrapped:
-        # Find the most recent marker before this utterance
+    for utt_time, utt_text in utterances:
+        # Find the most recent marker that precedes this utterance
         best_marker_idx = -1
-        for marker_idx, (marker_unwrapped, marker_name) in enumerate(
-            markers_with_unwrapped
-        ):
-            if marker_unwrapped <= utt_unwrapped:
+        for marker_idx, marker_time in enumerate(marker_times):
+            if marker_time <= utt_time:
                 best_marker_idx = marker_idx
             else:
-                break
+                break  # Monotonic, so we can stop early
 
         if best_marker_idx >= 0:
-            sliced[markers_with_unwrapped[best_marker_idx][1]].append(utt_text)
+            sliced[markers[best_marker_idx][1]].append(utt_text)
 
     return sliced
 
@@ -151,8 +148,8 @@ def _main(argv):
         marks = handle.read()
     try:
         sliced = slice_by_marker(parse_utterances(log), parse_markers(marks))
-    except EmptyTranscript as error:
-        sys.stderr.write(f"EMPTY TRANSCRIPT: {error}\n")
+    except (EmptyTranscript, AmbiguousTimeline) as error:
+        sys.stderr.write(f"ERROR: {error.__class__.__name__}: {error}\n")
         return 1
     json.dump(sliced, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")

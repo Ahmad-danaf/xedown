@@ -74,12 +74,30 @@ def test_a_marker_with_nothing_spoken_in_it_slices_to_an_empty_list():
     assert ot.slice_by_marker(utterances, markers) == {"loud": ["spoken"], "silent": []}
 
 
-def test_a_run_that_crossed_midnight_does_not_slice_backwards():
-    utterances = [(86399.0, "before midnight"), (1.0, "after midnight")]
-    markers = [(86398.0, "late"), (0.5, "early")]
+def test_marker_times_stepping_backwards_raises():
+    """Midnight crossing in markers is detected and refused."""
+    utterances = [(1.0, "u")]
+    markers = [(86398.0, "late"), (100.0, "early")]
+    with pytest.raises(ot.AmbiguousTimeline):
+        ot.slice_by_marker(utterances, markers)
+
+
+def test_utterance_times_stepping_backwards_raises():
+    """Midnight crossing in utterances is detected and refused."""
+    markers = [(10.0, "M")]
+    utterances = [(86398.0, "u_late"), (100.0, "u_early")]
+    with pytest.raises(ot.AmbiguousTimeline):
+        ot.slice_by_marker(utterances, markers)
+
+
+def test_same_day_operation_is_untouched():
+    """Ordinary same-day operation works without detecting crossing."""
+    markers = [(1.0, "A"), (10.0, "B"), (20.0, "C")]
+    utterances = [(2.0, "u1"), (15.0, "u2"), (25.0, "u3")]
     assert ot.slice_by_marker(utterances, markers) == {
-        "late": ["before midnight"],
-        "early": ["after midnight"],
+        "A": ["u1"],
+        "B": ["u2"],
+        "C": ["u3"],
     }
 
 
@@ -102,21 +120,3 @@ def test_missing_matches_inside_a_longer_utterance_and_ignores_case():
 
 def test_missing_returns_nothing_when_everything_was_said():
     assert ot.missing(["Match case", "Close search"], ["Match case"]) == []
-
-
-def test_asymmetric_midnight_crossing_does_not_drop_utterances():
-    """Regression: three markers and utterances with asymmetric crossing.
-
-    A critical bug silently dropped u2 when sorting by raw time grouped
-    early-morning events before late-night ones. This tests the exact
-    case from the crash report.
-    """
-    # 23:00:00, 23:59:00, 00:30:00 for markers
-    # 23:30:00, 00:01:00, 00:45:00 for utterances
-    markers = [(82800.0, "A"), (86340.0, "B"), (1800.0, "C")]
-    utterances = [(84600.0, "u1"), (60.0, "u2"), (2700.0, "u3")]
-    assert ot.slice_by_marker(utterances, markers) == {
-        "A": ["u1"],
-        "B": ["u2"],
-        "C": ["u3"],
-    }
