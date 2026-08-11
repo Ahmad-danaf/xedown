@@ -188,10 +188,12 @@ without an error dialog: the preview keeps showing what it has, and catches up
 when the file is there again.
 
 Set `"watch_external_changes": false` to switch it off — worth doing on a
-network filesystem, or in a directory where watching is expensive. Unlike most
-settings here, this one reaches tabs that are already open: switching it off
-stops the watching immediately, and switching it back on starts it again.
-Nothing is watched at all for a file that has never been saved.
+network filesystem, or in a directory where watching is expensive. Like
+`auto_refresh`, its new value reaches tabs that are already open rather
+than only ones opened later: switching it off stops the watching, and
+switching it back on starts it again. Getting the new value in at all still
+needs the restart every hand-edited setting on this page needs. Nothing is
+watched at all for a file that has never been saved.
 
 ## Editing the file by hand
 
