@@ -32,6 +32,7 @@ NAMES = {
     "search_next": "Next match",
     "search_previous": "Previous match",
     "search_close": "Close search",
+    "search_status": "Match count",
     "info_bar_close": "Close",
 }
 
@@ -40,6 +41,15 @@ NAMES = {
 # bullet the stale indicator used to be: a screen reader reads "●" as
 # "black circle", which is a description of a shape rather than of a meaning.
 _PRONOUNCEABLE = re.compile(r"\w", re.UNICODE)
+
+# Every ATK role has a non-empty `value_nick` -- `Atk.Role.UNKNOWN.value_nick`
+# is `"unknown"`, not `""`, and `Atk.Role.INVALID.value_nick` is `"invalid"`.
+# Checking only for an empty string meant "no accessible role" could only
+# ever fire when `get_accessible()` itself returned None, which happens on
+# effectively no live GTK widget -- these two are what a widget the toolkit
+# could not classify, or an ATK object that has already gone bad, actually
+# reports, and they mean the same thing an empty string would.
+_NO_ROLE = frozenset({"", "unknown", "invalid"})
 
 # A POSIX locale name: language, optional territory, optional codeset and
 # optional modifier, both of which are dropped.
@@ -101,7 +111,7 @@ def check_node(item):
     # once -- against the refresh button, which is correct, deliberately
     # hidden code -- and was removed rather than the button changed.
 
-    if focusable and not (item["role"] or "").strip():
+    if focusable and (item["role"] or "").strip().lower() in _NO_ROLE:
         problems.append(f"{key}: no accessible role")
 
     return problems
@@ -137,6 +147,16 @@ def lang_tag(locale_name):
 
     `en_GB.UTF-8` becomes `en-GB`; the codeset and any `@modifier` are
     dropped, because neither is part of a language tag.
+
+    The modifier is dropped rather than resolved, and that is a real gap,
+    not merely a simplification: BCP-47 gives some modifiers -- `latin`
+    among them -- their own script subtag, so `sr_RS@latin` (Serbian Latin)
+    loses information becoming `sr-RS`, which BCP-47 readers default to
+    Cyrillic. The language itself is still right either way, which is
+    what keeps this an acceptable trade under "absent beats wrong": a
+    screen reader mispronouncing a script is a smaller failure than one
+    reading the wrong language outright, but it is not a free pass, and no
+    measurement has been taken of how a real reader handles it.
 
     None is returned for anything that names no language -- `C`, `POSIX`, an
     empty value, or something unparseable. That is deliberate: a missing

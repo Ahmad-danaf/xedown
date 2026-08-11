@@ -5,6 +5,9 @@ checks them against, so a control renamed in one place and not the other is a
 failing test rather than a silent regression.
 """
 
+import pathlib
+import re
+
 import pytest
 from xedown import a11y
 
@@ -102,13 +105,39 @@ def test_an_invisible_widget_is_not_reported_for_being_focusable():
     audit reported it until this rule was removed -- a false finding against
     correct code, which is the more damaging direction for a check whose
     output becomes somebody's task list.
+
+    This is the actual claim: `focusable=True` while `visible=False` is the
+    exact combination the removed rule used to flag, and only this case
+    pins its absence. The other two combinations (both consistent, both
+    inconsistent) pass whether or not the rule exists, so neither says
+    anything about whether it has really been removed.
     """
-    assert a11y.check_node(node(focusable=False, visible=False)) == []
-    assert a11y.check_node(node(focusable=True, visible=True)) == []
+    assert a11y.check_node(node(focusable=True, visible=False)) == []
 
 
 def test_a_node_with_no_role_is_reported():
     assert a11y.check_node(node(role="")) != []
+
+
+def test_atk_unknown_role_is_treated_as_no_role():
+    """`Atk.Role.UNKNOWN.value_nick` is `"unknown"`, not `""`.
+
+    Without this, the "no accessible role" rule could only ever fire when
+    `get_accessible()` itself returned None -- which is not a live GTK
+    widget's behaviour -- because every other role, including the one ATK
+    hands back for a widget it cannot classify, has a non-empty nick.
+    """
+    assert a11y.check_node(node(role="unknown")) != []
+
+
+def test_atk_invalid_role_is_treated_as_no_role():
+    """`Atk.Role.INVALID.value_nick` is `"invalid"`: an ATK object gone bad."""
+    assert a11y.check_node(node(role="invalid")) != []
+
+
+def test_role_case_is_not_what_makes_unknown_and_invalid_special():
+    assert a11y.check_node(node(role="UNKNOWN")) != []
+    assert a11y.check_node(node(role="Invalid")) != []
 
 
 # --- check_tree -------------------------------------------------------
@@ -172,3 +201,71 @@ def test_a_malformed_locale_gives_no_tag():
 def test_the_focus_ring_minimum_is_the_non_text_threshold():
     """WCAG 1.4.11, deliberately not the 4.5:1 used for text."""
     assert a11y.FOCUS_RING_MINIMUM == 3.0
+
+
+# --- every accessible name set in the host modules comes from NAMES ----
+#
+# `modebar.py`, `searchbar.py`, `preview.py` and `controller.py` all import
+# `gi` at module level, which is what makes them unreachable by every other
+# test in this file: CI has no display and no typelibs, so nothing here can
+# construct a `ModeBar` or a `SearchBar` and ask it what name it actually
+# set. `searchbar.py`'s `self._name(self._status, "Match count")` shipped
+# on this branch and read exactly as plausible as
+# `self._name(self._status, a11y.NAMES["search_status"])` -- both compile,
+# both run, and only one keeps the promise `NAMES` exists to make. Reading
+# the files as text is the one thing CI *can* still do to catch the next
+# one of these before a live probe run has to.
+
+_PLUGIN_DIR = (
+    pathlib.Path(__file__).resolve().parent.parent.parent / "plugin" / "xedown"
+)
+
+_HOST_MODULES_SETTING_NAMES = (
+    "modebar.py",
+    "searchbar.py",
+    "preview.py",
+    "controller.py",
+)
+
+# `(?<![\w])` keeps this from matching inside `new_from_icon_name(` (its own
+# `_name(` is immediately preceded by the word character 'n') or any other
+# identifier that merely ends in `_name` -- only a call that is *exactly*
+# `_name(...)` or `set_name(...)` counts.
+_NAME_CALL = re.compile(r"(?<!\w)(?:set_name|_name)\(([^)]*)\)")
+
+
+def _name_call_sites(path):
+    """`(lineno, line, name_argument)` for every `set_name(`/`_name(` call.
+
+    The `_name` helper's own `def` line is excluded: it is the place the
+    forwarded `name` parameter is declared, not a place an accessible name
+    is chosen, and its own body (`accessible.set_name(name)`) is a bare
+    identifier -- never a literal -- so it needs no exclusion of its own.
+    """
+    sites = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if line.strip().startswith("def _name("):
+            continue
+        for match in _NAME_CALL.finditer(line):
+            args = [part.strip() for part in match.group(1).split(",")]
+            sites.append((lineno, line.strip(), args[-1]))
+    return sites
+
+
+def test_every_accessible_name_in_the_host_modules_comes_from_names():
+    all_sites = []
+    violations = []
+    for filename in _HOST_MODULES_SETTING_NAMES:
+        for lineno, line, name_argument in _name_call_sites(_PLUGIN_DIR / filename):
+            all_sites.append((filename, lineno))
+            if name_argument.startswith(('"', "'")):
+                violations.append(f"{filename}:{lineno}: {line!r}")
+    # An audit that found nothing is not a pass -- the same principle
+    # `a11y.check_tree` enforces for the live probe. If this ever drops to
+    # zero, the scan itself broke (a moved file, a renamed helper), not the
+    # code it is meant to be watching.
+    assert len(all_sites) >= 8, f"only found {len(all_sites)} call sites: {all_sites!r}"
+    assert not violations, (
+        "accessible name set to a string literal instead of an "
+        "a11y.NAMES[...] entry:\n" + "\n".join(violations)
+    )

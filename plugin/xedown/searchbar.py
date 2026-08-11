@@ -71,14 +71,14 @@ class SearchBar(Gtk.Box):
 
         self._status = Gtk.Label(label="")
         self._status.set_xalign(0.0)
-        self._name(self._status, "Match count")
+        self._name(self._status, a11y.NAMES["search_status"])
         row.pack_start(self._status, False, False, 6)
 
-        close = self._icon_button(
+        self._close = self._icon_button(
             "window-close-symbolic", "×", a11y.NAMES["search_close"]
         )
-        close.connect("clicked", self._on_stop)
-        row.pack_end(close, False, False, 0)
+        self._close.connect("clicked", self._on_stop)
+        row.pack_end(self._close, False, False, 0)
 
         # Shown child by child, then the bar itself is hidden and pinned: the
         # same mitigation the mode bar's refresh button and the WebView carry,
