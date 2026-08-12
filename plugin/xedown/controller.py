@@ -408,8 +408,8 @@ class TabController:
         switch gets a spoken announcement (see `_announce_mode`): both
         directions of Ctrl+Shift+M measured completely silent on their own
         (Task 4 of the Orca verification plan), which is the gap this
-        checks for. `self.modebar.has_focus()` is read first, ahead of
-        every state change below, because it is only meaningful *before*
+        checks for. `self.modebar.has_focus_inside()` is read first, ahead
+        of every state change below, because it is only meaningful *before*
         the switch: if the user tabbed to a mode button and activated it,
         that focus is what makes Orca announce the toggle's own state
         change, and this must not add a second announcement on top of it.
@@ -418,7 +418,7 @@ class TabController:
             return
         if mode is self.state.mode and not initial:
             return
-        announce = not initial and not self.modebar.has_focus()
+        announce = not initial and not self.modebar.has_focus_inside()
         self._remember_scroll(self.state.mode)
         self.state.mode = mode
         self.modebar.set_mode(mode)

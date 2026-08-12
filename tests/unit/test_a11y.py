@@ -265,8 +265,16 @@ _HOST_MODULES_SETTING_NAMES = (
 # `(?<![\w])` keeps this from matching inside `new_from_icon_name(` (its own
 # `_name(` is immediately preceded by the word character 'n') or any other
 # identifier that merely ends in `_name` -- only a call that is *exactly*
-# `_name(...)` or `set_name(...)` counts.
-_NAME_CALL = re.compile(r"(?<!\w)(?:set_name|_name)\(([^)]*)\)")
+# `_name(...)`, `set_name(...)` or `announce(...)` counts. `announce` joined
+# the alternation in Task 6: `ModeBar.announce` is the other place a host
+# module hands live text to an accessibility API, and until this line
+# changed, `self.modebar.announce("Preview")` -- or a literal inside
+# `ModeBar.announce` itself -- would have passed every test in this file.
+# `_announce_mode(` and `mode_announcement_name(` do not false-positive on
+# this: `(?<!\w)announce\(` only matches where "announce" is immediately
+# followed by "(", and both of those identifiers have more word characters
+# in between.
+_NAME_CALL = re.compile(r"(?<!\w)(?:set_name|_name|announce)\(([^)]*)\)")
 
 
 def _name_call_sites(path):

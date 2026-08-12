@@ -150,24 +150,41 @@ class ModeBar(Gtk.Box):
             button.set_active(candidate is mode)
         self._updating = False
 
-    def has_focus(self):
-        """True when keyboard focus is on one of this bar's own controls.
+    def has_focus_inside(self):
+        """True when keyboard focus is on one of this bar's own mode buttons.
 
         Checked by the controller before a mode switch takes effect: if the
-        user tabbed here and activated a button, Orca already announces the
-        toggle's own state change ("Preview toggle button pressed."), and an
-        `announce()` on top of that would make a focused user hear the mode
-        twice. Only the three controls that can actually hold focus are
-        checked -- the stale dot is a `Gtk.Label` and is never focusable,
-        with or without CSS.
+        user tabbed to a mode button and activated it, Orca already
+        announces the toggle's own state change ("Preview toggle button
+        pressed."), and an `announce()` on top of that would make a focused
+        user hear the mode twice. Deliberately narrower than "any focusable
+        control in this bar": the refresh button is a plain `Gtk.Button`
+        with no toggle state of its own, so a mode switch with *it* focused
+        (auto-refresh off, correcting a stale preview via Ctrl+Shift+M with
+        focus still on Refresh) gets no state-change speech from Orca either
+        -- including it here would suppress the one announcement that does
+        exist, leaving that switch completely silent, exactly the defect
+        this mechanism exists to remove. The stale dot is not a candidate at
+        all; it is a `Gtk.Label`, never focusable.
+
+        Named `_inside`, not `has_focus`, on purpose: `Gtk.Widget.has_focus()`
+        (called below, per button) means something narrower than the plain
+        name suggests -- true only when the *toplevel window* currently
+        holds real X11 input focus, not merely when a widget is the window's
+        own focus widget. `tests/integration/xedown_probe/__init__.py`
+        calls a check built on that "flaky by construction" for exactly this
+        reason and prefers `is_focus()` for its own assertions, because a
+        probe step can run with the window unfocused. That risk doesn't
+        apply here: a mode switch only ever happens in reaction to a
+        keystroke that just landed on this window, so real input focus is
+        guaranteed at the moment `set_mode` reads this. But a name that
+        could be mistaken for the stricter, well-known GTK method would be
+        an easy trap for the next caller regardless of whether today's use
+        is safe.
         """
         return any(
             button.has_focus()
-            for button in (
-                self._buttons[Mode.PREVIEW],
-                self._buttons[Mode.SOURCE],
-                self._refresh_button,
-            )
+            for button in (self._buttons[Mode.PREVIEW], self._buttons[Mode.SOURCE])
         )
 
     def announce(self, text):

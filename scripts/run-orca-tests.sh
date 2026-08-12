@@ -183,6 +183,16 @@ ROWS = {
     # pressed state. Task 4's cleanest, highest-confidence result: identical
     # across three independent live runs.
     "row-97-mode-bar-tab": ["Markdown source"],
+    # Fix round 1 regression check: Ctrl+Shift+M with the *refresh* button
+    # focused, not a mode toggle button. The first version of
+    # `ModeBar.has_focus_inside()` suppressed the announcement for any
+    # focused control in the bar, including this one -- but Orca has no
+    # toggle-state speech of its own for a plain `Gtk.Button`, so that made
+    # this exact switch silent, the defect this task exists to remove,
+    # reintroduced in a corner. Presence, not absence, so a plain substring
+    # check is the right tool here (contrast
+    # `row-97-activate-focused-button`, deliberately unasserted below).
+    "row-100-refresh-focused-switch": ["Markdown source"],
     # The external-change warning bar. Unchanged since Task 3.
     "row-101-external-change": ["changed on disk"],
 }
@@ -213,7 +223,7 @@ SILENT_ROWS = [
 #   row-97-activate-focused-button -- Task 6: activates the button row 97
 #                              just tabbed to (Space), switching mode from
 #                              *inside* the mode bar -- the suppression half
-#                              of the mode announcement (`ModeBar.has_focus()`
+#                              of the mode announcement (`ModeBar.has_focus_inside()`
 #                              is True here, so `set_mode` must not call
 #                              `ModeBar.announce`). Not asserted because
 #                              `evaluate_rows` can only check substrings
@@ -239,6 +249,13 @@ SILENT_ROWS = [
 #   row-100-prepare-stale   -- a preparation step (closes the search bar,
 #                              resets AUTO_REFRESH before row 100's own
 #                              edit). Same reasoning as row-98-prepare-preview.
+#   row-100-focus-refresh   -- Task 6 fix round 1: a preparation step
+#                              (grabs focus onto the refresh button before
+#                              row-100-refresh-focused-switch). Same
+#                              reasoning as row-97-focus-mode-bar -- not
+#                              silent by construction, so it gets its own
+#                              marker, but what it says isn't this row's
+#                              own claim to make.
 #   row-99-search-bar-tab   -- not one of the rows Task 5's brief required
 #                              an expectation for. Task 4 found the old
 #                              6-press burst coalesced in Orca's own event

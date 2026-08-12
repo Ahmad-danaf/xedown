@@ -381,8 +381,8 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         Nothing earlier in this sequence ever presses a mode-bar button --
         every mode change up to here goes through Ctrl+Shift+M (row 96's two
         markers), which is the path `TabController.set_mode` is supposed to
-        announce. This is the other path: `ModeBar.has_focus()` is True right
-        now (row 97 just tabbed here without activating anything), so
+        announce. This is the other path: `ModeBar.has_focus_inside()` is
+        True right now (row 97 just tabbed here without activating anything), so
         activating this button switches mode from *inside* the bar, and
         `set_mode` must NOT call `ModeBar.announce` here -- Orca already
         announces the toggle's own state change, and a second announcement
@@ -410,11 +410,20 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         press. The raw Orca log for that same run already showed the real
         object:state-changed:checked pair (Source -> checked, Preview ->
         unchecked) and the real AT-SPI focus event onto [text] (only
-        reachable through `set_mode`'s own `self.view.grab_focus()`)
-        starting within milliseconds of the press -- so xedown's own
-        handling is not what is slow here; it is GTK's keyboard-activation
-        path for a focused button being slower to settle than the
-        AT-SPI/Orca side that already reacted to it.
+        reachable through `set_mode`'s own `self.view.grab_focus()`) -- so
+        xedown's own handling is not what is slow here. The measured gap
+        between mark and that first checked event, in both of the two final
+        live runs behind task-6-report.md, was 263ms (`11:05:46.935904` ->
+        `11:05:47.198528`, and `11:07:34.762877` -> `11:07:35.026015`), not
+        "milliseconds" -- close enough to `GtkButton`'s default 250ms
+        `ACTIVATE_TIMEOUT` that a plausible **hypothesis** (not verified
+        against GTK's own source, and not claimed as more than a hypothesis
+        here) is that `_press()` delivers only a KEY_PRESS, never a
+        KEY_RELEASE, through `Gtk.main_do_event`, so the click completes on
+        that timeout rather than on a release event that never arrives --
+        which would also explain why the accelerator path is immediate: it
+        is handled synchronously inside `main_do_event` itself, with no
+        press/release choreography involved.
         """
         mark("row-97-activate-focused-button")
         self._press(Gdk.KEY_space, 0)
@@ -576,6 +585,72 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
             "orca-stale-triggered",
             controller is not None,
             "AUTO_REFRESH off, then a buffer change while Preview shows",
+        )
+        self._schedule(SETTLE_MS, self.step_row_100_focus_refresh)
+        return False
+
+    def step_row_100_focus_refresh(self):
+        """Row 100 (extra): focus the refresh button. Sets up fix round 1's
+        regression check, below.
+
+        `AUTO_REFRESH` is off and the buffer is stale (row 100's own edit,
+        just above), so `_refresh_button` is visible and focusable right
+        now -- the same condition `_update_refresh_cue` uses to show it.
+        Marked in its own right because grabbing focus onto a button is
+        exactly the kind of action Task 4 traced real speech to elsewhere
+        in this probe (see `step_row_97_focus_mode_bar`'s docstring); this
+        window is not asserted, only settled past, so it can't leak into
+        the next marker's window.
+        """
+        controller = self._controller()
+        mark("row-100-focus-refresh")
+        if controller is not None and controller.modebar is not None:
+            controller.modebar._refresh_button.grab_focus()
+        self._schedule(SETTLE_MS, self.step_row_100_refresh_focused_switch)
+        return False
+
+    def step_row_100_refresh_focused_switch(self):
+        """Row 100 (extra): Ctrl+Shift+M with the refresh button focused,
+        not a mode toggle button. Fix round 1's regression check.
+
+        The first version of `ModeBar.has_focus_inside()` (then named
+        `has_focus()`) treated *any* focused control in the bar, including
+        the refresh button, as reason to suppress the mode announcement --
+        but Orca has no toggle-state speech of its own for a plain
+        `Gtk.Button`, so that suppression made this exact switch completely
+        silent: the one defect this whole task exists to remove,
+        reintroduced in a corner. Narrowing the check to only the two mode
+        toggle buttons is supposed to fix that; this step measures it
+        rather than trusting the fix by reading it.
+
+        Asserted in `ROWS` (unlike `row-97-activate-focused-button`): this
+        is a presence check, not an absence one, so `evaluate_rows`'
+        substring match is exactly the right tool here -- "did it say
+        Markdown source at all," not "did it say it once or did it say it
+        twice," which is the distinction that row couldn't use `ROWS` for.
+
+        Reads `state.mode` immediately after `_press()`, the same as row
+        96: this is the Ctrl+Shift+M accelerator path, which measurement
+        already found completes synchronously (unlike a `Gtk.Button`'s own
+        keyboard activation, the thing `row-97-activate-focused-button`'s
+        own defer exists for).
+
+        Mode is left in Source afterward, on purpose: row 101's own bar
+        doesn't depend on which mode is showing (`Xed.Tab.set_info_bar` is
+        independent of it), so there is nothing to restore, and restoring
+        it would only be another unmeasured assumption.
+        """
+        controller = self._controller()
+        before = controller.state.mode if controller is not None else None
+        mark("row-100-refresh-focused-switch")
+        self._press(
+            Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
+        )
+        after = self._controller().state.mode if self._controller() else None
+        record(
+            "orca-row-100-refresh-focused-switch",
+            before is Mode.PREVIEW and after is Mode.SOURCE,
+            f"{before} -> {after}",
         )
         self._schedule(SETTLE_MS, self.step_row_101_external_change)
         return False
