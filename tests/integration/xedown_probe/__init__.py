@@ -60,6 +60,7 @@ TabController = None
 Mode = None
 ModeBar = None
 xedown_a11y = None
+xedown_prefs = None
 xedown_settings = None
 xedown_shortcuts = None
 xedown_stylewatcher = None
@@ -67,10 +68,11 @@ XedownWindowActivatable = None
 
 
 def _lazy_imports():
-    global TabController, Mode, ModeBar, xedown_a11y, xedown_settings
+    global TabController, Mode, ModeBar, xedown_a11y, xedown_prefs, xedown_settings
     global xedown_shortcuts, xedown_stylewatcher, XedownWindowActivatable
     from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import a11y as _a11y
+    from xedown import prefs as _prefs
     from xedown import settings as _settings
     from xedown import shortcuts as _shortcuts
     from xedown import stylewatcher as _stylewatcher
@@ -80,6 +82,7 @@ def _lazy_imports():
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_a11y = _a11y
+    xedown_prefs = _prefs
     xedown_settings = _settings
     xedown_shortcuts = _shortcuts
     xedown_stylewatcher = _stylewatcher
@@ -239,6 +242,15 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             if action is not None:
                 return action
         return None
+
+    def _window_activatable(self):
+        """The XedownWindowActivatable driving this window.
+
+        Read from the attribute the plugin sets on the window: xed keeps its
+        WindowActivatables in a PeasExtensionSet with no public accessor, and
+        an explicit hook beats guessing at one.
+        """
+        return getattr(self.window, "_xedown_window_activatable", None)
 
     def _find_window_activatable(self):
         """The live `XedownWindowActivatable` for this probe's window.
@@ -3467,9 +3479,160 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 "the-focus-watch-let-go-of-the-window-the-tab-left",
                 old_id is not None and not self.window.handler_is_connected(old_id),
             )
-            self._schedule(400, self.step_disable_prep_infobar)
+            self._schedule(400, self.step_settings_open)
 
         self._marks(check, controller)
+        return False
+
+    # --- the settings window, both ways in ---------------------------------
+
+    def step_settings_open(self):
+        """Open it the way a user would: the View-menu action.
+
+        Through the action rather than by constructing the window directly, so
+        the menu wiring is what gets exercised -- a window this probe built
+        itself would pass even if the menu entry were never merged.
+        """
+        self._settings_file_before = xedown_settings.default_path().exists()
+        action = self._find_action(xedown_shortcuts.SETTINGS)
+        record("settings-action-is-in-the-menu", action is not None)
+        if action is None:
+            self._schedule(300, self.step_disable_prep_infobar)
+            return False
+        action.activate()
+        self._schedule(600, self.step_settings_audit)
+        return False
+
+    def step_settings_audit(self):
+        activatable = self._window_activatable()
+        window = getattr(activatable, "_settings_window", None)
+        record("settings-window-opened", window is not None)
+        if window is None:
+            self._schedule(300, self.step_disable_prep_infobar)
+            return False
+        self._settings_window = window
+
+        # Brief 13's standard over the real tree: names, roles, and focus
+        # order following visual order.
+        entries = window.accessible_entries()
+        nodes = self._visible_state_nodes(window, entries)
+        self._record_audit("a11y-settings-window", nodes)
+        record(
+            "settings-window-audited-every-control",
+            len(nodes) == len(xedown_prefs.rows()) + 3,
+            f"{len(nodes)} controls, expected {len(xedown_prefs.rows()) + 3}",
+        )
+
+        # Opening it must not have written anything.
+        path = xedown_settings.default_path()
+        record(
+            "opening-the-settings-window-writes-nothing",
+            path.exists() == self._settings_file_before,
+            f"file existed before: {self._settings_file_before}, now: {path.exists()}",
+        )
+        self._schedule(300, self.step_settings_apply)
+        return False
+
+    def step_settings_apply(self):
+        """A change made in the window reaches every open preview."""
+        panel = self._settings_window.panel
+        panel.control_for(xedown_settings.PREVIEW_THEME).set_active_id("focused")
+        self._schedule(700, self.step_settings_apply_check)
+        return False
+
+    def step_settings_apply_check(self):
+        store = xedown_settings.get_settings()
+        record(
+            "the-window-wrote-the-theme-to-the-store",
+            store.get(xedown_settings.PREVIEW_THEME) == "focused",
+            store.get(xedown_settings.PREVIEW_THEME),
+        )
+        # The same three controllers `step_theme_switch` names, enumerated the
+        # same way rather than through a second helper that could disagree
+        # with it.
+        controllers = [
+            self._main_controller(),
+            self._controller_for(self._tab_b.get_view()),
+            self._controller_for(self._move_view),
+        ]
+        controllers = [c for c in controllers if c is not None]
+        switched = [
+            c
+            for c in controllers
+            if getattr(getattr(c, "_style", None), "theme", None) == "focused"
+        ]
+        record(
+            "every-open-preview-followed-the-window",
+            len(controllers) == 3 and len(switched) == 3,
+            f"{len(switched)} of {len(controllers)} controllers on focused",
+        )
+        self._schedule(300, self.step_settings_configurable)
+        return False
+
+    def step_settings_configurable(self):
+        """The plugin manager's route, through peas rather than around it.
+
+        This calls exactly what libpeas-gtk's Preferences button calls. It
+        does NOT drive xed's Preferences dialog and click that button -- that
+        last hop is a manual smoke-test row, and no claim is made about it
+        here.
+        """
+        from gi.repository import Peas, PeasGtk
+
+        engine = Peas.Engine.get_default()
+        info = engine.get_plugin_info("xedown")
+        record("peas-knows-xedown", info is not None)
+        if info is None:
+            self._schedule(300, self.step_settings_close)
+            return False
+        provides = engine.provides_extension(info, PeasGtk.Configurable.__gtype__)
+        record(
+            "the-plugin-manager-preferences-button-is-available",
+            provides,
+            "peas reports xedown provides PeasGtk.Configurable",
+        )
+        if provides:
+            extension = engine.create_extension(
+                info, PeasGtk.Configurable.__gtype__, [], []
+            )
+            widget = extension.create_configure_widget()
+            entries = widget.accessible_entries() if widget else []
+            record(
+                "the-configure-widget-is-the-same-panel",
+                len(entries) == len(xedown_prefs.rows()) + 2,
+                f"{len(entries)} controls",
+            )
+            # Destroyed here rather than left to the garbage collector: this
+            # panel holds a settings token, and the shutdown scenarios would
+            # find it.
+            if widget is not None:
+                widget.destroy()
+        self._schedule(300, self.step_settings_close)
+        return False
+
+    def step_settings_close(self):
+        window = self._settings_window
+        panel = window.panel
+        window.destroy()
+        record(
+            "closing-the-settings-window-releases-its-subscription",
+            panel._settings_token is None,
+            f"token: {panel._settings_token!r}",
+        )
+        record(
+            "closing-the-settings-window-leaves-no-armed-timer",
+            not panel._settle,
+            f"timers: {panel._settle!r}",
+        )
+        activatable = self._window_activatable()
+        record(
+            "the-window-lets-go-of-the-settings-window",
+            getattr(activatable, "_settings_window", "unset") is None,
+        )
+        # Put the theme back so later steps see the state they expect.
+        xedown_settings.get_settings().set(xedown_settings.PREVIEW_THEME, "repository")
+        self._settings_window = None
+        self._schedule(400, self.step_disable_prep_infobar)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
