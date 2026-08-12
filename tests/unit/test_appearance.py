@@ -1,5 +1,5 @@
 import pytest
-from xedown.theme import prefers_dark
+from xedown.appearance import prefers_dark
 
 
 def test_explicit_dark_preference_wins():

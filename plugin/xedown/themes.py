@@ -1,0 +1,88 @@
+"""The built-in preview themes. Pure logic — no GTK imports belong here.
+
+A theme is a complete design, not a palette: each one owns its typography,
+spacing and structure on top of an invariant base stylesheet. This module is
+the single source of truth for which themes exist, and it is what brief 14's
+preferences window iterates instead of hardcoding a second list — the same
+role `SETTINGS` plays in `settings.py`.
+
+Assembling the stylesheet a page receives is `stylesheets.py`'s job, not this
+module's: it layers the user's own stylesheet and the content-width and
+text-size settings on top of a theme, and emission order across all five
+layers has to live in one place.
+
+The desktop's light/dark setting is a separate axis entirely and belongs to
+`appearance.py`. Every theme works in both.
+"""
+
+DEFAULT_THEME = "repository"
+SHARED_SYNTAX_STYLESHEET = "syntax.css"
+
+
+class Theme:
+    """One built-in theme: its identity and the stylesheets it is made of."""
+
+    def __init__(self, identifier, label, summary, syntax_light, syntax_dark):
+        self.identifier = identifier
+        self.label = label
+        self.summary = summary
+        self.stylesheet = f"themes/{identifier}.css"
+        self.syntax_light = syntax_light
+        self.syntax_dark = syntax_dark
+
+    def syntax_stylesheet(self, dark):
+        return self.syntax_dark if dark else self.syntax_light
+
+
+THEMES = (
+    Theme(
+        "focused",
+        "Focused",
+        "Calm and editor-adjacent, with restrained contrast and a single accent.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
+    Theme(
+        "repository",
+        "Repository",
+        "Clean and familiar, for README files and technical documentation.",
+        # The vendored highlight.js stylesheets, under their own licence and
+        # attribution. This theme reproduces xedown 0.1.0 exactly, and
+        # 0.1.0's code colours are these files -- transcribing them into a
+        # hand-written xedown sheet would strip the attribution the licence
+        # requires.
+        "highlight-light.css",
+        "highlight-dark.css",
+    ),
+    Theme(
+        "minimal",
+        "Minimal",
+        "Quiet borders, generous space, and one typeface doing the work.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
+    Theme(
+        "document",
+        "Document",
+        "Serif type and a narrower measure, for long-form reading.",
+        SHARED_SYNTAX_STYLESHEET,
+        SHARED_SYNTAX_STYLESHEET,
+    ),
+)
+
+_BY_IDENTIFIER = {theme.identifier: theme for theme in THEMES}
+
+
+def resolve(identifier):
+    """The theme `identifier` names, falling back to the default.
+
+    Unknown, blank, mis-typed and non-string values all resolve to the
+    default rather than raising. `settings.py` already guarantees a stored
+    value is one of the registered names, so anything else arriving here is
+    a caller's mistake — and the preview must never be unstyled over one.
+    """
+    if isinstance(identifier, str):
+        theme = _BY_IDENTIFIER.get(identifier.strip().lower())
+        if theme is not None:
+            return theme
+    return _BY_IDENTIFIER[DEFAULT_THEME]

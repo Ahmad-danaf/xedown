@@ -306,6 +306,30 @@ def _scenario_preview_active(probe):
     The plainest scenario, and the one the older probe could never reach:
     nothing is disabled, nothing is closed by hand, the previews are live
     and on screen when the close request arrives.
+
+    Every scenario here now closes with a live `Gio.FileMonitor` on each
+    Markdown tab, because `watch_external_changes` is on by default -- so a
+    monitor that outlived its controller would show up in any of them, with
+    no change to any scenario.
+
+    The last step reaches the one state nothing else here does: a settle
+    timer still *armed* when the close request arrives. A timer that outlived
+    `deactivate()` would fire into a torn-down controller, and it is the only
+    branch of `FileWatch._cancel_settle` that is ever taken -- every other
+    scenario stops an unarmed watch, so deleting that call would pass them
+    all.
+
+    It arms the timer by poking the monitor's own handler rather than by
+    writing the file, and the distinction is the whole reason this works.
+    Writing the document's file from outside makes xed refuse to close that
+    tab without asking the user: it checks the file when the view takes
+    focus, marks the tab externally-modified, and raises a prompt no scripted
+    scenario can answer, so the window never closes. That is xed's own
+    behaviour rather than xedown's -- this scenario was run with
+    `XEDOWN_CONTROL=1`, the plugin uninstalled entirely, and hung in exactly
+    the same way. Poking the handler leaves the file untouched, so xed has
+    nothing to object to, while xedown's timer is armed exactly as a real
+    write would have armed it.
     """
 
     def open_them():
@@ -317,7 +341,110 @@ def _scenario_preview_active(probe):
     def verify():
         _check_live_preview("preview-active", _state["tabs"])
 
-    return [(2500, open_them), (3500, verify)]
+    def arm_settle_timer():
+        # Not asserted in control mode: there is no plugin to arm.
+        if CONTROL:
+            return
+        controller = _controller(_state["tabs"][1])
+        watch = getattr(controller, "_watch", None)
+        if watch is None:
+            _record("preview-active-timer-armed", False, "no watch to arm")
+            return
+        watch._on_changed()
+        _record(
+            "preview-active-timer-armed",
+            watch._settle_source != 0,
+            "the close below must arrive with a settle timer still pending",
+        )
+
+    # 100ms, well inside FileWatch's 300ms settle: the runner asks the window
+    # to close as soon as this returns READY.
+    return [(2500, open_them), (3500, verify), (100, arm_settle_timer)]
+
+
+def _scenario_settings_window(probe):
+    """Open and close the settings window five times, then close as-is.
+
+    The leak this exists to catch is not visible in any other scenario: the
+    panel holds a settings-store token and a stylesheet-watcher token, and
+    both stores outlive every window. One missed disconnect keeps the panel,
+    the window and everything they reference alive for the life of the
+    process, and five rounds make a per-open leak obvious rather than
+    marginal.
+
+    The last round is left OPEN when the close request arrives, so the path
+    where the window is destroyed by xed's own teardown -- rather than by the
+    user clicking Close -- is the one under test at shutdown.
+    """
+
+    def cycle():
+        if CONTROL:
+            return
+        from xedown.prefswindow import SettingsWindow
+
+        for _ in range(5):
+            window = SettingsWindow(probe.window)
+            panel = window.panel
+            window.destroy()
+            if panel._settings_token is not None or panel._settle:
+                _record(
+                    "settings-window-cycle-clean",
+                    False,
+                    f"token={panel._settings_token!r} timers={panel._settle!r}",
+                )
+                return
+        _record("settings-window-cycle-clean", True, "five opens, five clean closes")
+
+    def leave_one_open():
+        if CONTROL:
+            return
+        from xedown.prefswindow import SettingsWindow
+
+        _state["settings_window"] = SettingsWindow(probe.window)
+        _record(
+            "settings-window-open-at-shutdown",
+            _state["settings_window"].get_visible(),
+            "the close request below arrives with the window still up",
+        )
+
+    return [(2500, cycle), (600, leave_one_open)]
+
+
+def _scenario_settings_configurable(probe):
+    """The plugin manager's route, five times, then closed as-is.
+
+    Separate from the scenario above because the two hosts release the panel
+    differently: ours destroys it from a window close, peas destroys it with a
+    dialog we never see. A panel that only cleans up when its window closes
+    would pass `settings-window` and leak here.
+    """
+
+    def cycle():
+        if CONTROL:
+            return
+        from gi.repository import Peas, PeasGtk
+
+        engine = Peas.Engine.get_default()
+        info = engine.get_plugin_info("xedown")
+        if info is None:
+            _record("configurable-cycle-clean", False, "peas does not know xedown")
+            return
+        for _ in range(5):
+            extension = engine.create_extension(
+                info, PeasGtk.Configurable.__gtype__, [], []
+            )
+            widget = extension.create_configure_widget()
+            widget.destroy()
+            if widget._settings_token is not None or widget._settle:
+                _record(
+                    "configurable-cycle-clean",
+                    False,
+                    f"token={widget._settings_token!r} timers={widget._settle!r}",
+                )
+                return
+        _record("configurable-cycle-clean", True, "five widgets, five clean destroys")
+
+    return [(2500, cycle)]
 
 
 SCENARIOS = {
@@ -327,6 +454,8 @@ SCENARIOS = {
     "move-tab": _scenario_move_tab,
     "disable-plugin": _scenario_disable_plugin,
     "preview-active": _scenario_preview_active,
+    "settings-window": _scenario_settings_window,
+    "settings-configurable": _scenario_settings_configurable,
 }
 
 

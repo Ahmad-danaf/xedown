@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 ALLOWED_ELEMENTS = frozenset(
     {
         "a",
+        "bdi",
         "blockquote",
         "br",
         "code",
@@ -50,7 +51,14 @@ _DROP_CONTENT_ELEMENTS = frozenset({"script", "style", "svg", "math", "template"
 
 _VOID_ELEMENTS = frozenset({"br", "hr", "img", "input"})
 
-_GLOBAL_ATTRIBUTES = frozenset({"id", "title"})
+# `dir` is here rather than per-element because it is meaningful on any of
+# them: it is how a document says "this run reads the other way" for a case
+# the renderer cannot infer, such as a bare path inside Arabic prose. It is
+# inert presentational HTML — no scheme, no script surface — and its value is
+# filtered to an allowlist below.
+_GLOBAL_ATTRIBUTES = frozenset({"dir", "id", "title"})
+
+_ALLOWED_DIR_VALUES = frozenset({"ltr", "rtl", "auto"})
 
 ALLOWED_ATTRIBUTES = {
     "a": frozenset({"href", "name"}),
@@ -125,13 +133,44 @@ def _filter_class(value):
     return " ".join(kept)
 
 
+def _filter_dir(value):
+    """`dir`, or the empty string when it is not one of the three real values.
+
+    An allowlist of values, not a denylist, and the same shape as
+    `_filter_class`: an unrecognised value produces no attribute at all
+    rather than one the browser will quietly ignore. Forgiving about case and
+    surrounding space, like `settings.ChoiceSetting` is, since both read
+    something a person typed.
+    """
+    normalized = (value or "").strip().lower()
+    return normalized if normalized in _ALLOWED_DIR_VALUES else ""
+
+
+class ImagePlaceholder:
+    """What to show in place of an image that cannot be displayed.
+
+    `kind` selects one of this module's own class names; `text` is plain
+    text and is escaped here. A callback supplies text, never markup, which
+    is what keeps document content from ever producing an `xedown-` class —
+    the same reason `_filter_class` refuses that prefix.
+    """
+
+    def __init__(self, kind, text):
+        self.kind = kind
+        self.text = text
+
+
+_PLACEHOLDER_CLASSES = {"error": "xedown-image-error", "alt": "xedown-image-alt"}
+_DEFAULT_PLACEHOLDER_CLASS = _PLACEHOLDER_CLASSES["error"]
+
+
 class _Sanitizer(HTMLParser):
-    def __init__(self, resolve_uri=None, on_blocked_image=None):
+    def __init__(self, resolve_uri=None, on_image=None):
         super().__init__(convert_charrefs=True)
         self.parts = []
         self._suppress_depth = 0
         self._resolve_uri = resolve_uri
-        self._on_blocked_image = on_blocked_image
+        self._on_image = on_image
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -140,7 +179,7 @@ class _Sanitizer(HTMLParser):
             return
         if self._suppress_depth or tag not in ALLOWED_ELEMENTS:
             return
-        if tag == "img" and self._on_blocked_image is not None:
+        if tag == "img" and self._on_image is not None:
             self._emit_img(attrs)
             return
         rendered = self._render_attributes(tag, attrs)
@@ -155,7 +194,7 @@ class _Sanitizer(HTMLParser):
             return
         if tag not in ALLOWED_ELEMENTS:
             return
-        if tag == "img" and self._on_blocked_image is not None:
+        if tag == "img" and self._on_image is not None:
             self._emit_img(attrs)
             return
         self.parts.append(f"<{tag}{self._render_attributes(tag, attrs)} />")
@@ -203,6 +242,10 @@ class _Sanitizer(HTMLParser):
                 value = _filter_class(value)
                 if not value:
                     continue
+            elif name == "dir":
+                value = _filter_dir(value)
+                if not value:
+                    continue
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
         if tag == "input":
             # Task-list checkboxes are display only; never interactive.
@@ -211,25 +254,20 @@ class _Sanitizer(HTMLParser):
         return (" " + " ".join(rendered)) if rendered else ""
 
     def _emit_img(self, attrs):
-        """Render `<img>`, or a placeholder when its src cannot become a
-        local `file:` or `data:` URI.
+        """Render `<img>` through the `on_image` callback.
 
-        Only called when `_on_blocked_image` is set. A remote reference
-        (e.g. `https://`) will never load under the document's CSP, and a
-        relative reference that fails to resolve (typically an unsaved
-        document with no base directory) will never load either — both are
-        replaced here, server-side, with a visible placeholder rather than
-        an `<img>` left to fail silently or be caught only by a browser
-        error handler. The placeholder span is written by the sanitizer
-        itself from trusted callback text, not from document content, so it
-        deliberately bypasses `_filter_class`: `xedown-` is not, and must
-        not become, an allowed class prefix, or document content could spoof
-        this placeholder.
+        Only called when `on_image` is set. The callback is handed the
+        already-scheme-checked reference exactly once and decides
+        everything: a usable src, a placeholder, or nothing at all. Deciding
+        once is the point — the caller stats the file to tell a missing one
+        from an unreadable one, and doing that twice per image would double
+        the cost of every render.
         """
         allowed = ALLOWED_ATTRIBUTES.get("img", frozenset()) | _GLOBAL_ATTRIBUTES
         rendered = []
         seen = set()
-        blocked_reference = None
+        reference = None
+        alt = ""
         for raw_name, raw_value in attrs:
             name = (raw_name or "").lower()
             if name in seen or name not in allowed:
@@ -239,50 +277,64 @@ class _Sanitizer(HTMLParser):
             if name == "src":
                 if not _is_safe_uri(value, allow_data_image=True):
                     continue
-                value = _strip_control_characters(html_module.unescape(value))
-                resolved = (
-                    self._resolve_uri("src", value)
-                    if self._resolve_uri is not None
-                    else value
-                )
-                lowered = (resolved or "").lower()
-                if resolved is None or not lowered.startswith(("file:", "data:")):
-                    blocked_reference = value
-                    continue
-                value = resolved
-            elif name == "class":
+                reference = _strip_control_characters(html_module.unescape(value))
+                continue
+            if name == "class":
                 value = _filter_class(value)
                 if not value:
                     continue
+            if name == "dir":
+                value = _filter_dir(value)
+                if not value:
+                    continue
+            if name == "alt":
+                alt = value
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
 
-        if blocked_reference is not None:
-            text = self._on_blocked_image(blocked_reference) or ""
-            escaped = html_module.escape(text, quote=False)
-            self.parts.append(f'<span class="xedown-image-error">{escaped}</span>')
+        if reference is None:
+            # No src survived the scheme allowlist, so there is nothing to
+            # show and nothing useful to say about it.
             return
 
-        joined = (" " + " ".join(rendered)) if rendered else ""
-        self.parts.append(f"<img{joined} />")
+        outcome = self._on_image(reference, alt)
+        if outcome is None:
+            return
+        if isinstance(outcome, ImagePlaceholder):
+            css_class = _PLACEHOLDER_CLASSES.get(
+                outcome.kind, _DEFAULT_PLACEHOLDER_CLASS
+            )
+            escaped = html_module.escape(outcome.text or "", quote=False)
+            self.parts.append(f'<span class="{css_class}">{escaped}</span>')
+            return
+        # The callback is trusted code (the only production callback returns
+        # links.uri_for_path(...) or a data: URI this module already
+        # validated) -- but this module's whole job is rebuilding HTML from
+        # an explicit scheme allowlist, and re-checking its own output costs
+        # nothing. Without this, a future callback that ever returned
+        # something unvalidated would emit it unchecked. Fail closed: an
+        # unsafe value emits nothing rather than a broken-but-safe img.
+        candidate = str(outcome)
+        if not _is_safe_uri(candidate, allow_data_image=True):
+            return
+        rendered.insert(0, f'src="{html_module.escape(candidate, quote=True)}"')
+        self.parts.append(f"<img {' '.join(rendered)} />")
 
 
-def sanitize(html, resolve_uri=None, on_blocked_image=None):
+def sanitize(html, resolve_uri=None, on_image=None):
     """Return `html` reduced to the allowlist.
 
     `resolve_uri` is an optional callable taking (attribute_name, value) and
     returning a replacement value, or None to drop the attribute. It runs
-    only after a value has already passed the scheme allowlist.
+    only after a value has already passed the scheme allowlist, and it is
+    not consulted for `<img>` when `on_image` is set.
 
-    `on_blocked_image` is an optional callable taking the original (resolved
-    scheme aside) image reference and returning placeholder text. When set,
-    any `<img>` whose `src` cannot be turned into a local `file:` or `data:`
-    URI is replaced with `<span class="xedown-image-error">TEXT</span>`
-    instead of being emitted — this covers both a remote image and a
-    relative image that cannot be resolved (e.g. an unsaved document). When
-    not set, existing behavior is unchanged: `<img>` is emitted with
-    whatever `resolve_uri` (if any) returns for `src`.
+    `on_image` is an optional callable taking (reference, alt) and returning
+    one of three things: a string, used as the `src`; an `ImagePlaceholder`,
+    emitted as `<span class="…">TEXT</span>`; or None, which emits nothing.
+    When it is not set, `<img>` is emitted through `resolve_uri` exactly as
+    before.
     """
-    parser = _Sanitizer(resolve_uri=resolve_uri, on_blocked_image=on_blocked_image)
+    parser = _Sanitizer(resolve_uri=resolve_uri, on_image=on_image)
     parser.feed(html or "")
     parser.close()
     return "".join(parser.parts)

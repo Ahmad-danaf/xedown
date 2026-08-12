@@ -1,0 +1,196 @@
+/* Document: a printed page.
+
+   Serif body and headings, a narrower measure, and a classical hierarchy
+   that uses italic and letterspacing rather than colour. Links are
+   underlined the way print underlines them, block quotations are inset from
+   both margins with no bar, and the horizontal rule is a short centred one.
+   Code is understated: it should not dominate a page meant for reading.
+
+   No paragraph indents, deliberately — they fight documents that interleave
+   lists and fences every few lines. */
+
+:root {
+  --xedown-bg: #fcfaf6;
+  --xedown-fg: #23201c;
+  --xedown-heading-fg: #1a1713;
+  --xedown-muted: #6a6259;
+  --xedown-border: #ddd6c9;
+  --xedown-quote-border: #cfc6b6;
+  --xedown-code-bg: #f4f0e7;
+  --xedown-link: #8c3a1a;
+  --xedown-focus-ring: #8c3a1a;
+  --xedown-error-bg: #fbeeea;
+  --xedown-error-fg: #96301c;
+  --xedown-error-border: #ecc9bd;
+  --xedown-shadow: rgba(51, 42, 32, .2);
+  --xedown-syn-comment: #6b645e;
+  --xedown-syn-keyword: #8c3a1a;
+  --xedown-syn-string: #3d6b3f;
+  --xedown-syn-number: #6a5a2a;
+  --xedown-syn-function: #2f4f7a;
+  --xedown-syn-type: #5a4a7a;
+  --xedown-syn-variable: #23201c;
+  --xedown-syn-meta: #23201c;
+  --xedown-syn-addition-fg: #2f5c33;
+  --xedown-syn-addition-bg: #eef4ec;
+  --xedown-syn-deletion-fg: #96301c;
+  --xedown-syn-deletion-bg: #fbeeea;
+  --xedown-selection-bg: #d9c094;
+  --xedown-selection-fg: #23201c;
+  --xedown-match-bg: #f0ba4c;
+  --xedown-match-fg: #23201c;
+  --xedown-match-current-bg: #e8823c;
+  --xedown-match-current-fg: #23201c;
+  --xedown-measure-scale: .8;
+  --xedown-text-scale: 1.06;
+}
+
+body.dark {
+  --xedown-bg: #1c1a18;
+  --xedown-fg: #e6e0d6;
+  --xedown-heading-fg: #f2ece2;
+  --xedown-muted: #a49b8f;
+  --xedown-border: #3a352e;
+  --xedown-quote-border: #46403a;
+  --xedown-code-bg: #23211d;
+  --xedown-link: #e0a06a;
+  --xedown-focus-ring: #e0a06a;
+  --xedown-error-bg: #322019;
+  --xedown-error-fg: #f0aa96;
+  --xedown-error-border: #4f342b;
+  --xedown-shadow: rgba(0, 0, 0, .55);
+  --xedown-syn-comment: #9b9287;
+  --xedown-syn-keyword: #e0a06a;
+  --xedown-syn-string: #a8c9a0;
+  --xedown-syn-number: #d4c48a;
+  --xedown-syn-function: #9ab8dd;
+  --xedown-syn-type: #c2a8d8;
+  --xedown-syn-variable: #e6e0d6;
+  --xedown-syn-meta: #e6e0d6;
+  --xedown-syn-addition-fg: #a8c9a0;
+  --xedown-syn-addition-bg: #1e2a1c;
+  --xedown-syn-deletion-fg: #f0aa96;
+  --xedown-syn-deletion-bg: #322019;
+  --xedown-selection-bg: #523f2b;
+  --xedown-selection-fg: #e6e0d6;
+  --xedown-match-bg: #454a12;
+  --xedown-match-fg: #e6e0d6;
+  --xedown-match-current-bg: #7f3a12;
+  --xedown-match-current-fg: #f2e2d4;
+}
+
+body {
+  margin: 0;
+  background: var(--xedown-bg);
+  color: var(--xedown-fg);
+  font-family: "Noto Serif", "Liberation Serif", "DejaVu Serif", Georgia, serif;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xedown-document { margin: 0 auto; padding: 3.5rem 2rem 7rem; }
+
+@media (max-width: 40rem) {
+  .xedown-document { padding: 2.25rem 1.2rem 4.5rem; }
+}
+
+/* A classical ramp: shape rather than colour carries the hierarchy. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 2.2em 0 .5em;
+  line-height: 1.25;
+  color: var(--xedown-heading-fg);
+  font-weight: 700;
+}
+h1 { font-size: 2.25em; }
+h2 { font-size: 1.6em; }
+h3 { font-size: 1.3em; }
+h4 { font-size: 1.1em; }
+h5 { font-size: 1em; font-weight: 400; font-style: italic; }
+h6 {
+  font-size: .9em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--xedown-muted);
+}
+
+p { margin: 0 0 1.15em; }
+
+/* Underlined, so colour is never the only signal. */
+a { color: var(--xedown-link); text-decoration: underline; }
+a:hover { text-decoration: none; }
+
+ul, ol { margin: 0 0 1.15em; padding-inline-start: 1.6em; }
+li { margin: .3em 0; }
+li > ul, li > ol { margin: .3em 0; }
+
+/* Inset from both margins, italic, no bar — how a printed block quotation
+   sets. */
+blockquote {
+  margin: 1.4em 2em;
+  padding: 0;
+  border: 0;
+  font-style: italic;
+  font-size: .97em;
+  color: var(--xedown-muted);
+}
+
+/* A short centred rule rather than a full-width line. */
+hr {
+  width: 6em;
+  height: 1px;
+  margin: 2.6em auto;
+  border: 0;
+  background: var(--xedown-border);
+}
+
+code, pre, kbd {
+  font-family: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+}
+
+code {
+  padding: .1em .3em;
+  font-size: .85em;
+  background: var(--xedown-code-bg);
+  border-radius: 2px;
+}
+
+pre {
+  margin: 0 0 1.3em;
+  padding: 1rem 1.1rem;
+  background: var(--xedown-code-bg);
+  border: 1px solid var(--xedown-border);
+  border-radius: 2px;
+  line-height: 1.6;
+}
+pre code { font-size: .85em; }
+
+/* Comments in a printed technical book are set in italic. */
+.hljs-comment, .hljs-quote { font-style: italic; }
+
+.xedown-table-scroll { margin: 0 0 1.3em; }
+table { font-size: .95em; }
+th, td { padding: .5em .8em; border: 0; border-bottom: 1px solid var(--xedown-border); }
+thead th {
+  font-size: .85em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  border-bottom: 2px solid var(--xedown-quote-border);
+}
+
+img { border-radius: 2px; }
+
+.xedown-image-error {
+  display: inline-block;
+  padding: .45em .7em;
+  font-size: .85em;
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border: 1px solid var(--xedown-error-border);
+  border-radius: 2px;
+}
+
+.footnote { font-size: .9em; color: var(--xedown-muted); }
+.footnote hr { width: 100%; margin: 2.8em 0 1.2em; }

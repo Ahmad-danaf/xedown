@@ -7,8 +7,18 @@ UNSAVED_DOCUMENT_HINT = (
     "be resolved. Save the file to give them a location to resolve against."
 )
 
+# Carried in the body tag of every page this module produces, so a caller
+# holding only the loaded HTML -- not the boolean it computed a moment before
+# deciding to call render_document -- can ask the page itself what it is.
+# That distinction matters because render_document never raises: it can
+# return this same markup from deep inside its own try/except without ever
+# telling the caller, so "did I pass error=" is the wrong question and "is
+# this what's actually loaded" is the right one. Invisible to a reader: it
+# adds no visible text, only a class token.
+ERROR_PAGE_CLASS = "xedown-page-error"
+
 _ERROR_PAGE = """<!DOCTYPE html>
-<html>
+<html dir="{ui_direction}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; \
@@ -17,21 +27,30 @@ style-src 'nonce-{nonce}'; base-uri 'none'; form-action 'none'">
 <style nonce="{nonce}">
 body {{ margin: 0; padding: 3rem 2rem; font-family: system-ui, sans-serif;
         background: {background}; color: {foreground}; }}
-.box {{ max-width: 40rem; margin: 0 auto; border-left: 3px solid {accent};
+.box {{ max-width: 40rem; margin: 0 auto; border-inline-start: 3px solid {accent};
         padding: 1rem 1.25rem; background: {panel}; border-radius: 4px; }}
 h1 {{ font-size: 1.1rem; margin: 0 0 .5rem; }}
 p {{ margin: 0; line-height: 1.6; white-space: pre-wrap; }}
 </style>
 </head>
-<body class="{theme}">
+<body class="{marker} {theme}">
 <div class="box"><h1>{title}</h1><p>{detail}</p></div>
 </body>
 </html>
 """
 
 
-def error_page(title, detail, dark=False, nonce="xedown-error"):
-    """A complete, self-contained HTML page describing a failure."""
+def error_page(title, detail, dark=False, nonce="xedown-error", ui_direction="ltr"):
+    """A complete, self-contained HTML page describing a failure.
+
+    `ui_direction` is the *desktop's* text direction, not a document's: an
+    error page is xedown speaking, and there is no document to detect one
+    from. Coerced inline rather than through `direction.coerce_ui`, because
+    this module is deliberately a leaf that imports nothing of ours — which
+    is what lets every other module use it without a cycle. One line is a
+    cheaper price than that property.
+    """
+    ui = "rtl" if ui_direction == "rtl" else "ltr"
     palette = (
         {
             "background": "#1e1e1e",
@@ -53,9 +72,22 @@ def error_page(title, detail, dark=False, nonce="xedown-error"):
         title=escaped_title,
         detail=escaped_detail,
         theme="dark" if dark else "light",
+        marker=ERROR_PAGE_CLASS,
         nonce=nonce,
+        ui_direction=ui,
         **palette,
     )
+
+
+def is_error_page(html_text):
+    """Whether `html_text` is a page this module's `error_page` produced.
+
+    Anchored on the body tag's own class attribute, not a bare substring
+    search: escaping already keeps a document's own text from ever opening a
+    literal `<body class="...`, so this cannot be fooled by an author who
+    happens to type the marker word into their Markdown.
+    """
+    return f'<body class="{ERROR_PAGE_CLASS} ' in html_text
 
 
 def render_failure_detail(exc):
@@ -69,9 +101,25 @@ def missing_vendor_detail(exc):
     )
 
 
-def remote_image_blocked_text(uri):
-    """Placeholder text shown in place of an image the plugin refuses to fetch."""
-    return f"Remote image blocked: {uri}"
+def remote_image_text(uri):
+    """Placeholder text for an image xedown does not fetch.
+
+    Not "blocked": that invites "how do I unblock it?", and nothing can.
+    This is a statement about what xedown does, which is nothing.
+    """
+    return f"Remote image, not fetched: {uri}"
+
+
+def local_image_missing_text(path):
+    """Placeholder text for a reference that resolved to nothing on disk."""
+    return f"Image not found: {path}"
+
+
+def local_image_unreadable_text(path, detail=""):
+    """Placeholder text for a file that is there and cannot be opened."""
+    if detail:
+        return f"Image could not be read: {path} ({detail})"
+    return f"Image could not be read: {path}"
 
 
 def local_image_unresolved_text(uri):
@@ -81,3 +129,77 @@ def local_image_unresolved_text(uri):
     against.
     """
     return f"Image not found: {uri}. {UNSAVED_DOCUMENT_HINT}"
+
+
+def with_alt(text, alt):
+    """`text`, followed by the author's alt text when there is any.
+
+    Appended rather than substituted: a reader needs both what the image was
+    meant to say and why it is not there.
+    """
+    words = (alt or "").strip()
+    if words:
+        return f"{text} — “{words}”"
+    return text
+
+
+# The ways a user's own stylesheet can fail to be usable. Named here, beside
+# every other piece of user-facing failure text, so `stylesheets.py` stays
+# free of copy and this module stays a leaf that imports nothing of ours.
+STYLESHEET_NOT_FOUND = "not-found"
+STYLESHEET_NOT_A_FILE = "not-a-file"
+STYLESHEET_UNREADABLE = "unreadable"
+STYLESHEET_NOT_UTF8 = "not-utf8"
+STYLESHEET_EMPTY = "empty"
+STYLESHEET_TOO_LARGE = "too-large"
+STYLESHEET_UNSAFE = "unsafe"
+
+_STYLESHEET_PHRASES = {
+    STYLESHEET_NOT_FOUND: "was not found",
+    STYLESHEET_NOT_A_FILE: "is not a file",
+    STYLESHEET_UNREADABLE: "could not be read",
+    STYLESHEET_NOT_UTF8: "is not valid UTF-8 text",
+    STYLESHEET_EMPTY: "is empty",
+    STYLESHEET_TOO_LARGE: "is larger than the 512 KiB limit",
+    STYLESHEET_UNSAFE: 'contains "</style", which cannot be embedded safely',
+}
+
+
+def stylesheet_problem_phrase(problem, detail=""):
+    """Why a custom stylesheet could not be used, as a sentence fragment.
+
+    Reads after the file's path: "<path> is empty." The fallback exists so a
+    problem this version does not know still produces a sentence rather than
+    a blank one.
+    """
+    phrase = _STYLESHEET_PHRASES.get(problem, "could not be used")
+    return f"{phrase} ({detail})" if detail else phrase
+
+
+def user_stylesheet_notice(problem, path, detail="", theme_label=""):
+    """The in-page bar shown when a custom stylesheet could not be used.
+
+    A sibling of the document article rather than a child: `update_body`
+    replaces the article's contents with a fragment that knows nothing about
+    this, so a notice inside it would vanish on the first keystroke.
+
+    Both the path and the theme label are escaped. The path comes out of a
+    file the user hand-edits, which makes it data rather than markup. So can
+    the phrase itself: STYLESHEET_UNSAFE's own wording contains a literal
+    "</style", which an unescaped interpolation would hand the HTML
+    tokenizer as an end-tag-open, consuming everything up to this notice's
+    own closing </div>.
+    """
+    sentence = (
+        f"{html.escape(str(path))} "
+        f"{html.escape(stylesheet_problem_phrase(problem, detail))}."
+    )
+    trailer = (
+        f" Showing the {html.escape(str(theme_label))} theme." if theme_label else ""
+    )
+    return (
+        '<div class="xedown-notice">'
+        "<strong>Custom stylesheet not applied</strong> "
+        f"{sentence}{trailer}"
+        "</div>"
+    )

@@ -1,4 +1,9 @@
-"""Resolves whether the preview should render dark, and tracks changes."""
+"""Resolves whether the preview should render dark, and tracks changes.
+
+Named for the *desktop's* light/dark appearance, not for a preview theme:
+`themes.py` owns those, and the two are independent axes. A theme is a style,
+and every theme works in both appearances.
+"""
 
 
 def prefers_dark(theme_name, prefer_dark_flag):
@@ -8,7 +13,7 @@ def prefers_dark(theme_name, prefer_dark_flag):
     return "dark" in (theme_name or "").lower()
 
 
-class ThemeWatcher:
+class AppearanceWatcher:
     """Watches GTK settings and reports light/dark changes.
 
     Imports GTK lazily so this module stays importable in CI.

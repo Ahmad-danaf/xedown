@@ -10,7 +10,7 @@ should both fail these tests.
 
 import pathlib
 
-from xedown import renderer
+from xedown import direction, renderer
 
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parent.parent / "fixtures"
 SHOWCASE_PATH = FIXTURES_DIR / "showcase.md"
@@ -74,31 +74,27 @@ def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
     # this is deterministic real behaviour, not a fixture-specific quirk.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
     assert "xedown-image-error" in body
-    assert "Remote image blocked: https://example.com/not-fetched.png" in body
+    assert "Remote image, not fetched: https://example.com/not-fetched.png" in body
 
 
-def test_edge_cases_missing_local_image_becomes_a_placeholder_when_unresolvable():
-    # Nuance worth spelling out: the renderer never checks the filesystem
-    # for a local image's existence (see links.resolve_to_uri and
-    # links._normalized_local_path -- neither calls os.path.exists, unlike
-    # links.classify_link which does for link *clicks*). Given a real
-    # base_dir, "pics/does-not-exist.png" resolves to a syntactically valid
-    # (but dead) file: URI and renders as a plain <img>; the placeholder a
-    # human sees for that case is produced client-side, by preview.js's
-    # <img> "error" handler in an actual browser -- which is exactly why
-    # docs/manual-smoke-test.md keeps a missing-image row as a manual
-    # check: pure-Python rendering never reaches that boundary.
-    #
-    # What Python *can* verify, faithfully, is the other half of the same
-    # mechanism: this exact reference becomes a placeholder naming its path
-    # the moment there is no base_dir to resolve against at all -- the
-    # unresolvable-reference case the renderer does handle server-side
-    # (see the comment on test_relative_image_without_a_base_becomes_a
-    # _placeholder in test_renderer.py: an unresolvable image src must not be
-    # left to fail silently in the browser).
+def test_edge_cases_missing_local_image_becomes_a_placeholder():
+    # The half that used to be unreachable from Python. The renderer now
+    # stats a local image reference, so a file that is not there is named as
+    # missing at render time rather than left to fail in the browser.
+    body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "xedown-image-error" in body
+    assert "pics/does-not-exist.png" in body
+    assert "not found" in body
+
+
+def test_edge_cases_missing_local_image_is_unresolvable_without_a_base_dir():
+    # The other reason the same reference cannot be shown: an unsaved
+    # document has nothing to resolve a relative path against. Different
+    # cause, different sentence.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=None)
     assert "xedown-image-error" in body
     assert "pics/does-not-exist.png" in body
+    assert "has not been saved" in body
 
 
 def test_showcase_feature_markers_survive():
@@ -134,3 +130,106 @@ def test_neither_fixture_emits_a_script_tag():
     )
     assert "<script" not in showcase_body
     assert "<script" not in edge_cases_body
+
+
+def test_the_showcase_exercises_the_reading_polish():
+    # A table wide enough to overflow a 46rem column, an image taller than
+    # the window, and one small enough that stretching it would show.
+    body = renderer.render_fragment(SHOWCASE_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<table>" in body
+    assert "tall.png" in body
+    assert "tiny.png" in body
+    # And it still renders cleanly: both new images must resolve, or this
+    # fixture stops being the "does this look good" half of the pair.
+    assert "xedown-image-error" not in body
+
+
+RTL_PATH = FIXTURES_DIR / "rtl.md"
+MIXED_PATH = FIXTURES_DIR / "mixed-direction.md"
+
+RTL_TEXT = RTL_PATH.read_text(encoding="utf-8")
+MIXED_TEXT = MIXED_PATH.read_text(encoding="utf-8")
+
+
+def test_the_direction_fixtures_are_present_and_non_empty():
+    assert RTL_TEXT.strip()
+    assert MIXED_TEXT.strip()
+
+
+def test_both_direction_fixtures_detect_right_to_left():
+    assert direction.detect(RTL_TEXT) == direction.RTL
+    # Arabic-majority on purpose: the English in it is content to lay out,
+    # not a vote. If this ever fails, add Arabic prose — do not delete the
+    # English, which is the entire point of the fixture.
+    assert direction.detect(MIXED_TEXT) == direction.RTL
+
+
+def test_the_left_to_right_fixtures_still_detect_left_to_right():
+    # This is "must not regress any left-to-right document", made checkable.
+    # edge-cases.md carries a substantial Arabic section and is still an
+    # English document.
+    assert direction.detect(SHOWCASE_TEXT) == direction.LTR
+    assert direction.detect(EDGE_CASES_TEXT) == direction.LTR
+
+
+def test_the_direction_fixtures_render_complete_documents():
+    for text, marker, nonce in (
+        (RTL_TEXT, "دليل xedown بالعربية", "test-rtl"),
+        (MIXED_TEXT, "اتجاهان في مستند واحد", "test-mixed"),
+    ):
+        page = renderer.render_document(text, base_dir=str(FIXTURES_DIR), nonce=nonce)
+        assert page.startswith("<!DOCTYPE html>")
+        assert marker in page
+        assert 'dir="rtl"' in page
+        assert "Cannot render this document" not in page
+        assert "Installation incomplete" not in page
+
+
+def test_neither_direction_fixture_has_an_error_placeholder():
+    # Both are "does this look good" fixtures, like showcase.md. A broken
+    # reference in either is a real regression, not a deliberate case.
+    for text in (RTL_TEXT, MIXED_TEXT):
+        body = renderer.render_fragment(text, base_dir=str(FIXTURES_DIR))
+        assert "xedown-image-error" not in body
+
+
+def test_the_rtl_fixture_exercises_everything_with_a_side():
+    body = renderer.render_fragment(RTL_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<table>" in body  # column order
+    assert "<blockquote>" in body  # the quote bar
+    assert "<input" in body  # a task list
+    assert 'id="fnref:' in body  # a footnote marker
+    assert 'class="language-python"' in body  # a fence that must stay LTR
+    assert body.count("<ul>") >= 2, "the nested list did not nest"
+    assert 'id="lists"' in body, "the explicit anchor id did not survive"
+    assert "sample.png" in body
+
+
+def test_the_mixed_fixture_carries_both_escape_hatches():
+    # The author's own way to mark a run the renderer cannot infer. If the
+    # sanitizer ever stops allowing these, this fixture stops covering them.
+    body = renderer.render_fragment(MIXED_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<bdi>" in body
+    assert 'dir="ltr"' in body
+
+
+def test_the_edge_cases_fixture_no_longer_claims_rtl_is_unsupported():
+    # Corrected by brief 7. The sentence was true when it was written and is
+    # not any more; leaving it would make the fixture document a limitation
+    # the plugin no longer has.
+    assert "not full right-to-left support" not in EDGE_CASES_TEXT
+
+
+def test_the_edge_cases_fixture_no_longer_calls_the_list_gap_a_defect():
+    # Corrected by brief 16. The section was accurate when it was written and
+    # told the reader not to fix it; leaving that in would document a defect
+    # the plugin no longer has.
+    assert "Known GFM gap" not in EDGE_CASES_TEXT
+
+
+def test_the_edge_cases_fixture_renders_its_list_after_a_paragraph():
+    # The positive half: the construct is still in the file, and it renders
+    # as a list rather than as three lines of one paragraph.
+    body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
+    assert "<li>item one</li>" in body
+    assert "<li>item two</li>" in body

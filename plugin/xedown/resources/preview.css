@@ -1,51 +1,66 @@
-/* One design expressed through custom properties, not two drifting stylesheets. */
-:root {
-  --xedown-bg: #ffffff;
-  --xedown-fg: #1f2328;
-  --xedown-muted: #59636e;
-  --xedown-border: #d1d9e0;
-  --xedown-code-bg: #f6f8fa;
-  --xedown-quote-border: #d1d9e0;
-  --xedown-link: #0969da;
-  --xedown-focus-ring: #0969da;
-  --xedown-error-bg: #fff1f0;
-  --xedown-error-fg: #b3261e;
-  --xedown-error-border: #f5c2c0;
-}
+/* The invariants every theme obeys: structure, bidirectional-text
+   correctness and overflow containment. Colour, type and space belong to
+   the theme layer in resources/themes/ — see docs/themes.md.
 
-body.dark {
-  --xedown-bg: #1e1e1e;
-  --xedown-fg: #e6e6e6;
-  --xedown-muted: #9aa0a6;
-  --xedown-border: #3a3a3a;
-  --xedown-code-bg: #262626;
-  --xedown-quote-border: #444444;
-  --xedown-link: #6cb6ff;
-  --xedown-focus-ring: #6cb6ff;
-  --xedown-error-bg: #3a2222;
-  --xedown-error-fg: #ff9d94;
-  --xedown-error-border: #5c3333;
+   Nothing here declares a colour literal. Every colour comes from a theme's
+   palette through a custom property, which is what lets the contrast gate
+   in tests/unit/test_contrast.py check all four themes by reading two
+   blocks per file. */
+
+:root {
+  /* Brief 4 drives these two. Each theme supplies the scales they are
+     multiplied by, so a theme stays proportionally itself at any width or
+     size the user picks. Declared on :root rather than on body because
+     `rem` resolves against the root element: sizing text on body while
+     sizing the measure in rem lets the two drift apart. */
+  --xedown-content-width: 46rem;
+  --xedown-text-size: 16px;
+  font-size: calc(var(--xedown-text-size) * var(--xedown-text-scale));
 }
 
 * { box-sizing: border-box; }
 
-/* Basic bidirectional text correctness: a document containing Arabic,
-   Hebrew, or similar needs each text-bearing block to pick its own base
-   direction from its own first strong character, and to align using
-   logical (start-relative) rather than hardcoded physical alignment.
-   Without this, right-to-left text still shapes correctly glyph-by-glyph,
-   but the block starts on the wrong side and reads in the wrong order.
-   `unicode-bidi` is NOT inherited, so this is declared on every
-   text-bearing block individually rather than once on a container — a
-   structural wrapper (ul, ol, table, the article root, ...) would get no
-   benefit from it and is deliberately left alone. This is automatic
-   per-block direction detection, not a right-to-left interface: full RTL
-   support (mirrored layout, an RTL-aware chrome) is tracked for a later
-   version. */
-p, h1, h2, h3, h4, h5, h6, li, blockquote, td, th {
+/* Two directions live on one page and they are not the same thing. `<html
+   dir>` carries the DESKTOP's, so xedown's own chrome — the notice bar, the
+   error pages — follows GTK. `<article dir>` carries the DOCUMENT's, from
+   its own content or from the `text_direction` setting, and is what makes
+   the layout below mirror.
+
+   On top of that, each text-bearing block below still picks its own base
+   direction from its own first strong character, so an English paragraph
+   inside an Arabic document reads and aligns left-to-right. A list item is
+   deliberately not one of them — see the `li` rule under this one.
+   `unicode-bidi` is NOT inherited, so this
+   is declared on every text-bearing block individually rather than once on a
+   container — a structural wrapper (ul, ol, table, the article root, ...)
+   would get no benefit from it and is deliberately left alone.
+
+   `text-align: start` rather than `left`: under `plaintext` the used
+   alignment follows each block's own resolved base direction, which is the
+   whole point. */
+p, h1, h2, h3, h4, h5, h6, blockquote, td, th {
   unicode-bidi: plaintext;
   text-align: start;
 }
+
+/* A list item is the one text-bearing block deliberately left out of the
+   rule above, and it is a rendering constraint rather than a preference.
+
+   Under `plaintext` the list marker is positioned from the item's own
+   content-derived direction rather than the list's, and in a right-to-left
+   document that breaks two ways. An item whose content *begins* with a bidi
+   isolate — which is what the `a` rule below makes every link — renders its
+   bullet on top of the text, or not at all; `- [نص](file.md)` is enough to
+   show it. And an item resolving to the other direction puts its bullet on
+   the opposite side from all of its siblings.
+
+   A marker is layout, and layout follows the document: bullets, quote bars
+   and column order all move together, which is what `text_direction` means
+   when it says it sets the layout and not each block. The text inside the
+   item is still reordered by the bidi algorithm, so an English item in an
+   Arabic list reads left-to-right — it is aligned with its list rather than
+   with itself. `text-align: start` is kept, and now follows `direction`. */
+li { text-align: start; }
 
 /* Code must never follow the surrounding prose's detected direction. A
    fenced block containing Arabic comments still has to read as code, left
@@ -61,141 +76,271 @@ pre, code {
   unicode-bidi: isolate;
 }
 
-body {
-  margin: 0;
-  background: var(--xedown-bg);
-  color: var(--xedown-fg);
-  font-family: system-ui, -apple-system, "Segoe UI", Cantarell, Ubuntu, sans-serif;
-  font-size: 16px;
-  line-height: 1.7;
-  -webkit-font-smoothing: antialiased;
+/* A link's text is its own run. A URL or a path used as link text inside an
+   Arabic sentence would otherwise drag the sentence's neutrals — its
+   slashes, dots and colons — to the wrong end of it.
+
+   `plaintext`, not `isolate`: `isolate` takes its base direction from the
+   inherited `direction` property, so it would read Arabic link text
+   left-to-right inside a left-to-right document. `plaintext` takes it from
+   the link's own content, which is correct in both directions and changes
+   nothing for a link whose text matches the prose around it. */
+a { unicode-bidi: plaintext; }
+
+/* The footnote back-reference means "go back", and back is the other way in
+   a right-to-left document. U+21A9 is not a mirrored character, so the glyph
+   is flipped rather than left to the bidi algorithm — and `inline-block`
+   because a transform does nothing to an inline box.
+
+   Targeted by href rather than by class: `class` is not an allowed attribute
+   on `a`, so Python-Markdown's `footnote-backref` does not survive the
+   sanitizer. The href does — an in-page anchor is passed through
+   `resolve_uri` unchanged — and `div.footnote` keeps its own class.
+
+   Scoped to `.xedown-document[dir="rtl"]`, not bare `[dir="rtl"]`: a
+   descendant combinator does not stop at the article, so the bare form also
+   matched an English article sitting inside `<html dir="rtl">` on an Arabic
+   desktop — mirroring a left-to-right document's footnote arrow for a
+   reason that has nothing to do with the document. `dir` is emitted on the
+   very element that carries `class="xedown-document"` (see `_DOCUMENT` in
+   renderer.py), so this matches exactly when the *document* is
+   right-to-left. */
+.xedown-document[dir="rtl"] .footnote a[href^="#fnref"] {
+  display: inline-block;
+  transform: scaleX(-1);
 }
 
 .xedown-document {
-  max-width: 46rem;
-  margin: 0 auto;
-  padding: 3rem 2rem 6rem;
+  max-width: calc(var(--xedown-content-width) * var(--xedown-measure-scale));
   overflow-wrap: break-word;
 }
-
-@media (max-width: 40rem) {
-  .xedown-document { padding: 2rem 1.1rem 4rem; }
-}
-
-/* More space above a heading than below it, so sections group visually. */
-h1, h2, h3, h4, h5, h6 {
-  margin: 2em 0 .6em;
-  line-height: 1.3;
-  font-weight: 600;
-}
 .xedown-document > :first-child { margin-top: 0; }
-h1 { font-size: 2em; padding-bottom: .3em; border-bottom: 1px solid var(--xedown-border); }
-h2 { font-size: 1.5em; padding-bottom: .3em; border-bottom: 1px solid var(--xedown-border); }
-h3 { font-size: 1.25em; }
-h4 { font-size: 1em; }
-h5 { font-size: .9em; }
-h6 { font-size: .85em; color: var(--xedown-muted); }
 
-p { margin: 0 0 1.1em; }
+/* Selected text is xedown's to colour: WebKit's default highlight is tuned
+   for a browser's own chrome, not for a theme that may be sepia or dark. */
+::selection {
+  background: var(--xedown-selection-bg);
+  color: var(--xedown-selection-fg);
+}
 
-a { color: var(--xedown-link); text-decoration: none; }
-a:hover { text-decoration: underline; }
+/* A search match, and the one the reader is on.
 
-/* Keyboard focus must always be visible; never suppress the outline. */
-a:focus-visible {
-  outline: 2px solid var(--xedown-focus-ring);
-  outline-offset: 2px;
+   `mark` is not in the sanitizer's allowlist, so a rendered document can
+   never contain one: every mark on the page was inserted by preview.js, which
+   is what lets clearSearch() unwrap all of them without asking whose they are
+   and what makes these two rules additions rather than a change to what a
+   v0.1 page looked like.
+
+   The current match carries an outline as well as its own colour, so the
+   distinction survives a reader who cannot separate the two hues. Both pairs
+   are gated in tests/unit/test_contrast.py: legible on both the page and the
+   code surface, and ΔE 20 away from the selection. */
+mark.xedown-match {
+  background: var(--xedown-match-bg);
+  color: var(--xedown-match-fg);
   border-radius: 2px;
 }
 
-ul, ol { margin: 0 0 1.1em; padding-left: 1.7em; }
-li { margin: .3em 0; }
-li > ul, li > ol { margin: .3em 0; }
+mark.xedown-match-current {
+  background: var(--xedown-match-current-bg);
+  color: var(--xedown-match-current-fg);
+  outline: 1px solid var(--xedown-match-current-fg);
+}
 
-ul.task-list { list-style: none; padding-left: 1.2em; }
+/* Keyboard focus must always be visible; never suppress the outline. A
+   theme may refine this rule, but the base always supplies one, coloured
+   by whichever theme is loaded. */
+a:focus-visible {
+  outline: 2px solid var(--xedown-focus-ring);
+  outline-offset: 2px;
+}
+
+/* xedown's own chrome, not part of the document: shown when the user's
+   custom stylesheet could not be used. Coloured from the error tokens every
+   theme declares, so one rule covers all four themes in both appearances
+   rather than four near-identical copies — and its contrast is already
+   gated, because error-fg on error-bg is a row in test_contrast.py.
+   Full width rather than aligned to the reading column, because each theme
+   pads .xedown-document differently and this is chrome, not content. */
+.xedown-notice {
+  padding: .75em 1.25em;
+  font-size: .9em;
+  line-height: 1.5;
+  color: var(--xedown-error-fg);
+  background: var(--xedown-error-bg);
+  border-bottom: 1px solid var(--xedown-error-border);
+  overflow-wrap: break-word;
+  /* Never part of a selection: a select-all in the preview selects the
+     document, not xedown's own message about it. Same reason the copy
+     button is excluded. */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+ul.task-list { list-style: none; padding-inline-start: 1.2em; }
 li.task-list-item { display: flex; align-items: flex-start; gap: .55em; }
+
+/* Drawn rather than native, so a checkbox belongs to the selected theme
+   instead of to the browser. Two states, two tokens: unchecked identifies
+   itself only by this border, so it needs a boundary that meets WCAG
+   1.4.11's 3:1 for a UI component on its own -- --xedown-muted on
+   --xedown-bg is a SEMANTIC_PAIRS row in test_contrast.py gated at 4.5:1,
+   comfortably above that floor in every theme and appearance. (--xedown-
+   border is a separator tint, gridlines and the like, not gated for
+   component-boundary contrast, and measures as low as 1.25:1 here -- a
+   regression against the native control this replaced.) Checked fills the
+   whole box, so its colour is the box's own surface, not its edge: that is
+   --xedown-link on --xedown-bg below, the same gated pair at the same
+   4.5:1. */
 li.task-list-item > input[type="checkbox"] {
   margin: .45em 0 0;
   width: .95em;
   height: .95em;
   flex: none;
-  accent-color: var(--xedown-link);
+  position: relative;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--xedown-bg);
+  border: 1px solid var(--xedown-muted);
+  border-radius: .2em;
+  /* A disabled control is dimmed and given a "no entry" cursor by the
+     browser. Both read as broken. These are read-only by design -- the
+     plugin never writes to the buffer -- so they must look deliberate. */
+  opacity: 1;
+  cursor: default;
 }
 
-blockquote {
-  margin: 0 0 1.1em;
-  padding: .1em 0 .1em 1em;
-  border-left: .25em solid var(--xedown-quote-border);
-  color: var(--xedown-muted);
+li.task-list-item > input[type="checkbox"]:checked {
+  background: var(--xedown-link);
+  border-color: var(--xedown-link);
 }
 
-hr {
-  height: 1px;
-  margin: 2.2em 0;
-  border: 0;
-  background: var(--xedown-border);
+/* The tick is a refinement, not the signal. A pseudo-element on a replaced
+   element is the least certain rule here, and a filled box against an
+   empty one already distinguishes the two states in every theme -- so this
+   failing to render would not make a checked item unreadable. */
+li.task-list-item > input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: .2em;
+  height: .42em;
+  margin: -.26em 0 0 -.1em;
+  border: solid var(--xedown-bg);
+  border-width: 0 .13em .13em 0;
+  transform: rotate(45deg);
 }
 
-code, pre, kbd {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-}
-
-/* Distinct without shouting. */
-code {
-  padding: .15em .35em;
-  font-size: .88em;
-  background: var(--xedown-code-bg);
-  border-radius: 5px;
-}
-
-pre {
-  margin: 0 0 1.2em;
-  padding: 1rem 1.1rem;
-  background: var(--xedown-code-bg);
-  border: 1px solid var(--xedown-border);
-  border-radius: 8px;
-  overflow-x: auto;          /* the block scrolls, never the page */
-  line-height: 1.55;
-}
-pre code {
-  padding: 0;
-  background: none;
-  font-size: .875em;
-  white-space: pre;
-}
+pre { overflow-x: auto; }          /* the block scrolls, never the page */
+pre code { padding: 0; background: none; white-space: pre; }
 
 /* The vendored highlight theme, emitted before this sheet, sets its own
    padding and background on the same selector this rule targets, at the
    identical specificity — so which one wins is decided by source order
    alone, which is exactly why this rule lives after the theme rather than
    merely matching its specificity. Without it a highlighted block gets
-   double padding and a background that fights the block's own surface. */
+   double padding and a background that fights the block's own surface.
+   The `pre code` rule above is not enough on its own: `code.hljs` is
+   (0,1,1) and outranks it whatever the order. */
 pre code.hljs {
   padding: 0;
   background: none;
 }
 
-.xedown-table-scroll { overflow-x: auto; margin: 0 0 1.2em; }
-table { border-collapse: collapse; width: 100%; font-size: .95em; }
-th, td { padding: .5em .8em; border: 1px solid var(--xedown-border); }
-thead th {
+/* The copy button lives beside <pre>, not inside it, and out of flow: the
+   block scrolls horizontally, and showing or hiding a button must not move
+   or resize the code it belongs to. The wrapper adds no padding or border,
+   so <pre>'s own margins collapse through it unchanged.
+
+   The wrapper inherits the ARTICLE's direction, not `<html>`'s, so
+   `inset-inline-end` puts the button on the left of a code block in an
+   Arabic document. It belongs to the document it sits in, even though the
+   <pre> inside it is pinned left-to-right. */
+.xedown-code-block { position: relative; }
+
+.xedown-copy {
+  position: absolute;
+  top: .5em;
+  inset-inline-end: .5em;
+  /* Wide enough for the longest label, so confirming a copy cannot
+     resize the button. */
+  min-width: 7em;
+  padding: .15em .6em;
+  font: inherit;
+  font-size: .8em;
+  color: var(--xedown-fg);
   background: var(--xedown-code-bg);
-  font-weight: 600;
-  border-bottom: 2px solid var(--xedown-border);
+  border: 1px solid var(--xedown-border);
+  border-radius: 5px;
+  cursor: pointer;
+  opacity: 0;
+  /* Never part of a selection: a select-all, or a drag across the page,
+     must not pull the word "Copy" into what the reader copies. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-img { max-width: 100%; height: auto; border-radius: 6px; }
+/* opacity rather than display or visibility, so the button stays in the
+   tab order; the focus rule is what makes it visible once reached. */
+.xedown-code-block:hover > .xedown-copy,
+.xedown-copy:focus-visible { opacity: 1; }
 
-.xedown-image-error {
-  display: inline-block;
-  padding: .45em .7em;
-  font-size: .85em;
-  font-family: ui-monospace, monospace;
-  color: var(--xedown-error-fg);
-  background: var(--xedown-error-bg);
-  border: 1px solid var(--xedown-error-border);
-  border-radius: 6px;
+.xedown-copy:focus-visible {
+  outline: 2px solid var(--xedown-focus-ring);
+  outline-offset: 2px;
 }
 
-.footnote { font-size: .9em; color: var(--xedown-muted); }
-.footnote hr { margin: 2.5em 0 1em; }
+/* Without a pointer there is nothing to hover, and the button would be
+   reachable only by tabbing to it. */
+@media (hover: none) {
+  .xedown-copy { opacity: 1; }
+}
+
+.xedown-table-scroll { overflow-x: auto; }
+
+/* `width: 100%` capped the table at the container, so a table with more
+   columns than fit was compressed rather than allowed to overflow -- and
+   the wrapper above it never had anything to scroll. `auto` lets the table
+   take the width it needs; `min-width` keeps a narrow one filling the
+   column exactly as it did in v0.1. */
+table { border-collapse: collapse; width: auto; min-width: 100%; }
+
+/* A floor under a column. Auto table layout will otherwise wrap prose down
+   to a few characters per column in a narrow window, which is the
+   "squashed into unreadable columns" this brief exists to stop. Cells still
+   wrap; only the squeezing stops. */
+th, td { min-width: 8ch; }
+
+/* The cue that a table continues past the edge. Inset shadows paint on the
+   container's own box and do not scroll with its content, so this stays put
+   at the visible edge; preview.js toggles the classes from the live scroll
+   position, so a shadow only ever appears on a side that has more to show. */
+.xedown-table-scroll.xedown-more-left {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-right {
+  box-shadow: inset -14px 0 10px -12px var(--xedown-shadow);
+}
+.xedown-table-scroll.xedown-more-left.xedown-more-right {
+  box-shadow: inset 14px 0 10px -12px var(--xedown-shadow),
+              inset -14px 0 10px -12px var(--xedown-shadow);
+}
+
+img { max-width: 100%; height: auto; }
+
+/* A long screenshot should not run for several screens. With both
+   dimensions auto the browser's own constraint algorithm shrinks the image
+   proportionally, so the ratio is preserved by construction rather than by
+   a rule that has to be got right -- and `max-*` never enlarges, so a small
+   image keeps its natural size. An image the author sized by hand is
+   excluded by the selector: they already said what they wanted. */
+img:not([width]):not([height]) { max-height: 80vh; width: auto; }
+
+/* xedown speaking, not the document: the author's alt text, shown in place
+   of an image that cannot be displayed. Distinguishable from real prose on
+   purpose. */
+.xedown-image-alt {
+  font-style: italic;
+  color: var(--xedown-muted);
+}

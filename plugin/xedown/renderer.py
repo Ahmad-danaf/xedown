@@ -1,10 +1,11 @@
 """Markdown source to a sanitized, self-contained HTML document."""
 
+import html
+import json
 import secrets
-import urllib.parse
 
-from . import errors, vendoring
-from .links import REMOTE_SCHEMES, resolve_to_uri
+from . import direction, errors, images, settings, stylesheets, themes, vendoring
+from .links import resolve_to_uri
 from .mdext import make_extensions
 from .sanitizer import sanitize
 
@@ -21,24 +22,27 @@ _CSP = (
     "object-src 'none'"
 )
 
-# The highlight theme is emitted before preview.css, and preview.css carries
-# an override of at least equal specificity — see the comment above
-# `pre code.hljs` in preview.css for why this order (not just the extra
-# rule) is what makes the override actually win.
+# The stylesheet is assembled by `stylesheets.assemble_css`: the syntax sheet
+# first, then preview.css, then the theme. preview.css carries an override
+# of at least equal specificity to the highlight theme's — see the comment
+# above `pre code.hljs` in preview.css for why that ordering, and not just
+# the extra rule, is what makes the override actually win.
 _DOCUMENT = """<!DOCTYPE html>
-<html>
+<html{lang} dir="{ui_direction}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="{csp}">
 <style nonce="{nonce}">
-{highlight_css}
-{preview_css}
+{stylesheet}
 </style>
 </head>
-<body class="{theme}">
-<article class="xedown-document" id="{content_id}">
+<body class="{appearance} xedown-theme-{theme}">
+{notice}<article class="xedown-document" role="main" id="{content_id}" dir="{doc_direction}">
 {body}
 </article>
+<script nonce="{nonce}">
+window.xedownConfig = {config};
+</script>
 <script nonce="{nonce}">
 {highlight_js}
 </script>
@@ -59,56 +63,102 @@ def _build_converter():
     )
 
 
-def _on_blocked_image(uri):
-    """Placeholder text for an <img> src the sanitizer refused to emit.
-
-    `uri` is the original reference (a `#`-free, already-safety-checked
-    value) that either resolved to a remote scheme or failed to resolve to a
-    local file at all. Which wording applies is decided here, from the
-    reference itself, so the sanitizer stays free of user-facing copy.
-    """
-    try:
-        scheme = urllib.parse.urlparse(uri).scheme.lower()
-    except ValueError:
-        # e.g. an unbalanced IPv6-literal bracket. Unparseable is certainly
-        # not a remote reference we could have fetched, so it gets the
-        # "unresolved local" wording rather than crashing the render.
-        scheme = ""
-    if scheme in REMOTE_SCHEMES:
-        return errors.remote_image_blocked_text(uri)
-    return errors.local_image_unresolved_text(uri)
-
-
-def render_fragment(text, base_dir=None):
+def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDER):
     """Convert Markdown to sanitized body HTML with absolute URIs.
 
-    URI resolution happens inside the sanitizer's single structural pass:
-    `resolve_uri` turns a relative href/src into an absolute `file://` URI
-    (or leaves a remote/anchor target alone), and `on_blocked_image` — the
-    controller's amendment for images specifically — replaces an `<img>`
-    whose src is remote or unresolvable with a visible placeholder instead
-    of emitting a tag that would never load.
+    URI resolution happens inside the sanitizer's single structural pass.
+    `resolve_uri` turns a relative href into an absolute `file://` URI (or
+    leaves a remote/anchor target alone). Images go through `on_image`
+    instead, which classifies the reference once — including a `stat`, so a
+    missing file and an unreadable one are told apart — and returns either a
+    usable src or the placeholder `image_display` asks for.
     """
     converter = _build_converter()
     raw = converter.convert(text or "")
+    display = images.coerce_display(image_display)
 
     def resolve(_attribute_name, value):
         if value.startswith("#"):
             return value
         return resolve_to_uri(value, base_dir)
 
-    return sanitize(raw, resolve_uri=resolve, on_blocked_image=_on_blocked_image)
+    def on_image(reference, alt):
+        decision = images.classify_image(reference, base_dir)
+        if decision.status == images.OK:
+            return decision.uri
+        return images.placeholder_for(decision, alt, display)
+
+    return sanitize(raw, resolve_uri=resolve, on_image=on_image)
 
 
-def render_document(text, base_dir=None, dark=False, nonce=None):
-    """Build the complete preview page. Never raises — failures become a page."""
+def render_document(
+    text,
+    base_dir=None,
+    dark=False,
+    nonce=None,
+    style=None,
+    image_display=images.DISPLAY_PLACEHOLDER,
+    code_copy_buttons=True,
+    text_direction=direction.AUTO,
+    ui_direction=direction.LTR,
+    lang=None,
+):
+    """Build the complete preview page. Never raises — failures become a page.
+
+    `style` is a `stylesheets.PreviewStyle`: which theme, how wide, how large,
+    and the user's own stylesheet. `None` means every default, which is the
+    xedown 0.1.0 appearance exactly. A theme identifier the registry does not
+    know resolves to the default rather than producing an unstyled page, and a
+    theme whose own stylesheet cannot be read falls back the same way; only a
+    broken *default* reaches the "Installation incomplete" page below.
+
+    A user stylesheet that could not be loaded produces a notice bar above the
+    document rather than a blank or unstyled preview. Error pages get neither
+    the user's CSS nor the notice: an error page is not the document, and a
+    stylesheet that failed to load is the last thing that should style the
+    message saying so.
+
+    `image_display` and `code_copy_buttons` are what the settings say about
+    the *content* rather than the appearance, which is why they are plain
+    arguments and not fields of `PreviewStyle`. Both are also emitted as a
+    `window.xedownConfig` object, so a loaded page can be told about a
+    change without being reloaded and a fresh page needs no telling.
+
+    `text_direction` and `ui_direction` are two different things and both are
+    needed. The first is the *document's*, from the setting of the same name,
+    and lands on the article; `auto` means it is detected from the text. The
+    second is the *desktop's*, and lands on `<html>`, so xedown's own chrome —
+    the stylesheet notice, and the error pages — follows GTK rather than
+    whatever language the document happens to be in.
+
+    `lang` is the *reader's* language, taken from the desktop the same way
+    `ui_direction` is — xedown has no way to detect what language a document
+    is written in, and a wrong guess would make a screen reader mispronounce
+    the whole page, which is worse than leaving it on its own default voice.
+    A value that is not a non-empty string produces no `lang` attribute at
+    all rather than an empty one, which a screen reader would treat as a
+    language it does not recognise.
+    """
     token = nonce or secrets.token_urlsafe(16)
+    style = style if style is not None else stylesheets.PreviewStyle()
+    display = images.coerce_display(image_display)
+    # Coerced the same way `display` is, and for the same reason:
+    # render_document is called directly by the render script and by the
+    # tests, not only through the settings store, so a bad argument here
+    # (not just a bad stored value) must still produce a page rather than
+    # let `json.dumps`/`bool()` raise past the try below. Mirrors
+    # `stylesheets._in_range`'s use of the descriptor for the same purpose.
+    copy_buttons, _ = settings.by_name(settings.CODE_COPY_BUTTONS).coerce(
+        code_copy_buttons
+    )
+    # Resolved before the try, because both except branches build an error
+    # page and need it. The document's own direction is resolved inside the
+    # try instead: it reads the text, so it belongs with the render.
+    ui = direction.coerce_ui(ui_direction)
     try:
-        body = render_fragment(text, base_dir=base_dir)
-        highlight_css = vendoring.read_resource(
-            "highlight-dark.css" if dark else "highlight-light.css"
-        )
-        preview_css = vendoring.read_resource("preview.css")
+        doc_direction = direction.resolve(text_direction, text)
+        body = render_fragment(text, base_dir=base_dir, image_display=display)
+        stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
@@ -117,6 +167,7 @@ def render_document(text, base_dir=None, dark=False, nonce=None):
             errors.missing_vendor_detail(exc),
             dark=dark,
             nonce=token,
+            ui_direction=ui,
         )
     except Exception as exc:  # noqa: BLE001 - a blank pane is never acceptable
         return errors.error_page(
@@ -124,16 +175,45 @@ def render_document(text, base_dir=None, dark=False, nonce=None):
             errors.render_failure_detail(exc),
             dark=dark,
             nonce=token,
+            ui_direction=ui,
         )
+
+    notice = ""
+    if style.user.problem is not None:
+        notice = (
+            errors.user_stylesheet_notice(
+                style.user.problem,
+                style.user.path,
+                detail=style.user.detail,
+                theme_label=themes.resolve(theme_identifier).label,
+            )
+            + "\n"
+        )
+
+    lang_attribute = ""
+    # `isinstance` rather than a truth test: this runs outside the guarded
+    # render above, and `render_document` promises never to raise. A bare
+    # `if lang:` calls `__bool__` and `str(lang)` calls `__str__`, either of
+    # which is arbitrary code on an object this function did not create.
+    # Same reasoning as `settings.BoolSetting.coerce` and
+    # `direction.coerce_ui`, which guard their template-bound values the
+    # same way and for the same reason.
+    if isinstance(lang, str) and lang.strip():
+        lang_attribute = f' lang="{html.escape(lang.strip(), quote=True)}"'
 
     return _DOCUMENT.format(
         csp=_CSP.format(nonce=token),
         nonce=token,
-        theme="dark" if dark else "light",
+        appearance="dark" if dark else "light",
+        theme=theme_identifier,
         content_id=CONTENT_ELEMENT_ID,
+        notice=notice,
         body=body,
-        preview_css=preview_css,
-        highlight_css=highlight_css,
+        stylesheet=stylesheet,
+        config=json.dumps({"codeCopy": copy_buttons, "imageDisplay": display}),
         preview_js=preview_js,
         highlight_js=highlight_js,
+        ui_direction=ui,
+        doc_direction=doc_direction,
+        lang=lang_attribute,
     )

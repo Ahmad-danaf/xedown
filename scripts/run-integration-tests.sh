@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 # Drives a real xed instance through the scenarios CI cannot reach.
 # Requires xed and an X display. Restores your plugin settings on exit.
+#
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.2.0.tar.gz scripts/run-integration-tests.sh
+#       ^ installs the release archive instead of the working tree, so the
+#         thing being probed is the artifact users download. Build it with
+#         scripts/build-release.sh first. Without this, the working tree is
+#         always installed, even over a copy of the archive placed there by
+#         hand beforehand. The archive is staged and validated in a scratch
+#         directory before anything already installed is touched, so a
+#         mistyped path (the path embeds a version number) cannot destroy a
+#         working install.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PLUGIN_DIR="$HOME/.local/share/xed/plugins"
 WORKDIR="$(mktemp -d)"
+STAGE="$(mktemp -d)"
 REPORT="$WORKDIR/report.txt"
 SAMPLE="$WORKDIR/sample.md"
 XED_LOG="$WORKDIR/xed.log"
@@ -13,11 +24,16 @@ SAVED_PLUGINS=""
 XED_PID=""
 
 # How long to wait for the scripted sequence to reach "PASS done" or a FAIL
-# line before giving up on it. It normally finishes in well under a minute:
-# async WebView loads, gsettings round trips, a second window for the
-# move-tab check, tab creation/teardown. How long to then wait for a
-# *graceful* shutdown, once requested, before escalating to SIGTERM/SIGKILL.
-SEQUENCE_TIMEOUT_SECONDS=90
+# line before giving up on it. Async WebView loads, gsettings round trips, a
+# second window for the move-tab check, tab creation/teardown, and -- since
+# brief 11 -- a full round of preview-search checks (real key presses, two
+# more full-page reloads, an error-page-and-back cycle) all add up: on a
+# representative dev machine a clean run takes on the order of ninety
+# seconds end to end, not the well-under-a-minute this budget once assumed.
+# 150 keeps a comfortable margin over that rather than trimming it close.
+# How long to then wait for a *graceful* shutdown, once requested, before
+# escalating to SIGTERM/SIGKILL.
+SEQUENCE_TIMEOUT_SECONDS=150
 SHUTDOWN_GRACE_SECONDS=10
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
@@ -30,7 +46,31 @@ if pgrep -x xed >/dev/null 2>&1; then
   exit 1
 fi
 
+# Does $1 hold exactly a usable xedown/xedown.plugin pair and nothing else at
+# its top level? Used to gate the install below, and again by cleanup() to
+# decide whether the staging directory it already validated is still safe to
+# fall back to -- so cleanup() never has to re-extract (and re-trust) an
+# archive on its own.
+plugin_staged_ok() {
+  local dir="$1"
+  [ -f "$dir/xedown.plugin" ] && [ -d "$dir/xedown" ] || return 1
+  local unexpected
+  unexpected="$(find "$dir" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
+  [ -z "$unexpected" ]
+}
+
 cleanup() {
+  # This trap must run to completion no matter what fails inside it. Under
+  # this script's own `set -e`, a single failing command in here -- a `cp`
+  # that hits a full disk, a `gsettings` call on a session that's going away
+  # -- would silently skip everything after it, including the XED_PID kill
+  # check and (worse) the gsettings restore. Disabling errexit for the rest
+  # of this function is the fix: every step below already reports its own
+  # failure instead of relying on `set -e` to stop the script, the same
+  # `set +e` idiom already used around `wait "$XED_PID"` further down for
+  # the same reason (a command whose failure must be inspected, not have it
+  # end the script).
+  set +e
   local restore_failed=0
   if [ -n "$SAVED_PLUGINS" ]; then
     gsettings set org.x.editor.plugins active-plugins "$SAVED_PLUGINS"
@@ -44,6 +84,33 @@ cleanup() {
     fi
   fi
   rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin"
+
+  # Leave a working plugin installed on exit -- but never at the cost of
+  # deleting a working one to make room for nothing. Preference order:
+  #   1. The copy this run already staged and validated in $STAGE. Covers a
+  #      normal successful run, and one interrupted after validation but
+  #      before (or during) the copy into $PLUGIN_DIR.
+  #   2. The working tree, if $STAGE never held a valid copy -- e.g.
+  #      XEDOWN_INSTALL_FROM_ARCHIVE named a missing file, a corrupt
+  #      archive, or one with unexpected entries, so the run never got past
+  #      validation.
+  #   3. Neither: touch nothing. Deleting an install we cannot replace is
+  #      strictly worse than leaving whatever is there.
+  # Every branch confirms its source is good BEFORE removing the live copy,
+  # never the other way round.
+  if plugin_staged_ok "$STAGE"; then
+    rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+    cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
+  elif [ -d "$ROOT/plugin/xedown" ] && [ -f "$ROOT/plugin/xedown.plugin" ]; then
+    rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
+    cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+  else
+    echo "WARNING: no valid staged copy and no working-tree copy to fall" >&2
+    echo "  back to; leaving whatever is currently installed at" >&2
+    echo "  $PLUGIN_DIR/xedown untouched." >&2
+  fi
+  rm -rf "$STAGE"
+
   if [ -n "$XED_PID" ] && kill -0 "$XED_PID" 2>/dev/null; then
     echo "xed (pid $XED_PID) is still running at exit; killing it." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
@@ -55,8 +122,48 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$PLUGIN_DIR"
+if [ -n "${XEDOWN_INSTALL_FROM_ARCHIVE:-}" ]; then
+  # Test the artifact users actually download, not the working tree it was
+  # built from. The two are supposed to be identical; this is how you find
+  # out when they are not.
+  if [ ! -f "$XEDOWN_INSTALL_FROM_ARCHIVE" ]; then
+    echo "No such archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
+    exit 1
+  fi
+  echo "==> Staging release archive: $XEDOWN_INSTALL_FROM_ARCHIVE"
+  if ! tar -xzf "$XEDOWN_INSTALL_FROM_ARCHIVE" -C "$STAGE"; then
+    echo "That file is not a valid gzipped tar archive: $XEDOWN_INSTALL_FROM_ARCHIVE" >&2
+    exit 1
+  fi
+else
+  cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$STAGE/"
+fi
+
+# Validate the staged copy before touching the live plugin directory at all
+# -- same stage/validate/commit shape as scripts/build-release.sh. A
+# mistyped archive path, one that isn't a valid archive at all, or one that
+# doesn't unpack into a usable plugin, must never take down whatever is
+# already installed there; the checks below run entirely against $STAGE, so
+# nothing under $PLUGIN_DIR is touched until they pass. plugin_staged_ok()
+# is the same check cleanup() uses below to decide whether this staged copy
+# is still safe to fall back to.
+if [ ! -f "$STAGE/xedown.plugin" ] || [ ! -d "$STAGE/xedown" ]; then
+  echo "That archive did not unpack into a usable plugin." >&2
+  exit 1
+fi
+# Nothing but the plugin itself should land in a user's plugins directory --
+# catches a malformed archive that also drops something else at its root
+# alongside the two entries expected.
+UNEXPECTED="$(find "$STAGE" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
+if [ -n "$UNEXPECTED" ]; then
+  echo "Refusing to install: unexpected entries alongside the plugin:" >&2
+  printf '%s\n' "$UNEXPECTED" | sed 's/^/  /' >&2
+  exit 1
+fi
+
+echo "==> Installing the validated copy into $PLUGIN_DIR"
 rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
-cp -r "$ROOT/plugin/xedown" "$ROOT/plugin/xedown.plugin" "$PLUGIN_DIR/"
+cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 cp -r "$ROOT/tests/integration/xedown_probe" \
       "$ROOT/tests/integration/xedown_probe.plugin" "$PLUGIN_DIR/"
 
@@ -69,7 +176,12 @@ echo "==> Launching xed under the probe"
 # XEDOWN_PROBE_TMPDIR nests the probe's own fixture files under $WORKDIR, so
 # the single rm -rf at the bottom of a clean run cleans those up too instead
 # of leaving an "xedown-probe-*" directory behind under /tmp every time.
+# XEDOWN_CONFIG_DIR keeps the settings the probe writes inside $WORKDIR. This
+# harness drives a REAL xed as the real user, so without it a test run would
+# rewrite -- and on a bad store, quarantine -- the developer's own
+# ~/.config/xedown/settings.json.
 XEDOWN_PROBE_REPORT="$REPORT" XEDOWN_PROBE_TMPDIR="$WORKDIR" \
+  XEDOWN_CONFIG_DIR="$WORKDIR/config" \
   xed --new-window "$SAMPLE" > "$XED_LOG" 2>&1 &
 XED_PID=$!
 
@@ -179,7 +291,7 @@ if [ "$SHUTDOWN_CAPTURED" -eq 0 ]; then
   echo "NOTE: shutdown output was not reliably captured this run (see the warning(s) above)." >&2
   echo "      xed.log covers the scripted sequence but may be missing window-close /" >&2
   echo "      plugin-unload output. Re-run with wmctrl installed for full coverage, or" >&2
-  echo "      check docs/manual-smoke-test.md row 24 (terminal review) by hand." >&2
+  echo "      check docs/manual-smoke-test.md row 32 (terminal review) by hand." >&2
 fi
 
 if [ ! -f "$REPORT" ]; then

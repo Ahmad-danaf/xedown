@@ -208,3 +208,34 @@ def test_malformed_scheme_does_not_crash(base):
     assert decision.action is LinkAction.REFUSE
 
     assert resolve_to_uri("http://[bad", base) is None
+
+
+def test_resolve_to_path_resolves_against_the_base_directory(tmp_path):
+    from xedown.links import resolve_to_path
+
+    target = tmp_path / "pics" / "a.png"
+    target.parent.mkdir()
+    target.write_bytes(b"")
+    assert resolve_to_path("pics/a.png", str(tmp_path)) == os.path.realpath(str(target))
+
+
+def test_resolve_to_path_without_a_base_directory_cannot_resolve_a_relative_reference():
+    from xedown.links import resolve_to_path
+
+    assert resolve_to_path("pics/a.png", None) is None
+
+
+def test_resolve_to_path_never_raises_on_malformed_input():
+    from xedown.links import resolve_to_path
+
+    assert resolve_to_path("a\x00b.png", "/tmp") is None
+
+
+def test_uri_for_path_percent_encodes_and_agrees_with_resolve_to_uri(tmp_path):
+    from xedown.links import resolve_to_path, uri_for_path
+
+    target = tmp_path / "a b.png"
+    target.write_bytes(b"")
+    path = resolve_to_path("a b.png", str(tmp_path))
+    assert uri_for_path(path) == resolve_to_uri("a b.png", str(tmp_path))
+    assert "%20" in uri_for_path(path)

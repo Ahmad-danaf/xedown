@@ -15,8 +15,9 @@ the path, with no blank space left behind.
 
 ## Remote image, never fetched
 
-Expected: a placeholder naming the blocked address. Nothing here is ever
-fetched over the network — check with a network monitor if in doubt.
+Expected: a placeholder naming the address, saying it was not fetched.
+Nothing here is ever fetched over the network — check with a network
+monitor if in doubt.
 
 ![Remote image](https://example.com/not-fetched.png)
 
@@ -45,16 +46,14 @@ Expected: same as above — a plain styled block, no highlighting, no error.
 plain text inside a fence, with no language tag
 ```
 
-## Known GFM gap: a list does not interrupt a paragraph
+## A list directly after a paragraph
 
-This is a known defect, not a mistake — it is tracked in
-[docs/known-issues.md](../../docs/known-issues.md) for v0.2. The paragraph
-and the two list markers immediately below have **no blank line** between
-them. Under GFM this should end the paragraph and start a two-item list;
-under xedown v0.1 it currently does **not** — the three lines render as one
-single paragraph instead. Do not "fix" this by inserting a blank line
-before the first `-`; that would delete the only place this defect is
-exercised.
+The paragraph and the two list markers immediately below have **no blank
+line** between them. Expected: the paragraph ends and a two-item list
+begins, the way GitHub renders it. Do not "fix" this by inserting a blank
+line before the first `-`; the missing blank line is the whole point, and
+`tests/unit/test_mdext.py` checks that this file is the one fixture whose
+rendering this changed.
 
 A paragraph immediately followed by a list, with no blank line before it.
 - item one
@@ -62,8 +61,11 @@ A paragraph immediately followed by a list, with no blank line before it.
 
 ## Bidirectional text
 
-Basic bidirectional text correctness, not full right-to-left support: each
-block below picks its own base direction from its first strong character.
+This document is English, and stays English: it is the control case for
+right-to-left support, not an example of it. Each block below picks its own
+base direction from its own content, inside a left-to-right document. For a
+document that is Arabic throughout, see [rtl.md](rtl.md); for one that mixes
+the two on purpose, see [mixed-direction.md](mixed-direction.md).
 
 ### Arabic paragraph
 
@@ -117,4 +119,5 @@ def total(items):
 ```
 
 If this code block reads right-to-left, or its lines start from the right
-edge, that is a bug in the bidirectional-text handling.
+edge, that is a bug in the bidirectional-text handling — and it would be one
+in an Arabic document too, where code must still read left to right.

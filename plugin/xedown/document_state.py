@@ -11,6 +11,29 @@ class Mode(enum.Enum):
     PREVIEW = "preview"
 
 
+# The spelling settings.json and modes.json use. `Mode.SOURCE.value` is
+# "source", which is xedown's own word for the mode; "markdown" is the
+# user's, and it is the one that reaches a file a user opens.
+MODE_SETTING_NAMES = {"preview": Mode.PREVIEW, "markdown": Mode.SOURCE}
+
+
+def mode_from_setting(value):
+    """The mode `value` names, or None when it names nothing.
+
+    Never raises. Both files this reads for -- settings.json and modes.json --
+    are hand-editable, and an unusable value has to fall back to a default
+    rather than stop a tab from building.
+    """
+    if not isinstance(value, str):
+        return None
+    return MODE_SETTING_NAMES.get(value.strip().lower())
+
+
+def setting_name(mode):
+    """The name `mode` is stored under."""
+    return "markdown" if mode is Mode.SOURCE else "preview"
+
+
 def is_markdown_path(path):
     """True when a path should be handled by xedown, matched case-insensitively."""
     if not path:

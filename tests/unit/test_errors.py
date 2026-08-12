@@ -1,3 +1,5 @@
+import re
+
 from xedown import errors
 
 
@@ -50,13 +52,52 @@ def test_unsaved_hint_explains_relative_paths():
     assert "save" in errors.UNSAVED_DOCUMENT_HINT.lower()
 
 
-def test_remote_image_blocked_text_contains_uri_and_blocked():
-    uri = "https://example.com/image.png"
-    text = errors.remote_image_blocked_text(uri)
+def test_remote_image_text_names_the_uri_and_states_a_fact():
+    uri = "https://example.com/a.png"
+    text = errors.remote_image_text(uri)
     assert uri in text
-    assert "blocked" in text.lower()
-    assert "<" not in text
-    assert ">" not in text
+    assert "not fetched" in text
+
+
+def test_local_image_missing_text_names_the_path():
+    assert "/tmp/gone.png" in errors.local_image_missing_text("/tmp/gone.png")
+    assert "not found" in errors.local_image_missing_text("/tmp/gone.png")
+
+
+def test_local_image_unreadable_text_carries_the_reason_when_there_is_one():
+    with_detail = errors.local_image_unreadable_text("/tmp/a.png", "Permission denied")
+    assert "Permission denied" in with_detail
+    assert "could not be read" in with_detail
+    # A missing reason must not leave an empty bracket dangling.
+    assert errors.local_image_unreadable_text("/tmp/a.png") == (
+        "Image could not be read: /tmp/a.png"
+    )
+
+
+def test_with_alt_appends_the_authors_words_only_when_there_are_any():
+    result = errors.with_alt("Image not found: a.png", "Company logo")
+    # em dash (U+2014) and curly quotes (U+201C, U+201D)
+    expected = "Image not found: a.png — “Company logo”"
+    assert result == expected
+    assert errors.with_alt("x", "") == "x"
+    assert errors.with_alt("x", None) == "x"
+    assert errors.with_alt("x", "   ") == "x"
+
+
+# xedown never fetches remote images and no setting changes that, so no
+# placeholder may hint at one. This is a rule from the brief, enforced here
+# rather than left to review.
+_IMPLIES_A_TOGGLE = re.compile(r"enable|allow|turn on|unblock|permit", re.IGNORECASE)
+
+
+def test_no_image_wording_implies_remote_images_can_be_switched_on():
+    for text in (
+        errors.remote_image_text("https://example.com/a.png"),
+        errors.local_image_missing_text("/tmp/a.png"),
+        errors.local_image_unreadable_text("/tmp/a.png", "Permission denied"),
+        errors.local_image_unresolved_text("a.png"),
+    ):
+        assert not _IMPLIES_A_TOGGLE.search(text), text
 
 
 def test_local_image_unresolved_text_contains_uri_and_the_unsaved_hint():
@@ -66,3 +107,81 @@ def test_local_image_unresolved_text_contains_uri_and_the_unsaved_hint():
     assert "save" in text.lower()
     assert "<" not in text
     assert ">" not in text
+
+
+def test_the_stylesheet_notice_names_the_file_and_the_fallback():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_EMPTY, "/home/you/mine.css", theme_label="Repository"
+    )
+    assert 'class="xedown-notice"' in html_text
+    assert "/home/you/mine.css" in html_text
+    assert "is empty" in html_text
+    assert "Repository" in html_text
+
+
+def test_the_stylesheet_notice_escapes_the_path():
+    # The path comes out of a file the user hand-edits. It is data, not markup.
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_NOT_FOUND, "/tmp/<script>alert(1)</script>.css"
+    )
+    assert "<script>" not in html_text
+    assert "&lt;script&gt;" in html_text
+
+
+def test_the_stylesheet_notice_includes_the_reason_detail():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_UNREADABLE, "/x.css", detail="Permission denied"
+    )
+    assert "Permission denied" in html_text
+
+
+def test_the_stylesheet_notice_escapes_the_theme_label():
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_EMPTY, "/x.css", theme_label="<b>Nope</b>"
+    )
+    assert "<b>" not in html_text
+
+
+def test_the_stylesheet_notice_escapes_a_phrase_containing_markup():
+    # STYLESHEET_UNSAFE's own phrase contains a literal "</style", which the
+    # HTML tokenizer reads as an end tag and follows to the next ">" -- the
+    # notice's own closing </div>. Unescaped, that swallows half the message
+    # and leaves the document nested inside the error bar.
+    html_text = errors.user_stylesheet_notice(
+        errors.STYLESHEET_UNSAFE, "/home/you/mine.css", theme_label="Repository"
+    )
+    assert "</style" not in html_text
+    assert "&lt;/style" in html_text
+    assert html_text.endswith("</div>")
+    assert "cannot be embedded safely" in html_text
+    assert "Showing the Repository theme." in html_text
+
+
+def test_an_error_page_carries_the_desktop_direction():
+    # An error page is xedown speaking, not the document, so it follows the
+    # desktop and never a detected direction — there is no document to detect.
+    assert '<html dir="rtl">' in errors.error_page("t", "d", ui_direction="rtl")
+    assert '<html dir="ltr">' in errors.error_page("t", "d", ui_direction="ltr")
+
+
+def test_an_error_page_defaults_to_left_to_right_and_never_raises():
+    assert '<html dir="ltr">' in errors.error_page("t", "d")
+    for value in ("nonsense", None, 7, object()):
+        assert '<html dir="ltr">' in errors.error_page("t", "d", ui_direction=value)
+
+
+def test_is_error_page_recognises_an_error_page():
+    assert errors.is_error_page(errors.error_page("t", "d"))
+    assert errors.is_error_page(errors.error_page("t", "d", dark=True))
+
+
+def test_is_error_page_rejects_a_page_that_is_not_one():
+    # A stand-in for a real render_document page: same shape of body tag,
+    # none of the marker. If this predicate degraded to a bare substring
+    # search for the word "error", `xedown-image-error` below would trip it.
+    document = (
+        '<body class="light xedown-theme-repository">'
+        '<article class="xedown-image-error">broken</article>'
+        "</body>"
+    )
+    assert not errors.is_error_page(document)
