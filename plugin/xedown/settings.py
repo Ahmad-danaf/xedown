@@ -163,6 +163,10 @@ class Settings:
     def __init__(self, path):
         self.path = pathlib.Path(path)
         self.write_error = None
+        # None, or (reason, preserved_path_or_None). Set by `_quarantine`.
+        # `write_error` is about this session's writes; this is about what was
+        # found at startup, and the preferences window reports both.
+        self.quarantine = None
         self._values = defaults()
         # The names this instance has itself set. See `_write`.
         self._dirty = set()
@@ -230,17 +234,20 @@ class Settings:
         overwrites the first preserved copy. That keeps the config directory
         from growing without bound and gives the preferences window a path it
         can always quote. Failing to move it is survivable — the defaults are
-        already in memory either way.
+        already in memory either way, and `quarantine` then carries None for
+        the path so the window says the file was left where it is.
         """
         target = self.path.with_name(self.path.name + ".corrupt")
         try:
             os.replace(self.path, target)
         except OSError as exc:
+            self.quarantine = (reason, None)
             sys.stderr.write(
                 f"xedown: {self.path} {reason}; using defaults "
                 f"(it could not be moved aside: {exc})\n"
             )
             return
+        self.quarantine = (reason, str(target))
         sys.stderr.write(
             f"xedown: {self.path} {reason}; using defaults. "
             f"Your copy was kept at {target}\n"

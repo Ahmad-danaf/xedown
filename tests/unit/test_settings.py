@@ -700,3 +700,81 @@ def test_every_caller_shares_one_store(monkeypatch, tmp_path):
     store = settings.get_settings()
     assert settings.get_settings() is store
     assert store.path == tmp_path / "settings.json"
+
+
+def test_a_healthy_store_records_no_quarantine(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text('{"preview_theme": "focused"}', encoding="utf-8")
+    assert settings.Settings(path).quarantine is None
+
+
+def test_a_missing_store_records_no_quarantine(tmp_path):
+    assert settings.Settings(tmp_path / "settings.json").quarantine is None
+
+
+def test_an_empty_store_records_no_quarantine(tmp_path):
+    # A blank file is what a truncated write leaves behind, not damage.
+    path = tmp_path / "settings.json"
+    path.write_text("   \n", encoding="utf-8")
+    assert settings.Settings(path).quarantine is None
+
+
+def test_an_unparseable_store_records_the_reason_and_the_preserved_path(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("{not json", encoding="utf-8")
+    store = settings.Settings(path)
+    reason, preserved = store.quarantine
+    assert "could not be parsed" in reason
+    assert preserved == str(path) + ".corrupt"
+
+
+def test_a_store_that_is_not_an_object_records_a_quarantine(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    store = settings.Settings(path)
+    reason, preserved = store.quarantine
+    assert reason == "does not contain a JSON object"
+    assert preserved == str(path) + ".corrupt"
+
+
+def test_a_store_that_could_not_be_moved_aside_records_no_preserved_path(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "settings.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    def refuse(*_args):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(settings.os, "replace", refuse)
+    reason, preserved = settings.Settings(path).quarantine
+    assert "could not be parsed" in reason
+    assert preserved is None
+
+
+def test_reset_returns_every_setting_to_its_default(tmp_path):
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+    store.set_many(
+        {
+            settings.PREVIEW_THEME: "document",
+            settings.TEXT_SIZE_PX: 24.0,
+            settings.CUSTOM_STYLESHEET: "~/mine.css",
+            settings.AUTO_REFRESH: False,
+        }
+    )
+    store.reset()
+    assert {
+        name: store.get(name) for name in settings.defaults()
+    } == settings.defaults()
+
+
+def test_reset_leaves_no_explicit_defaults_in_the_file(tmp_path):
+    # A key at its default is written as absent, which is what keeps
+    # "anything absent uses its default" true after a reset -- and what lets
+    # a user who resets receive a changed default in a later release.
+    path = tmp_path / "settings.json"
+    store = settings.Settings(path)
+    store.set(settings.PREVIEW_THEME, "document")
+    store.reset()
+    assert json.loads(path.read_text(encoding="utf-8")) == {}
