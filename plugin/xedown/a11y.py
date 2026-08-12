@@ -37,6 +37,24 @@ NAMES = {
     "search_close": "Close search",
     "search_status": "Match count",
     "info_bar_close": "Close",
+    # The settings window. Every one of these is a visible label as well as
+    # an accessible name: `prefs.Row.label` reads them straight out of here,
+    # so the string a user sees and the string a reader speaks cannot drift.
+    "prefs_default_mode": "Open Markdown files in",
+    "prefs_remember_mode": "Remember the mode each file was left in",
+    "prefs_theme": "Theme",
+    "prefs_stylesheet": "Custom stylesheet",
+    "prefs_stylesheet_browse": "Choose a stylesheet file",
+    "prefs_content_width": "Content width",
+    "prefs_text_size": "Text size",
+    "prefs_text_direction": "Text direction",
+    "prefs_copy_buttons": "Show a copy button on code blocks",
+    "prefs_auto_refresh": "Update the preview automatically",
+    "prefs_refresh_delay": "Wait before updating",
+    "prefs_remote_images": "When an image cannot be shown",
+    "prefs_watch_external": "Notice changes made outside xed",
+    "prefs_restore_defaults": "Restore defaults",
+    "prefs_close": "Close",
 }
 
 # Which NAMES key announces each mode when a switch takes effect. Kept as a
