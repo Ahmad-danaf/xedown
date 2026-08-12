@@ -182,16 +182,18 @@ creates — the mode buttons, the refresh button, the stale indicator, the
 search bar and the info bars — takes its accessible name from a single source
 of truth. Switching modes moves keyboard focus to the surface you land on and
 changes that surface's checked state to match; it also speaks the new mode's
-name through an `Atk.Object` announcement, unless the switch is made by
-activating a mode toggle button that already has keyboard focus, in which
-case the announcement is suppressed so it is not heard twice — the Refresh
-button, though also in the mode bar, does not trigger that suppression. The
-rendered document
-page carries a `role="main"` landmark and, when your desktop's language is
-known, a `lang` attribute — an error page carries neither: it is xedown
-speaking, not the document, and there is no document to detect a language
-from. The focus ring's contrast against every surface it is drawn on meets
-WCAG's 3:1 non-text threshold, in all four preview themes, light and dark.
+name through an `Atk.Object` announcement, unless one of the two mode toggle
+buttons already has keyboard focus at the moment the switch happens — Tab to
+a toggle and press it, but also <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>
+pressed while focus merely sits on one — in which case the announcement is
+suppressed so it is not heard twice. The Refresh button, though also in the
+mode bar, does not count for this and never suppresses it. The rendered
+document page carries a `role="main"` landmark and, when your desktop's
+language is known, a `lang` attribute — an error page carries neither: it is
+xedown speaking, not the document, and there is no document to detect a
+language from. The focus ring's contrast against every surface it is drawn on
+meets WCAG's 3:1 non-text threshold, in all four preview themes, light and
+dark.
 
 **The screen-reader speech has been checked, on one machine, with one
 reader.** `scripts/run-orca-tests.sh` drives a real xed session under Orca

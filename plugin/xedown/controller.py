@@ -407,7 +407,10 @@ class TabController:
         It also decides, before anything below moves focus, whether this
         switch gets a spoken announcement (see `_announce_mode`): both
         directions of Ctrl+Shift+M measured completely silent on their own
-        (Task 4 of the Orca verification plan), which is the gap this
+        (Task 5 of the Orca verification plan, once `row-97-focus-mode-bar`
+        got a marker of its own -- Task 4's version of this same claim was
+        inferred by subtracting a misattributed utterance from a
+        contaminated window, not measured cleanly), which is the gap this
         checks for. `self.modebar.has_focus_inside()` is read first, ahead
         of every state change below, because it is only meaningful *before*
         the switch: if the user tabbed to a mode button and activated it,

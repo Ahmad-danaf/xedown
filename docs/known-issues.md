@@ -271,9 +271,15 @@ focused half against xedown's own UI: its emitter is the mode bar's
 `Gtk.Box`, which is never itself keyboard-focusable, and — separately —
 `set_mode` deliberately withholds the emission whenever a mode toggle button
 itself holds focus, so that a Tab-then-activate switch is not announced
-twice (see "The stale indicator and the manual-refresh cue are not
-announced," below, for where that suppression rule is checked against a
-live Orca run). What the mechanism is *not*
+twice — checked against a live Orca run by `row-97-activate-focused-button`
+in `scripts/run-orca-tests.sh`, which exercises exactly that path but is
+deliberately left out of the automated `ROWS`/`SILENT_ROWS` gate (see the
+"deliberately not asserted" comment above `evaluate_rows`'s call in that
+script, next to the `row-97-activate-focused-button` marker itself):
+`evaluate_rows`'s substring and silence checks cannot tell one utterance
+from two, which is the one thing this row needs to show. It was verified
+instead by hand-reading the raw Orca log directly (see
+`task-6-report.md`). What the mechanism is *not*
 wired to is `update_body()`: the in-place refresh path never calls
 `announce()`, so a change that lands while Preview is already showing still
 produces nothing to hear — inferred from reading `update_body()`'s own code
@@ -392,6 +398,15 @@ real, not inferred — but several adjacent things were checked and found
 - The reverse suppression direction — tabbing back to the already-focused,
   now-unpressed Preview button and activating it — was not separately
   measured; only activating the Source button from inside the bar was.
+- Pressing <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> while a mode toggle
+  button already has keyboard focus, *without* activating that button —
+  focus merely parked there from an earlier Tab, then the shortcut used
+  instead of Space — was never separately measured either. The suppression
+  check (`ModeBar.has_focus_inside()`) reads the same either way, so this
+  route almost certainly suppresses too, but "almost certainly" is an
+  inference, not a measurement: the probe's own coverage of the suppression
+  path (`row-97-activate-focused-button`) goes through Space-activating a
+  focused toggle, not the accelerator with focus merely resting on one.
 - The search bar's own row (manual smoke test row 99) is not asserted by
   the automated harness: the probe's fixed six-Tab-press count sweeps focus
   past the search bar's own last control and into xed's surrounding chrome
@@ -410,9 +425,9 @@ survey every route to the same code.
 **What to do about it:** none of the above blocks anything today — the
 measured route (the keyboard shortcut, on this machine) is the one
 documented as working. Extending the probe to the View menu, a synthesized
-mouse click and the reverse suppression direction, re-scoping the
-search-bar Tab count to the bar's own controls, and testing under Wayland
-would each close one gap.
+mouse click, the reverse suppression direction and the focus-parked
+accelerator route, re-scoping the search-bar Tab count to the bar's own
+controls, and testing under Wayland would each close one gap.
 
 **Status:** outstanding — each bullet above is an untested route, not a
 known problem.

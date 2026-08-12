@@ -185,3 +185,70 @@ def test_evaluate_rows_preserves_table_order_rows_then_silent_rows():
     sliced = {"a": ["x"], "b": []}
     lines = ot.evaluate_rows(sliced, {"a": ["x"]}, ["b"])
     assert lines == ["PASS a - ['x']", "PASS b - silent, as measured"]
+
+
+# --- evaluate_rows: Exact, the stricter comparison mode a `rows` entry can
+# opt into (substring containment, `missing`'s rule, stays the default). ---
+
+
+def test_evaluate_rows_an_exact_rows_entry_that_matches_exactly_passes():
+    sliced = {"row-96-switch-back-to-preview": ["Preview"]}
+    lines = ot.evaluate_rows(
+        sliced, {"row-96-switch-back-to-preview": ot.Exact(["Preview"])}, []
+    )
+    assert lines == ["PASS row-96-switch-back-to-preview - exactly ['Preview']"]
+
+
+def test_evaluate_rows_an_exact_rows_entry_satisfied_only_as_a_substring_fails():
+    """The regression this mode exists to close: a plain substring check on
+    ["Preview"] is also satisfied by "Preview toggle button pressed." --
+    the exact misattributed utterance that fooled earlier review rounds in
+    this project before it was traced to a different, unmarked action.
+    Exact equality must refuse what a substring check would let through."""
+    sliced = {"row-96-switch-back-to-preview": ["Preview toggle button pressed."]}
+    lines = ot.evaluate_rows(
+        sliced, {"row-96-switch-back-to-preview": ot.Exact(["Preview"])}, []
+    )
+    assert lines == [
+        (
+            "FAIL row-96-switch-back-to-preview - expected exactly ['Preview'], "
+            "Orca said ['Preview toggle button pressed.']"
+        )
+    ]
+
+
+def test_evaluate_rows_an_exact_rows_entry_with_an_extra_utterance_fails():
+    """Exact means exact: nothing extra either, not just nothing missing."""
+    sliced = {
+        "row-97-mode-bar-tab": [
+            "Markdown source toggle button not pressed.",
+            "an extra utterance",
+        ]
+    }
+    lines = ot.evaluate_rows(
+        sliced,
+        {
+            "row-97-mode-bar-tab": ot.Exact(
+                ["Markdown source toggle button not pressed."]
+            )
+        },
+        [],
+    )
+    assert lines == [
+        (
+            "FAIL row-97-mode-bar-tab - expected exactly "
+            "['Markdown source toggle button not pressed.'], Orca said "
+            "['Markdown source toggle button not pressed.', 'an extra utterance']"
+        )
+    ]
+
+
+def test_evaluate_rows_an_exact_rows_entry_with_an_empty_slice_still_fails_as_silence():
+    """The "Orca said nothing at all" check runs before Exact is ever
+    consulted -- silence is still a finding, not something Exact's equality
+    check has to special-case."""
+    sliced = {"row-96-switch-to-source": []}
+    lines = ot.evaluate_rows(
+        sliced, {"row-96-switch-to-source": ot.Exact(["Markdown source"])}, []
+    )
+    assert lines == ["FAIL row-96-switch-to-source - Orca said nothing at all"]

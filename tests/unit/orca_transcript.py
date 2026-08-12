@@ -131,13 +131,33 @@ def missing(spoken, expected):
     ]
 
 
+class Exact(list):
+    """A `rows` entry that `spoken` must equal, not merely contain.
+
+    A plain list keeps meaning substring containment (`missing`'s rule,
+    unchanged): every string in it has to appear *somewhere* in what Orca
+    said, case-insensitively, and extra utterances alongside it are fine.
+    That is deliberately loose for rows where several controls each speak in
+    turn (`row-99-search-bar-tab`) -- but it is too loose for a row measured
+    to produce exactly one utterance, word for word: a substring check on
+    `["Preview"]` is also satisfied by "Preview toggle button pressed.",
+    which is precisely the misattributed utterance that fooled three review
+    rounds earlier in this project before it was traced to a different,
+    unmarked action. Wrapping a row's expected list in `Exact` closes that
+    hole at the gate itself: `spoken` must equal `list(expected)` --
+    same utterances, same order, nothing missing and nothing extra.
+    """
+
+
 def evaluate_rows(sliced, rows, silent_rows):
     """Check a sliced transcript against two expectation tables.
 
     `rows` maps marker name -> a list of substrings that must all appear,
     case-insensitively, somewhere in what was spoken during that marker's
     window. An empty or missing slice FAILs there: silence is a finding, not
-    a pass -- a11y.check_tree's rule.
+    a pass -- a11y.check_tree's rule. Wrap the list in `Exact` (above) to
+    require `spoken` to equal it exactly instead of merely contain it --
+    for a row measured to produce one utterance and no other.
 
     `silent_rows` is an iterable of marker names that must have produced NO
     speech at all. A marker with any utterance FAILs there -- that would be
@@ -166,6 +186,15 @@ def evaluate_rows(sliced, rows, silent_rows):
             continue
         if not spoken:
             lines.append(f"FAIL {row} - Orca said nothing at all")
+            continue
+        if isinstance(expected, Exact):
+            wanted = list(expected)
+            if spoken == wanted:
+                lines.append(f"PASS {row} - exactly {wanted!r}")
+            else:
+                lines.append(
+                    f"FAIL {row} - expected exactly {wanted!r}, Orca said {spoken!r}"
+                )
             continue
         absent = missing(spoken, expected)
         if absent:

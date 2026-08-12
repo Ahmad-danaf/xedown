@@ -285,20 +285,35 @@ _HOST_MODULES_SETTING_NAMES = (
 # this: `(?<!\w)announce\(` only matches where "announce" is immediately
 # followed by "(", and both of those identifiers have more word characters
 # in between.
-_NAME_CALL = re.compile(r"(?<!\w)(?:set_name|_name|announce)\(([^)]*)\)")
+# The lookbehind also excludes a preceding backtick, not just a word
+# character: `modebar.py:159`'s own docstring says "an `announce()` on top
+# of that" -- a Markdown *mention*, not a call -- and without the backtick
+# exclusion that reads as a call site too, with an empty argument. Real
+# Python call syntax is never backtick-prefixed, so this costs nothing
+# against actual calls. `def announce(self, text):` (`modebar.py:190`) is
+# excluded the same way `def _name(` already was, by `_name_call_sites`
+# skipping both definition lines outright -- a `def` line is where the
+# method is declared, not a place a name is chosen.
+_NAME_CALL = re.compile(r"(?<![\w`])(?:set_name|_name|announce)\(([^)]*)\)")
 
 
 def _name_call_sites(path):
-    """`(lineno, line, name_argument)` for every `set_name(`/`_name(` call.
+    """`(lineno, line, name_argument)` for every `set_name(`/`_name(`/
+    `announce(` call.
 
-    The `_name` helper's own `def` line is excluded: it is the place the
-    forwarded `name` parameter is declared, not a place an accessible name
-    is chosen, and its own body (`accessible.set_name(name)`) is a bare
-    identifier -- never a literal -- so it needs no exclusion of its own.
+    Both `_name`'s and `announce`'s own `def` lines are excluded: they are
+    where the forwarded parameter is declared or the method is defined, not
+    a place an accessible name is chosen, and their own bodies
+    (`accessible.set_name(name)`, `accessible.emit("announcement", text)`)
+    are bare identifiers -- never literals -- so neither needs excluding for
+    that reason too. A backtick-wrapped *mention* of one of these names
+    inside a docstring is excluded as well, by `_NAME_CALL`'s own negative
+    lookbehind -- prose talking about a method is not a place a name is
+    chosen either.
     """
     sites = []
     for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if line.strip().startswith("def _name("):
+        if line.strip().startswith(("def _name(", "def announce(")):
             continue
         for match in _NAME_CALL.finditer(line):
             args = [part.strip() for part in match.group(1).split(",")]

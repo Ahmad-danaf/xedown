@@ -517,6 +517,18 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         that Orca's own event-coalescing discards down to the last
         transition, measuring as silence for a reason that had nothing to do
         with xedown. See `TAB_PRESS_INTERVAL_MS`.
+
+        The fixed count of 6 is a guess, not a measurement of the bar's own
+        control count, and it overshoots: three files (`docs/known-issues.md`,
+        `docs/manual-smoke-test.md`, and `scripts/run-orca-tests.sh`'s own
+        `SILENT_ROWS`/unasserted-markers comment) record that the last
+        presses land past the search bar's own controls and into xed's
+        surrounding chrome -- one of the measured utterances is "Show or
+        hide the side pane in the current window.", not a search-bar control
+        at all. This is the file a future change to the count would start
+        from; re-scoping it to the bar's own controls (`SearchBar`'s own
+        focusable children, the same idea `_modebar_focusables` already
+        applies to the mode bar) is still open.
         """
         mark("row-99-search-bar-tab")
         self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
@@ -575,23 +587,40 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         this buffer change is exactly what an automatic refresh would have
         picked up, and both the stale dot and the refresh button become
         visible.
+
+        The `record()` below checks that for real: `controller is not None`
+        alone (the old check) only proves a controller exists, not that the
+        edit above actually left the preview stale or actually made the
+        refresh button visible -- which is what makes it reachable by Tab at
+        all, the precondition `step_row_100_focus_refresh` and everything
+        after it depends on. `controller.state.preview_stale` and
+        `controller.modebar._refresh_button.get_visible()` are read directly,
+        the same two facts `_update_refresh_cue` itself keys the button's
+        visibility on.
         """
         controller = self._controller()
         mark("row-100-stale")
         if controller is not None:
             document = controller.document
             document.insert(document.get_end_iter(), "\n\nmanual refresh marker\n")
+        stale = controller is not None and controller.state.preview_stale
+        refresh_visible = (
+            controller is not None
+            and controller.modebar is not None
+            and controller.modebar._refresh_button.get_visible()
+        )
         record(
             "orca-stale-triggered",
-            controller is not None,
-            "AUTO_REFRESH off, then a buffer change while Preview shows",
+            stale and refresh_visible,
+            f"preview_stale: {stale}, refresh button visible: {refresh_visible} "
+            "(AUTO_REFRESH off, then a buffer change while Preview shows)",
         )
         self._schedule(SETTLE_MS, self.step_row_100_focus_refresh)
         return False
 
     def step_row_100_focus_refresh(self):
-        """Row 100 (extra): focus the refresh button. Sets up fix round 1's
-        regression check, below.
+        """Row 100 (extra): focus the refresh button, and confirm it actually
+        got there. Sets up fix round 1's regression check, below.
 
         `AUTO_REFRESH` is off and the buffer is stale (row 100's own edit,
         just above), so `_refresh_button` is visible and focusable right
@@ -599,13 +628,43 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         Marked in its own right because grabbing focus onto a button is
         exactly the kind of action Task 4 traced real speech to elsewhere
         in this probe (see `step_row_97_focus_mode_bar`'s docstring); this
-        window is not asserted, only settled past, so it can't leak into
-        the next marker's window.
+        window is not asserted against Orca's transcript, only settled past,
+        so it can't leak into the next marker's window.
+
+        The `record()` below is what this step was missing before this fix
+        round: with no assertion at all, `row-100-refresh-focused-switch`'s
+        own ROWS expectation next door passes identically whether focus
+        actually reached the Refresh button or landed nowhere near it --
+        `has_focus_inside()` only suppresses the announcement for the two
+        mode toggles, so "focus elsewhere" is *also* not-suppressed and
+        *also* announces "Markdown source". That row was therefore an
+        automated guard on Task 6's narrowed suppression in name only.
+        Checking `self.window.get_focus()` against `_refresh_button`
+        directly, the same way `step_row_97_mode_bar_tab` and
+        `step_row_99_search_bar_tab` check their own targets, closes that
+        gap: if grab_focus() silently failed, this step now fails loudly
+        instead of the next one passing for the wrong reason.
         """
         controller = self._controller()
         mark("row-100-focus-refresh")
         if controller is not None and controller.modebar is not None:
             controller.modebar._refresh_button.grab_focus()
+        focus = self.window.get_focus()
+        visible = (
+            controller is not None
+            and controller.modebar is not None
+            and controller.modebar._refresh_button.get_visible()
+        )
+        focused = (
+            controller is not None
+            and controller.modebar is not None
+            and focus is controller.modebar._refresh_button
+        )
+        record(
+            "orca-refresh-button-focused",
+            visible and focused,
+            f"visible: {visible}, focus is the refresh button: {focused} ({focus!r})",
+        )
         self._schedule(SETTLE_MS, self.step_row_100_refresh_focused_switch)
         return False
 
@@ -677,8 +736,14 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         Marked *before* that write, not after: at this point in the sequence
         `state.preview_stale` is True (row 100's own edit set it) and mode is
         still Preview, so flipping `AUTO_REFRESH` back on really does reach
-        `_refresh_body_now()` (`controller.py:1298-1353`) -- a genuine,
-        speech-capable action. Writing the mark after it, as this step used
+        `_refresh_body_now()`, through `TabController._on_settings_changed`'s
+        AUTO_REFRESH-switched-back-on branch -- named here rather than only
+        by line, because a line citation rots the moment an earlier method
+        grows or shrinks (this one already did once: correct at `26bf1e9`,
+        wrong three commits later). For anyone checking it anyway, as of this
+        commit that branch is `controller.py:1325-1380`, with the call
+        itself at `:1379`. It is a genuine, speech-capable action. Writing
+        the mark after it, as this step used
         to, would have left it landing inside `row-101-external-change`'s
         window, an *asserted* `ROWS` entry, which is exactly the contamination
         shape this task exists to close off. It happens to be silent today,
