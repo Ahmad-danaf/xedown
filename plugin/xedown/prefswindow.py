@@ -46,7 +46,11 @@ class SettingsPanel(Gtk.Box):
         self._path_boxes = {}  # setting name -> box holding entry + browse
         self._settle = {}  # setting name -> GLib source id
         self._entries = []  # (a11y key, widget), in build order
-        self._extra_entries = []  # controls that are not rows
+        # A control that lives *inside* a row -- the stylesheet Browse button
+        # -- keyed by setting, so `_build_row` can put it in the entry list
+        # where it physically sits instead of at the end.
+        self._row_extras = {}
+        self._extra_entries = []  # controls after every row, in build order
         self._theme_help = None
         # Set while writing store values into widgets, so a programmatic
         # change is never mistaken for the user turning a knob.
@@ -110,16 +114,26 @@ class SettingsPanel(Gtk.Box):
         box.pack_start(grid, False, False, 0)
 
         line = 0
+        attachments = []
         for row in group.rows:
-            line = self._build_row(grid, row, line)
+            line = self._build_row(attachments, row, line)
+        # Attached last-first, deliberately. `Gtk.Grid` *prepends* each child,
+        # so `get_children()` -- and with it the order ATK hands a screen
+        # reader, and the order the live audit walks -- comes back reversed,
+        # which for rows stacked top to bottom means bottom to top. Where a
+        # child lands on screen is decided by the coordinates below and by
+        # nothing else, so reversing the calls costs the layout nothing and
+        # buys an accessible child order that matches what the user sees.
+        for widget, left, top, width, height in reversed(attachments):
+            grid.attach(widget, left, top, width, height)
         return box
 
-    def _build_row(self, grid, row, line):
+    def _build_row(self, attachments, row, line):
         label = Gtk.Label(label=row.label)
         label.set_xalign(0.0)
         label.set_hexpand(True)
         label.set_line_wrap(True)
-        grid.attach(label, 0, line, 1, 1)
+        attachments.append((label, 0, line, 1, 1))
 
         control = self._build_control(row)
         control.set_halign(Gtk.Align.END)
@@ -129,24 +143,31 @@ class SettingsPanel(Gtk.Box):
         label.set_mnemonic_widget(control)
         self._controls[row.setting] = control
         self._entries.append((row.key, control))
+        # A Browse button belongs to the row it sits in, so it is recorded
+        # here rather than after every row: it is the next thing the user
+        # reaches after the entry beside it, and the audit compares this list
+        # against the real tree.
+        beside = self._row_extras.pop(row.setting, None)
+        if beside is not None:
+            self._entries.append(beside)
         # The box when the control has company, the control itself otherwise.
         attached = (
             self._path_boxes.get(row.setting)
             or self._number_boxes.get(row.setting)
             or control
         )
-        grid.attach(attached, 1, line, 1, 1)
+        attachments.append((attached, 1, line, 1, 1))
         line += 1
 
         help_label = self._build_help(row)
         if help_label is not None:
-            grid.attach(help_label, 0, line, 2, 1)
+            attachments.append((help_label, 0, line, 2, 1))
             self._describe(control, help_label)
             line += 1
 
         if row.setting == settings.CUSTOM_STYLESHEET:
             self._stylesheet_bar = self._build_notice()
-            grid.attach(self._stylesheet_bar, 0, line, 2, 1)
+            attachments.append((self._stylesheet_bar, 0, line, 2, 1))
             line += 1
         return line
 
@@ -261,7 +282,7 @@ class SettingsPanel(Gtk.Box):
         box.pack_start(browse, False, False, 0)
         box.set_halign(Gtk.Align.END)
         self._path_boxes[row.setting] = box
-        self._extra_entries.append(("prefs_stylesheet_browse", browse))
+        self._row_extras[row.setting] = ("prefs_stylesheet_browse", browse)
         return entry
 
     def _on_browse(self, button, row, entry):
@@ -353,7 +374,13 @@ class SettingsPanel(Gtk.Box):
     # --- what the panel offers ---------------------------------------------
 
     def accessible_entries(self):
-        """`[(a11y key, widget), …]` in build order, for the live audit."""
+        """`[(a11y key, widget), …]` in tree order, for the live audit.
+
+        Build order and tree order are the same thing here, and are kept that
+        way: the Browse button is listed with the stylesheet row it sits in,
+        and only Restore defaults — which really is the last control in the
+        panel — comes after every row.
+        """
         return list(self._entries) + list(self._extra_entries)
 
     def control_for(self, setting_name):
@@ -470,17 +497,46 @@ class SettingsPanel(Gtk.Box):
             self._loading = False
 
     def _apply_row(self, row, value):
+        """Put `value` in the row's control, but only if it is not there yet.
+
+        The store notifies synchronously and this panel is one of its own
+        listeners, so a change the user makes here comes straight back: the
+        control's own signal handler is still on the stack when this runs.
+        Writing the value in again would be a reentrant call into the widget
+        that is mid-emission -- for a `Gtk.ComboBoxText` that means
+        `set_active_id` inside its own `changed`, which GTK answers with
+        `gtk_tree_model_get_column_type: assertion 'GTK_IS_TREE_MODEL
+        (tree_model)' failed` and then hangs the editor outright. Every kind
+        is guarded, not just the combo: the same loop exists for all of them.
+
+        The test is *what the widget shows*, never *who caused the change*.
+        A value arriving from a second panel or from Restore defaults is not
+        already displayed here, so it still gets written -- which is what
+        keeps two open windows in step. `_loading` remains the thing that
+        stops that write turning into a write back.
+        """
         control = self._controls[row.setting]
         if row.kind == prefs.SWITCH:
-            control.set_active(bool(value))
+            wanted = bool(value)
+            if control.get_active() != wanted:
+                control.set_active(wanted)
         elif row.kind == prefs.CHOICE:
-            control.set_active_id(str(value))
+            wanted = str(value)
+            if control.get_active_id() != wanted:
+                control.set_active_id(wanted)
+            # Outside the guard on purpose: the help line under the theme row
+            # follows the value, and a first load or a re-selection that finds
+            # the combo already right still has to leave the right text there.
             if row.setting == settings.PREVIEW_THEME and self._theme_help:
                 self._theme_help.set_text(prefs.choice_help(row.setting, value))
         elif row.kind == prefs.NUMBER:
-            control.set_value(float(value))
+            wanted = float(value)
+            if control.get_value() != wanted:
+                control.set_value(wanted)
         else:
-            control.set_text("" if value is None else str(value))
+            wanted = "" if value is None else str(value)
+            if control.get_text() != wanted:
+                control.set_text(wanted)
 
     def _apply_sensitivity(self):
         """A row's `enabled_by` decides whether it can be used at all.
