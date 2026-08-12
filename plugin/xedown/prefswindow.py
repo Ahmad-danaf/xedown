@@ -21,7 +21,7 @@ gi.require_version("Gtk", "3.0")
 
 from gi.repository import Atk, GLib, Gtk, Pango
 
-from . import prefs, settings
+from . import a11y, errors, prefs, settings, stylewatcher
 
 # Long enough that a four-tick drag on a spin button is one write and one
 # render rather than four, short enough that letting go feels immediate.
@@ -50,11 +50,20 @@ class SettingsPanel(Gtk.Box):
         # Set while writing store values into widgets, so a programmatic
         # change is never mistaken for the user turning a knob.
         self._loading = False
+        # Exists even for a panel whose stylesheet row has not been reached
+        # yet -- `_build_row` replaces this once it gets there.
+        self._stylesheet_bar = None
+
+        self._quarantine_bar = self._build_notice()
+        self.pack_start(self._quarantine_bar, False, False, 0)
+        self._save_bar = self._build_notice()
+        self.pack_start(self._save_bar, False, False, 0)
 
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
         content.set_border_width(12)
         for group in prefs.GROUPS:
             content.pack_start(self._build_group(group), False, False, 0)
+        content.pack_start(self._build_footer(), False, False, 0)
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -64,6 +73,15 @@ class SettingsPanel(Gtk.Box):
 
         self._load_all()
         self._settings_token = self._store.connect(self._on_settings_changed)
+        # Connect before reading current(): the first connect is what
+        # performs the initial load, so current() beforehand returns the
+        # unset default rather than the live setting.
+        self._watcher_token = stylewatcher.get_watcher().connect(
+            self._on_stylesheet_changed
+        )
+        self._on_stylesheet_changed(stylewatcher.get_watcher().current())
+        self._show_quarantine()
+        self._after_commit()
         self.connect("destroy", self._on_destroy)
         self.show_all()
 
@@ -123,6 +141,11 @@ class SettingsPanel(Gtk.Box):
         if help_label is not None:
             grid.attach(help_label, 0, line, 2, 1)
             self._describe(control, help_label)
+            line += 1
+
+        if row.setting == settings.CUSTOM_STYLESHEET:
+            self._stylesheet_bar = self._build_notice()
+            grid.attach(self._stylesheet_bar, 0, line, 2, 1)
             line += 1
         return line
 
@@ -225,7 +248,86 @@ class SettingsPanel(Gtk.Box):
         entry.connect("activate", self._commit_now, row)
         entry.connect("focus-out-event", self._on_focus_out, row)
         entry.connect("icon-release", self._on_clear, row)
+
+        browse = Gtk.Button(label="Browse…")
+        browse_name = a11y.NAMES["prefs_stylesheet_browse"]
+        browse.set_tooltip_text(browse_name)
+        self._name(browse, browse_name)
+        browse.connect("clicked", self._on_browse, row, entry)
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box.pack_start(entry, False, False, 0)
+        box.pack_start(browse, False, False, 0)
+        box.set_halign(Gtk.Align.END)
+        self._path_boxes[row.setting] = box
+        self._extra_entries.append(("prefs_stylesheet_browse", browse))
         return entry
+
+    def _on_browse(self, button, row, entry):
+        """Pick a stylesheet. Commits on accept, changes nothing on cancel."""
+        dialog = Gtk.FileChooserDialog(
+            title=a11y.NAMES["prefs_stylesheet_browse"],
+            transient_for=button.get_toplevel(),
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.set_modal(True)
+        dialog.add_buttons(
+            "_Cancel", Gtk.ResponseType.CANCEL, "_Select", Gtk.ResponseType.ACCEPT
+        )
+        css = Gtk.FileFilter()
+        css.set_name("Stylesheets")
+        css.add_pattern("*.css")
+        dialog.add_filter(css)
+        every = Gtk.FileFilter()
+        every.set_name("All files")
+        every.add_pattern("*")
+        dialog.add_filter(every)
+        current = entry.get_text().strip()
+        if current:
+            dialog.set_filename(current)
+        try:
+            if dialog.run() == Gtk.ResponseType.ACCEPT:
+                entry.set_text(dialog.get_filename() or "")
+                self._commit_now(entry, row)
+        finally:
+            dialog.destroy()
+
+    def _build_footer(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        name = a11y.NAMES["prefs_restore_defaults"]
+        self._restore = Gtk.Button(label=name + "…")
+        self._name(self._restore, name)
+        self._restore.connect("clicked", self._on_restore)
+        # Inside the panel, not in an action area: peas owns its dialog's
+        # buttons, so anything out there would exist on one entry point and
+        # not the other.
+        box.pack_end(self._restore, False, False, 0)
+        self._extra_entries.append(("prefs_restore_defaults", self._restore))
+        return box
+
+    def _on_restore(self, button):
+        dialog = Gtk.MessageDialog(
+            transient_for=button.get_toplevel(),
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Restore all xedown settings to their defaults?",
+        )
+        dialog.format_secondary_text(
+            "This affects every open preview. Your custom stylesheet will be "
+            "forgotten — the file itself is not deleted."
+        )
+        dialog.add_buttons(
+            "_Cancel", Gtk.ResponseType.CANCEL, "_Restore", Gtk.ResponseType.ACCEPT
+        )
+        try:
+            if dialog.run() == Gtk.ResponseType.ACCEPT:
+                # One set_many, so one write and one broadcast carrying every
+                # name that moved. Every panel and every controller follows.
+                self._store.reset()
+                self._after_commit()
+        finally:
+            dialog.destroy()
 
     @staticmethod
     def _name(widget, name):
@@ -251,11 +353,92 @@ class SettingsPanel(Gtk.Box):
 
     def accessible_entries(self):
         """`[(a11y key, widget), …]` in build order, for the live audit."""
-        return list(self._entries)
+        return list(self._entries) + list(self._extra_entries)
 
     def control_for(self, setting_name):
         """The widget bound to `setting_name`. For the probe to drive."""
         return self._controls[setting_name]
+
+    def restore_button(self):
+        """The Restore defaults button. For the probe to click."""
+        return self._restore
+
+    # --- notices -------------------------------------------------------------
+
+    def _build_notice(self):
+        """A one-line warning bar, hidden and pinned hidden.
+
+        `set_no_show_all` for the reason the mode bar's refresh button and the
+        search bar carry it: xed forces widgets visible on save and revert,
+        and a stray `show_all()` must not raise a warning nobody earned.
+        """
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        bar.set_border_width(6)
+        label = Gtk.Label()
+        label.set_xalign(0.0)
+        label.set_line_wrap(True)
+        label.set_selectable(True)
+        bar.pack_start(label, True, True, 0)
+        bar._label = label
+        bar.show_all()
+        bar.set_no_show_all(True)
+        bar.hide()
+        return bar
+
+    @staticmethod
+    def _set_notice(bar, text):
+        if bar is None:
+            return
+        if text:
+            bar._label.set_text(text)
+            bar.show()
+        else:
+            bar.hide()
+
+    def _show_quarantine(self):
+        """What was found at startup, if anything was wrong with it."""
+        if self._store.quarantine is None:
+            return
+        reason, preserved = self._store.quarantine
+        kept = (
+            f" Your copy was kept at {preserved}."
+            if preserved
+            else " It was left where it is."
+        )
+        self._set_notice(
+            self._quarantine_bar,
+            f"Your settings file {reason}, so xedown started from " f"defaults.{kept}",
+        )
+
+    def _after_commit(self):
+        """Whether the last write actually reached the disk.
+
+        Called from `_commit` — add that call now; Task 3 left none, so that
+        it never shipped an empty method waiting to be filled in.
+        """
+        error = self._store.write_error
+        self._set_notice(
+            self._save_bar,
+            (
+                f"Settings could not be saved: {error}. Your change applies for "
+                "this session, but will not survive a restart."
+                if error
+                else ""
+            ),
+        )
+
+    def _on_stylesheet_changed(self, user):
+        """The custom stylesheet's own notice, worded by `errors.py`.
+
+        Read from the watcher rather than loaded here, so the window and the
+        preview's in-page notice cannot describe the same file differently —
+        and so fixing the file clears this bar without touching the setting.
+        """
+        if user.problem is None:
+            self._set_notice(self._stylesheet_bar, "")
+            return
+        phrase = errors.stylesheet_problem_phrase(user.problem, user.detail)
+        self._set_notice(self._stylesheet_bar, f"{user.path} {phrase}.")
 
     # --- store -> panel ----------------------------------------------------
 
@@ -400,6 +583,7 @@ class SettingsPanel(Gtk.Box):
             # take the whole dialog down, and losing one keystroke is the
             # smaller failure.
             return
+        self._after_commit()
 
     # --- teardown ----------------------------------------------------------
 
@@ -414,5 +598,8 @@ class SettingsPanel(Gtk.Box):
         if self._settings_token is not None:
             self._store.disconnect(self._settings_token)
             self._settings_token = None
+        if self._watcher_token is not None:
+            stylewatcher.get_watcher().disconnect(self._watcher_token)
+            self._watcher_token = None
         for name in list(self._settle):
             self._cancel_settle(name)
