@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of six scenarios.
+# Verifies that xed shuts down cleanly after each of eight scenarios.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -57,6 +57,8 @@ ALL_SCENARIOS=(
   move-tab
   disable-plugin
   preview-active
+  settings-window
+  settings-configurable
 )
 
 if [ "$#" -gt 0 ]; then
