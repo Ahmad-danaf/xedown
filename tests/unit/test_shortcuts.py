@@ -5,7 +5,7 @@ import pytest
 from xedown import shortcuts
 
 
-def test_the_four_actions_exist_with_the_designed_accelerators():
+def test_every_action_exists_with_its_designed_accelerator():
     assert {action.name: action.accelerator for action in shortcuts.ACTIONS} == {
         shortcuts.TOGGLE: "<Ctrl><Shift>M",
         shortcuts.PREVIEW_MODE: "<Ctrl><Shift>1",

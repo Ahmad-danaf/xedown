@@ -243,7 +243,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 return action
         return None
 
-    def _window_activatable(self):
+    def _window_activatable_attr(self):
         """The XedownWindowActivatable driving this window.
 
         Read from the attribute the plugin sets on the window: xed keeps its
@@ -3520,7 +3520,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_settings_audit(self):
-        activatable = self._window_activatable()
+        activatable = self._window_activatable_attr()
         window = getattr(activatable, "_settings_window", None)
         record("settings-window-opened", window is not None)
         if window is None:
@@ -3660,7 +3660,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             not panel._settle,
             f"timers: {panel._settle!r}",
         )
-        activatable = self._window_activatable()
+        activatable = self._window_activatable_attr()
         record(
             "the-window-lets-go-of-the-settings-window",
             getattr(activatable, "_settings_window", "unset") is None,

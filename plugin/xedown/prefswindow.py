@@ -387,10 +387,6 @@ class SettingsPanel(Gtk.Box):
         """The widget bound to `setting_name`. For the probe to drive."""
         return self._controls[setting_name]
 
-    def restore_button(self):
-        """The Restore defaults button. For the probe to click."""
-        return self._restore
-
     # --- notices -------------------------------------------------------------
 
     def _build_notice(self):
@@ -651,15 +647,22 @@ class SettingsPanel(Gtk.Box):
         reference to it alive for the life of the process. An armed timer
         fires into a destroyed widget. Both are what the shutdown scenarios
         exist to catch.
+
+        Timers are cancelled first, before either token is released: they are
+        the cleanup that must not be skippable, while the token releases are
+        the fallible part (`StylesheetWatcher.disconnect` can reach an
+        unguarded `Gio.FileMonitor.cancel()`). If a token release ever
+        raised, cancelling the timers afterwards would never run, leaving an
+        armed `GLib.timeout` to fire into this now-destroyed widget.
         """
+        for name in list(self._settle):
+            self._cancel_settle(name)
         if self._settings_token is not None:
             self._store.disconnect(self._settings_token)
             self._settings_token = None
         if self._watcher_token is not None:
             stylewatcher.get_watcher().disconnect(self._watcher_token)
             self._watcher_token = None
-        for name in list(self._settle):
-            self._cancel_settle(name)
 
 
 class SettingsWindow(Gtk.Window):
