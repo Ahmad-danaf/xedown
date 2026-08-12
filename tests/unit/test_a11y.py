@@ -274,10 +274,13 @@ _HOST_MODULES_SETTING_NAMES = (
 # `ModeBar.announce`'s own body: that method reaches AT-SPI through
 # `accessible.emit("announcement", text)`, an `.emit(` call, which this
 # alternation deliberately does not match -- widening it to catch every
-# `.emit(` in the codebase would also flag the unrelated `self.emit(...)`
-# GObject signal calls nearby. `text` is passed through as a variable today,
-# so nothing there currently needs catching, but a literal written directly
-# into that `emit(...)` call would not be.
+# `.emit(` in the codebase would also flag the unrelated GObject signal
+# emissions nearby (`modebar.py:240,253`'s `self.emit("refresh-requested")`/
+# `self.emit("mode-selected", ...)`, `searchbar.py:169-190`'s several
+# `self.emit("query-changed"/"step-requested"/"close-requested", ...)`).
+# `text` is passed through as a variable today, so nothing there currently
+# needs catching, but a literal written directly into that `emit(...)` call
+# would not be caught.
 # `_announce_mode(` and `mode_announcement_name(` do not false-positive on
 # this: `(?<!\w)announce\(` only matches where "announce" is immediately
 # followed by "(", and both of those identifiers have more word characters

@@ -133,12 +133,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> mode switch now announces
   itself to a screen reader: switching to Markdown source says "Markdown
   source", switching back says "Preview", spoken through `Atk.Object`'s
-  `announcement` signal from the mode bar's own accessible object. Tabbing to
-  a mode button and activating it from there does not repeat the mode name —
-  the announcement is suppressed only while a mode toggle button itself has
-  focus, so it is not heard twice; switching from anywhere else, including
-  with the Refresh button focused, still announces normally. Measured live,
-  reproducibly, against Orca 46.1 on Linux Mint.
+  `announcement` signal from the mode bar's own accessible object — both
+  directions measured live, reproducibly, against Orca 46.1 on Linux Mint.
+  The announcement is suppressed only while a mode toggle button itself has
+  focus, so tabbing to a mode button and activating it does not repeat the
+  mode name a second time; switching from anywhere else, including with the
+  Refresh button focused (also in the mode bar, but not a mode toggle),
+  still announces normally. The suppression itself was measured live for the
+  Source-ward direction (tabbing to and activating the "Markdown source"
+  button); the reverse — tabbing back to an already-focused, now-unpressed
+  Preview button and activating it — was not separately measured, though the
+  check in `set_mode` is not direction-specific.
 
 ### Fixed
 

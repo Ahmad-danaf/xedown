@@ -261,15 +261,41 @@ widget's content changed, say so anyway.'" That was wrong, and shipped code
 now disproves it: `Atk.Object` has exactly such an API, its `announcement`
 signal, and xedown uses it in `ModeBar.announce()` to make the
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> mode switch speak its new mode
-by name. Measured live against Orca 46.1 (`scripts/run-orca-tests.sh`), the
-signal reaches Orca unconditionally — whether or not the emitting object
-currently has focus. What the mechanism is *not* wired to is
-`update_body()`: the in-place refresh path never calls `announce()`, so a
-change that lands while Preview is already showing still produces nothing to
-hear. `Atk.Object`'s `announcement` signal was added in ATK 2.50;
-`ModeBar.announce()` never raises even if the signal is unavailable on an
-older ATK, so on such a system the call is a silent no-op and every mode
-switch it covers goes back to being as silent as before this work.
+by name. That the signal reaches Orca 46.1 **unconditionally — whether or
+not the emitting object currently has focus** — was measured with a
+standalone throwaway test emitting the signal from both a focused and an
+unfocused `Gtk.Button`, outside xed entirely (Task 4's Run C; see
+`task-4-report.md`'s Q5 and `plugin/xedown/modebar.py:190-203`, which cites
+the same finding). `scripts/run-orca-tests.sh` itself cannot demonstrate the
+focused half against xedown's own UI: its emitter is the mode bar's
+`Gtk.Box`, which is never itself keyboard-focusable, and — separately —
+`set_mode` deliberately withholds the emission whenever a mode toggle button
+itself holds focus, so that a Tab-then-activate switch is not announced
+twice (see "The stale indicator and the manual-refresh cue are not
+announced," below, for where that suppression rule is checked against a
+live Orca run). What the mechanism is *not*
+wired to is `update_body()`: the in-place refresh path never calls
+`announce()`, so a change that lands while Preview is already showing still
+produces nothing to hear — inferred from reading `update_body()`'s own code
+(it runs a JavaScript body swap only), not separately measured against Orca.
+`Atk.Object`'s `announcement` signal is a real but versioned upstream ATK
+feature — this project never tested against an ATK build older than what
+ships on this machine, and does not know at which version the signal was
+added. `ModeBar.announce()` never raises even where the signal does not
+exist: on an ATK too old to have it, the call becomes a silent no-op, and
+every mode switch it covers goes back to being as silent as before this
+work.
+
+An `aria-live` region in xedown's *own* rendered markup (`renderer.py`) is a
+second, separate avenue that was never tried: WebKit implements ARIA on the
+pages it renders, independently of GTK's ATK layer, and whether such a
+region would reach Orca through WebKitGTK's own accessibility bridge is an
+open question — more interesting now than when this entry was first
+written, since the entry below measures that same WebView emitting *zero*
+AT-SPI events of any kind for a different interaction (keyboard scrolling),
+which cuts both ways: it could mean an `aria-live` region has nothing to
+attach to either, or it could be unrelated to how ARIA state changes are
+reported. Untried either way.
 
 **What to do about it:** today, a mode switch
 (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> twice) is the update path
@@ -278,12 +304,15 @@ measured to speak. Routing `update_body()` through the same
 option now that the mechanism is proven to reach Orca — but it has not been
 done, and whether it would read well in practice (for example, whether it
 would talk over a user who is mid-scroll) has not been tried or checked
-against Orca.
+against Orca. Trying an `aria-live` region in the rendered page and checking
+it against Orca is the other untried option, and would need its own
+measurement before this entry could call it either way.
 
 **Status:** open question, not a settled limitation. The claim that GTK 3
 gives xedown no way to signal a change that moves no focus was wrong and is
 corrected above; whether routing auto-refresh through the now-proven
-mechanism is worth doing, and how it would sound, has not been investigated.
+mechanism, or an `aria-live` region in the rendered page, is worth doing —
+and how either would sound — has not been investigated.
 
 ## Keyboard-scrolling the preview produces no screen-reader feedback
 
@@ -319,16 +348,19 @@ behind the document a dot appears beside the Refresh button and the button's
 description changes to explain why. Neither event is announced by itself —
 the only speech at that moment, if any, is the ordinary "document modified"
 title change any edit produces, which says nothing about the preview.
-Tabbing to the Refresh button afterward *is* announced, in full: "Refresh
-the preview push button." followed by its description, "The preview is out
-of date — refresh it (Ctrl+Shift+R)".
+Reaching the Refresh button afterward *is* announced, in full: "Refresh the
+preview push button." followed by its description, "The preview is out of
+date — refresh it (Ctrl+Shift+R)" — measured via a direct focus call in the
+probe, not an actual Tab press, though Tab should reach the same button.
 
 **Why:** both real AT-SPI events fire — the dot's own `showing` state
 change, and the Refresh button's `accessible-description` change — but both
 are suppressed by mechanisms outside xedown's control: Orca filters the
 dot's event by its role, and the button's description-change event is
-processed but never presented because the button is not the current focus
-at that moment. Switching mode with the Refresh button (not a mode toggle)
+processed but most likely never presented because the button is not the
+current focus at that moment (the event firing, and not being presented, is
+measured; the reason is `task-4-report.md`'s own inference, not separately
+confirmed). Switching mode with the Refresh button (not a mode toggle)
 focused still announces the mode change normally — measured — so this is
 not the same suppression that deliberately silences a mode toggle's own
 double-announcement; only the two mode toggle buttons do that.
