@@ -17,9 +17,10 @@ only signal both hosts share.
 
 import gi
 
+gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 
-from gi.repository import Atk, GLib, Gtk, Pango
+from gi.repository import Atk, Gdk, GLib, Gtk, Pango
 
 from . import a11y, errors, prefs, settings, stylewatcher
 
@@ -603,3 +604,48 @@ class SettingsPanel(Gtk.Box):
             self._watcher_token = None
         for name in list(self._settle):
             self._cancel_settle(name)
+
+
+class SettingsWindow(Gtk.Window):
+    """Our own host for the panel: the View-menu entry point.
+
+    Non-modal on purpose. Watching previews change behind it while a choice is
+    made is the point of applying settings live, and a modal window would hide
+    exactly what the user is trying to see.
+    """
+
+    __gtype_name__ = "XedownSettingsWindow"
+
+    def __init__(self, parent=None):
+        super().__init__(title="Markdown Preview Settings")
+        self.set_transient_for(parent)
+        self.set_destroy_with_parent(True)
+        self.set_modal(False)
+        self.set_default_size(520, 560)
+
+        self.panel = SettingsPanel()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.pack_start(self.panel, True, True, 0)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        actions.set_border_width(6)
+        close_name = a11y.NAMES["prefs_close"]
+        self._close = Gtk.Button(label="_" + close_name, use_underline=True)
+        SettingsPanel._name(self._close, close_name)
+        self._close.connect("clicked", lambda *_: self.destroy())
+        actions.pack_end(self._close, False, False, 0)
+        box.pack_start(actions, False, False, 0)
+
+        self.add(box)
+        self.connect("key-press-event", self._on_key_press)
+        self.show_all()
+
+    def accessible_entries(self):
+        """The panel's controls plus this window's own Close button."""
+        return self.panel.accessible_entries() + [("prefs_close", self._close)]
+
+    def _on_key_press(self, _window, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.destroy()
+            return True
+        return False
