@@ -57,9 +57,10 @@ shutdown — and because that sequence disables the plugin near the end, the shu
 sees is one where xedown is no longer active. The shutdown harness gives each scenario
 its own xed launch and closes the window(s) the way a user does (a real window-manager
 close request, never a signal, so xed runs its normal shutdown and plugin-unload path),
-then checks that launch's stderr on its own. Six scenarios: closing a Markdown tab,
-closing several Markdown tabs, closing several xed windows, moving a tab between
-windows, disabling the plugin before closing, and closing xed with previews live.
+then checks that launch's stderr on its own. Eight scenarios: closing a Markdown
+tab, closing several Markdown tabs, closing several xed windows, moving a tab
+between windows, disabling the plugin before closing, closing xed with previews
+live, closing the settings window, and closing it after changing a setting.
 Run it before tagging; it takes a few minutes.
 
 Start with a terminal visible: `xed` prints warnings and tracebacks there, and a silent
@@ -107,9 +108,9 @@ explained inline below.
 | 7 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> | Toggles the same way as the buttons |
 | 8 | Edit in Markdown mode, switch to Preview | Preview shows the edited content |
 | 9 | Type in Markdown mode | No rendering work happens until you switch (no lag, no flicker) |
-| 10 | With Preview showing, change the file outside xed and accept xed's reload prompt | The preview follows the new content by itself, about a quarter second after the buffer changes — you never have to switch modes to see it |
+| 10 | With Preview showing, use *Search → Find and Replace* to replace a word that occurs throughout the document | The preview follows the buffer by itself, about a quarter second after the change — you never have to switch modes to see it |
 | 11 | Save, then revert, while Preview is active, watching closely | No visible flicker to the source editor at any point — the harness asserts the end state; this is about the transition looking clean |
-| 12 | Modify the file outside the editor, then reload when xed offers | Preview refreshes; xed's own "reload?" prompt appears — the plugin does not silently reload on its own |
+| 12 | With Preview showing, edit the document, then *File → Revert* and confirm | The editor and the preview both go back to the file on disk. The plugin never reverts anything on its own — the confirmation you answered is xed's |
 | 13 | Click the external link in `tests/fixtures/showcase.md` | Opens in the default browser, not in the preview |
 | 14 | Click the relative link to `linked.md` in `tests/fixtures/showcase.md` | Opens in a new xed tab |
 | 15 | Click the anchor link in `tests/fixtures/showcase.md` | Scrolls within the preview |
@@ -132,7 +133,7 @@ explained inline below.
 | 32 | Create `~/.config/xedown/mine.css` containing `body { background: #101820; }`, set `"custom_stylesheet": "~/.config/xedown/mine.css"` in `settings.json`, restart xed and open `tests/fixtures/showcase.md` | The preview background is that colour rather than the theme's — the stylesheet is layered over the theme, not replacing it |
 | 33 | With that preview still open, open `mine.css` in xed itself, change the colour to `#201810` and save | The open preview changes colour within a moment. No restart, no reopening the document, no flicker of the wrong content |
 | 34 | Delete `mine.css` from a terminal while the preview is still open | Within a moment the preview returns to the built-in theme, with a bar at the top of the page naming `mine.css` and saying it was not found. The document is still fully rendered below the bar |
-| 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The six shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
+| 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The eight shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
 | 36 | Hover a code block in `tests/fixtures/showcase.md` | A **Copy** button fades in at the corner. The code does not move or resize as it appears |
 | 37 | Click it, then paste somewhere | The code arrives exactly as written, including indentation. The button says **Copied** for a moment, then goes back to **Copy** |
 | 38 | Tab to the copy button instead of hovering | It becomes visible with a clear focus ring, and <kbd>Enter</kbd> copies |
@@ -213,10 +214,29 @@ explained inline below.
 | 113 | Open both entry points at once, change a value in one | The other follows immediately |
 | 114 | Run xed under an RTL desktop locale and open the window | Labels right, controls left, nothing clipped |
 | 115 | Open and close the window ten times, then close xed | No warnings on standard error |
+| 116 | With `tests/fixtures/showcase.md` open in Preview, open *View → Markdown Preview Settings* and set **Content width** to 30, then 100; then set **Text size** to 28 | The column narrows and widens as you change it, and the text grows with the whole document — headings, code and table text scale together, not just body text. No page reload and no scroll jump at any point |
+| 117 | Set **Refresh delay** to 2000 ms, close the settings window, and with Preview showing press <kbd>Ctrl</kbd>+<kbd>Z</kbd> in the tab | The preview waits about two seconds before catching up, rather than a quarter second — the new delay reached a tab that was already open |
+| 118 | Open two Markdown files in Preview, click the other tab and come back, then press <kbd>Down</kbd> and <kbd>Page Down</kbd> without clicking the page first | The preview scrolls straight away. The keyboard stays with what you can see, rather than with the hidden source |
+| 119 | Copy an image beside a Markdown document of your own, reference it, then `chmod 000` the image and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | A placeholder says the image could not be read, naming it, with your alt text alongside — not "not found", and not a blank space |
+| 120 | Add `![diagram](http://[::1/a.png)` — a malformed address — to that document and refresh | A placeholder says the reference could not be resolved. Nothing is fetched, and the rest of the document renders normally |
+| 121 | In the same document, write a paragraph and start a `-` list on the very next line, with no blank line between them | It renders as a list under the paragraph, the way GitHub renders it — not as one run-on paragraph |
+| 122 | *Preferences → Plugins*, select **Xedown** | The version reads **0.2.0** |
+| 123 | Clean up: **Restore defaults…** in the settings window, `chmod 644` the image from row 119, and delete the scratch document and image rows 119–121 used | Your settings are back to defaults and nothing from these rows is left behind |
+
+Rows 116–123 use a scratch document of your own rather than a fixture: rows 119
+and 120 deliberately break an image reference, and `tests/fixtures/` documents
+are either clean by contract or broken in specific documented ways (see
+`tests/fixtures/README.md`). Row 123 undoes everything they change.
 
 Row 107 is the one claim no automated check covers: the probe walks the ATK
 tree without a bridge, and the plugin-manager button in row 102 is the hop the
 probe reaches through peas rather than through xed's dialog.
+
+One v0.2 behaviour deliberately has no row. An error page recovering into a
+document on refresh is asserted by the integration harness
+(`error-page-recovers-on-refresh`), and the only way to produce an error page
+by hand is to damage the installed plugin part-way through this checklist —
+which would turn every row after it into a test of something you broke.
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

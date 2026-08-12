@@ -3,10 +3,14 @@
 - Installation — see [README.md](../README.md); build the release archive with
   `scripts/build-release.sh`
 - Manual smoke test — [manual-smoke-test.md](manual-smoke-test.md), which also
-  describes the two automated harnesses that run before it:
-  `scripts/run-integration-tests.sh` (live widget-tree behaviour) and
-  `scripts/run-shutdown-tests.sh` (clean shutdown after each of six scenarios)
+  describes the automated harnesses that run before it:
+  `scripts/run-integration-tests.sh` (live widget-tree behaviour),
+  `scripts/run-shutdown-tests.sh` (clean shutdown after each of eight
+  scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
+  says, in an isolated display)
 - Known issues — [known-issues.md](known-issues.md)
+- Screen-reader evidence — [orca-verification/](orca-verification/), the raw
+  measurements behind every claim in the README's *Accessibility* section
 - Test fixtures — [../tests/fixtures/README.md](../tests/fixtures/README.md), the
   documents the manual smoke test and `tests/unit/test_fixtures.py` are both run
   against
