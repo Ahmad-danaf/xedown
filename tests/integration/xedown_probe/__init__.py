@@ -3535,6 +3535,26 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_settings_apply(self):
         """A change made in the window reaches every open preview."""
+        store = xedown_settings.get_settings()
+        # step_reload_search_go, earlier in this same sequence, leaves the
+        # store on "focused" already. GTK's combo box returns early without
+        # emitting `changed` when `set_active_id` is given the id already
+        # active, so flipping straight to "focused" from there would never
+        # run the panel's own commit-and-broadcast path at all -- the checks
+        # below would pass on stale state, not on anything this step did.
+        # Force a genuinely different starting point first, through the
+        # store directly: that's setup, not the thing under test.
+        store.set(xedown_settings.PREVIEW_THEME, "repository")
+        record(
+            "settings-apply-precondition-not-already-focused",
+            store.get(xedown_settings.PREVIEW_THEME) != "focused",
+            f"theme before the panel change: "
+            f"{store.get(xedown_settings.PREVIEW_THEME)!r}",
+        )
+        # Settings._notify delivers synchronously, so the panel's own combo
+        # already reads "repository" here -- driven through the panel's
+        # control, not the store, so it is the window's write path under
+        # test, not the store's (already covered elsewhere).
         panel = self._settings_window.panel
         panel.control_for(xedown_settings.PREVIEW_THEME).set_active_id("focused")
         self._schedule(700, self.step_settings_apply_check)
