@@ -124,9 +124,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   background and the code-block background, in all four themes, light and
   dark — meets WCAG 1.4.11's 3:1 non-text threshold, along with every
   semantic colour pair xedown draws, checked by unit test. **Screen-reader
-  speech itself has not yet been checked**, with Orca or any other reader —
-  see
-  [docs/known-issues.md](docs/known-issues.md).
+  speech has now been checked against Orca 46.1 on Linux Mint** (X11,
+  `scripts/run-orca-tests.sh`), on one machine: the mode switch announces
+  (below), tabbing through the mode bar announces each control by name and
+  pressed state, and the external-change warning bar is announced.
+  Keyboard-scrolling the preview and the stale/refresh indicator are not
+  announced — see [docs/known-issues.md](docs/known-issues.md).
+- The <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> mode switch now announces
+  itself to a screen reader: switching to Markdown source says "Markdown
+  source", switching back says "Preview", spoken through `Atk.Object`'s
+  `announcement` signal from the mode bar's own accessible object. Tabbing to
+  a mode button and activating it from there does not repeat the mode name —
+  the announcement is suppressed only while a mode toggle button itself has
+  focus, so it is not heard twice; switching from anywhere else, including
+  with the Refresh button focused, still announces normally. Measured live,
+  reproducibly, against Orca 46.1 on Linux Mint.
 
 ### Fixed
 

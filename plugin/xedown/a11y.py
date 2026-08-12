@@ -12,7 +12,8 @@ then a failing test instead of a regression nobody notices.
 
 Nothing here claims anything about a screen reader. These rules are the
 measurable half of the brief -- names, roles, focusability, order. Whether
-Orca actually speaks a mode change is a manual check, recorded as one.
+Orca actually speaks a mode change is now an automated check
+(`scripts/run-orca-tests.sh`), not a manual one.
 """
 
 import re

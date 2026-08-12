@@ -245,77 +245,145 @@ what triggers xed's own check; neither `Ctrl+Shift+R` nor a plain mode switch
 re-reads the file themselves. If the watching is costing more than it gives on
 such a mount, set `"watch_external_changes": false`.
 
-## The accessibility pass has not been checked with a screen reader
-
-**What you see:** nothing wrong, necessarily — this is a gap in verification,
-not a reported bug. v0.2's accessibility work gives every control xedown
-creates a name, moves keyboard focus to the preview on a mode switch and
-changes its checked state to match, and exposes a `role="main"` landmark and
-a `lang` attribute on the rendered document page (never on an error page,
-which is xedown speaking rather than the document). It also meets WCAG
-1.4.11's 3:1 non-text contrast for the focus ring in every theme, light and
-dark. All of that is checked mechanically: the `a11y-*` assertions in
-`tests/integration/xedown_probe/__init__.py` (run through
-`scripts/run-integration-tests.sh`) walk xed's live accessible tree, and
-`tests/unit/test_contrast.py` checks colour. Nobody has yet run a screen
-reader against any of it. Whether Orca actually announces a mode switch,
-names a control correctly, or reads the stale indicator as *Preview is out of
-date* rather than staying silent or reading a symbol, is unverified.
-
-**Why:** the audit checks the accessible tree — names, roles, focus, checked
-state — because that is what a script can reach. It cannot listen. What it
-confirms are the mechanisms a screen reader is supposed to use, not proof
-that one does.
-
-**What to do about it:** run the Orca rows in
-[`docs/manual-smoke-test.md`](manual-smoke-test.md) (rows 95–101) with Orca
-on Linux Mint, write down what it actually says, and update this entry, the
-changelog and the README's *Accessibility* section to match. Until that
-happens, treat every claim in this project about screen-reader *behaviour* —
-as opposed to accessible names, focus, checked state, landmark, language and
-contrast, all of which are measured — as unverified.
-
-**Status:** outstanding. Delete this entry once the Orca pass has run and its
-findings are folded into the docs above.
-
 ## Whether an in-place preview update can reach a screen reader is untested
 
 **What you see:** the debounced auto-refresh path (`update_body()` /
 `window.xedown.replaceBody()`, `plugin/xedown/preview.py:91-106`) updates the
 rendered page in place while Preview is already showing and already has
 focus. Reading `update_body()` confirms it only runs a JavaScript body swap:
-nothing about it moves keyboard focus or changes any GTK widget's accessible
-state, so no GTK-widget-level accessible event fires for a screen reader to
-react to.
+nothing about it moves keyboard focus, changes any GTK widget's accessible
+state, or calls `ModeBar.announce()` (see below) — so nothing fires that a
+screen reader would react to.
 
-**Why:** GTK 3's accessibility layer (ATK) has no widget-level equivalent of
-an ARIA live region — no API to say "this GTK widget's content changed, say
-so anyway." Focus changes and object/state-change notifications are the only
-two mechanisms it gives a plugin at that level, and xedown's other
-accessibility work leans on exactly those: the mode switch moves focus to
-the named preview widget and changes the toggle's checked state; an in-place
-refresh does neither. That much is measured.
-
-What is **not** measured is whether the update is unreachable by any means.
-The rendered page is xedown's own markup (`renderer.py`), and WebKit
-implements ARIA on the pages it renders, independently of GTK's ATK layer —
-an `aria-live` region on the preview's `<article>` is something xedown could
-add to that markup. Whether such a region would actually reach Orca through
-WebKitGTK's own accessibility bridge has not been tried, and nobody has run
-Orca against this preview at all yet (see the entry above). Calling this
-unannounceable outright would be exactly the kind of claim this project does
-not make without checking it.
+**Why:** an earlier version of this entry said GTK 3's ATK "has no
+widget-level equivalent of an ARIA live region — no API to say 'this GTK
+widget's content changed, say so anyway.'" That was wrong, and shipped code
+now disproves it: `Atk.Object` has exactly such an API, its `announcement`
+signal, and xedown uses it in `ModeBar.announce()` to make the
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> mode switch speak its new mode
+by name. Measured live against Orca 46.1 (`scripts/run-orca-tests.sh`), the
+signal reaches Orca unconditionally — whether or not the emitting object
+currently has focus. What the mechanism is *not* wired to is
+`update_body()`: the in-place refresh path never calls `announce()`, so a
+change that lands while Preview is already showing still produces nothing to
+hear. `Atk.Object`'s `announcement` signal was added in ATK 2.50;
+`ModeBar.announce()` never raises even if the signal is unavailable on an
+older ATK, so on such a system the call is a silent no-op and every mode
+switch it covers goes back to being as silent as before this work.
 
 **What to do about it:** today, a mode switch
 (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> twice) is the update path
-known to move focus and change a control's checked state, so it is the one
-an Orca user can rely on. Whether an `aria-live` region would let auto-refresh
-be heard too is open future work — add it, then check it against Orca,
-before any document claims it works or doesn't.
+measured to speak. Routing `update_body()` through the same
+`ModeBar.announce()` xedown already uses for the mode switch is a live
+option now that the mechanism is proven to reach Orca — but it has not been
+done, and whether it would read well in practice (for example, whether it
+would talk over a user who is mid-scroll) has not been tried or checked
+against Orca.
 
-**Status:** open question, not a settled limitation. GTK 3 gives xedown no
-*widget-level* way to signal a change that moves no focus; whether the
-rendered page's own ARIA support closes that gap has not been investigated.
+**Status:** open question, not a settled limitation. The claim that GTK 3
+gives xedown no way to signal a change that moves no focus was wrong and is
+corrected above; whether routing auto-refresh through the now-proven
+mechanism is worth doing, and how it would sound, has not been investigated.
+
+## Keyboard-scrolling the preview produces no screen-reader feedback
+
+**What you see:** with Preview showing, pressing <kbd>Down</kbd> or
+<kbd>Page Down</kbd> without clicking first scrolls the document, but Orca
+says nothing at all.
+
+**Why:** measured directly against the raw AT-SPI event log, not inferred
+from silence: the window between the key presses and whatever happens next
+contains no accessibility event of any kind — confirmed independently every
+time it has been measured, from the earliest live runs through the final
+runs of this project's Orca verification work. This is not merely
+unpresented speech; Orca receives nothing to present. WebKit2's
+`enable-caret-browsing`
+(off by default; xedown never sets it) was tried as the most likely cause —
+a temporary, reverted one-line change forced it on — and made no measurable
+difference; the WebView still produced zero AT-SPI activity. The actual
+cause is inside WebKit2GTK's own AT-SPI bridge, a C/C++ codebase outside
+xedown's Python and outside what this project can instrument.
+
+**What to do about it:** nothing xedown-side is known to fix this. This is
+not a xedown code-path defect with an available fix, and it is not
+presented as fixed — enabling caret browsing, the one hypothesis tested,
+changed nothing.
+
+**Status:** outstanding, upstream of xedown. Revisit if a future WebKitGTK
+version changes this, or if someone instruments WebKit2GTK itself.
+
+## The stale indicator and the manual-refresh cue are not announced
+
+**What you see:** with `"auto_refresh": false`, when the preview falls
+behind the document a dot appears beside the Refresh button and the button's
+description changes to explain why. Neither event is announced by itself —
+the only speech at that moment, if any, is the ordinary "document modified"
+title change any edit produces, which says nothing about the preview.
+Tabbing to the Refresh button afterward *is* announced, in full: "Refresh
+the preview push button." followed by its description, "The preview is out
+of date — refresh it (Ctrl+Shift+R)".
+
+**Why:** both real AT-SPI events fire — the dot's own `showing` state
+change, and the Refresh button's `accessible-description` change — but both
+are suppressed by mechanisms outside xedown's control: Orca filters the
+dot's event by its role, and the button's description-change event is
+processed but never presented because the button is not the current focus
+at that moment. Switching mode with the Refresh button (not a mode toggle)
+focused still announces the mode change normally — measured — so this is
+not the same suppression that deliberately silences a mode toggle's own
+double-announcement; only the two mode toggle buttons do that.
+
+**What to do about it:** tab to the Refresh button to hear why it is
+marked, or watch for the dot. The same `Atk.Object` announcement now used
+for the mode switch (see the entries above) could in principle be wired to
+the stale transition too, but this has not been done or measured against
+Orca.
+
+**Status:** open question, not fixed.
+
+## Screen-reader verification is real but narrow
+
+**What you see:** nothing wrong — this is about how much testing stands
+behind the claims elsewhere in this file and in the README, not a bug.
+`scripts/run-orca-tests.sh` drove Orca 46.1 against a real xed session and
+measured, reproducibly across multiple runs, that
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> announces the new mode both
+ways, tabbing through the mode bar announces each control by name and
+pressed state, and the external-change warning bar is announced. That is
+real, not inferred — but several adjacent things were checked and found
+**unknown**, not working:
+
+- The View menu's *Toggle Markdown Preview* entry and a mouse click on a
+  mode-bar button were never exercised by the probe. Both run through the
+  same `TabController.set_mode` funnel the keyboard shortcut does, so they
+  very likely announce the same way, but that has not been measured.
+- The reverse suppression direction — tabbing back to the already-focused,
+  now-unpressed Preview button and activating it — was not separately
+  measured; only activating the Source button from inside the bar was.
+- The search bar's own row (manual smoke test row 99) is not asserted by
+  the automated harness: the probe's fixed six-Tab-press count sweeps focus
+  past the search bar's own last control and into xed's surrounding chrome
+  (one of the utterances measured is `"Show or hide the side pane in the
+  current window."`, not a search-bar control at all), so a clean pass/fail
+  slice is not possible with the probe as it stands. The controls the probe
+  does reach are announced correctly by name; nothing more than that should
+  be read into the row being unasserted.
+- Everything was run on one machine, one Orca version (46.1), one
+  WebKitGTK build, on X11. Wayland was never tried.
+
+**Why:** the probe drives one specific sequence of keyboard actions against
+one desktop; it was built to measure exactly what it measures, not to
+survey every route to the same code.
+
+**What to do about it:** none of the above blocks anything today — the
+measured route (the keyboard shortcut, on this machine) is the one
+documented as working. Extending the probe to the View menu, a synthesized
+mouse click and the reverse suppression direction, re-scoping the
+search-bar Tab count to the bar's own controls, and testing under Wayland
+would each close one gap.
+
+**Status:** outstanding — each bullet above is an untested route, not a
+known problem.
 
 ## A document opened through a symbolic link never follows changes to its file
 

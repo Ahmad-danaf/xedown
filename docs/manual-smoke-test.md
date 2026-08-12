@@ -83,13 +83,18 @@ Rows 47–53 use `tests/fixtures/rtl.md` and `tests/fixtures/mixed-direction.md`
 Both are clean documents like `showcase.md` — an error placeholder in either is
 a real regression. Row 53 restores the settings file, like row 46.
 
-Rows 95–101 need Orca (Linux Mint's screen reader) actually running, and are
-the one part of this checklist no script can perform. Everything the `a11y-*`
-checks in `tests/integration/xedown_probe/__init__.py` (run through
-`scripts/run-integration-tests.sh`) can reach — names, focus, checked state,
-landmark, language — is confirmed structurally before you ever get here;
-what only a human with headphones can confirm is whether Orca says any of it
-out loud, and what words it actually uses.
+Rows 95–101 need Orca (Linux Mint's screen reader) actually running. Everything
+the `a11y-*` checks in `tests/integration/xedown_probe/__init__.py` (run
+through `scripts/run-integration-tests.sh`) can reach — names, focus, checked
+state, landmark, language — is confirmed structurally before you ever get
+here. `scripts/run-orca-tests.sh` goes further: it drives a real xed session
+under Orca in an isolated Xephyr display and asserts on what Orca actually
+says for most of these rows, so what follows below is what it already
+established, not an open question — you are confirming it rather than
+discovering it. It does not replace this checklist: it needs its own display
+and speaks out loud, and a couple of rows (99, and the moment the stale dot
+first appears in row 100) are not things it can cleanly assert on for reasons
+explained inline below.
 
 | # | Step | Expected |
 | --- | --- | --- |
@@ -188,12 +193,12 @@ out loud, and what words it actually uses.
 | 93 | Save the file under a new name (*File → Save As*), then edit the **new** file from a terminal | The preview follows the new file. Editing the old path changes nothing |
 | 94 | Set `"watch_external_changes": false`, restart xed, repeat the first row | Nothing happens until you refresh by hand |
 | 95 | Reset `~/.config/xedown/settings.json` to defaults (row 94 turned `watch_external_changes` off) and restart xed. Start Orca (<kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd>, or `orca &`), then open `tests/fixtures/showcase.md` | Orca announces the window and the preview |
-| 96 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> to switch modes, twice | Orca says which surface is now showing, both ways. **Write down what it actually said** — the documentation must match it |
-| 97 | <kbd>Tab</kbd> through the mode bar | Each control is announced by name; nothing is announced as "black circle" or otherwise unnamed |
-| 98 | With the preview showing, press <kbd>Down</kbd> and <kbd>Page Down</kbd> without clicking first | The document scrolls, and Orca reads as it goes |
-| 99 | Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, tab through the search bar | Every button is announced by name, not by icon |
-| 100 | Set `"auto_refresh": false`, restart xed, open the file in Preview, switch to Markdown, type a line, switch back to Preview (it renders), then press <kbd>Ctrl</kbd>+<kbd>Z</kbd> so the stale dot appears | Orca announces the stale indicator as *Preview is out of date*, not as a symbol |
-| 101 | Remove `auto_refresh` from `~/.config/xedown/settings.json`, restart xed, then trigger the external-change bar (edit the file from a terminal while it has unsaved edits) | The bar and its **Reload…** button are announced |
+| 96 | Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> to switch modes, twice | Orca says **"Markdown source"** switching to Source, then **"Preview"** switching back — measured, reproducibly, by `scripts/run-orca-tests.sh`. Confirm you hear exactly that |
+| 97 | <kbd>Tab</kbd> into the mode bar, <kbd>Tab</kbd> again, then press <kbd>Space</kbd> to activate the newly-focused button | Focusing the bar announces its state ("Preview toggle button pressed."); tabbing announces the next control by name and state ("Markdown source toggle button not pressed."); activating it switches mode but does **not** repeat the mode name — you hear only its own "pressed" state change, not a second announcement. This is deliberate: the mode announcement is suppressed only while a mode toggle button itself has focus, so it is not heard twice |
+| 98 | With the preview showing, press <kbd>Down</kbd> and <kbd>Page Down</kbd> without clicking first | The document scrolls visually, but Orca says **nothing** — measured, reproducibly, as complete AT-SPI silence, not merely unannounced speech. This is not a xedown defect with a known fix; the cause is inside WebKit2GTK's own AT-SPI bridge (see [docs/known-issues.md](known-issues.md)). Confirm the silence, and that scrolling still happens |
+| 99 | Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, tab through the search bar at a normal pace | Each search-bar control is announced by name: "Match case toggle button not pressed.", "Previous match push button.", "Next match push button.", "Close search push button." — measured, once the harness's Tab presses were spaced out; a zero-delay burst of presses left Orca silent even though the underlying events were well-formed, which is why this row is not asserted automatically. Continuing to tab past **Close search** moves focus out of the search bar and into xed's own chrome (measured: "Show or hide the side pane in the current window.") — that one is not a search-bar control |
+| 100 | Set `"auto_refresh": false`, restart xed, open the file in Preview, switch to Markdown, type a line, switch back to Preview (it renders), then press <kbd>Ctrl</kbd>+<kbd>Z</kbd> so the stale dot appears. With the dot showing, <kbd>Tab</kbd> to the Refresh button, then press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> while it still has focus | The stale dot's own appearance is **not** announced — measured; the only speech at that moment is the ordinary "document modified" title change, nothing about staleness. Tabbing to the Refresh button *is* announced in full: "Refresh the preview push button." then "The preview is out of date — refresh it (Ctrl+Shift+R)". Pressing Ctrl+Shift+M with the Refresh button focused still announces the mode change ("Markdown source") — the double-announcement suppression covers only the two mode toggle buttons, not the Refresh button |
+| 101 | Remove `auto_refresh` from `~/.config/xedown/settings.json`, restart xed, then trigger the external-change bar (edit the file from a terminal while it has unsaved edits) | The bar's warning text is announced: "Warning This file changed on disk. Your unsaved edits are still showing." — measured, reproducibly. (Whether tabbing to the bar's own **Reload…** button announces it by name was not part of this measurement.) |
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

@@ -268,8 +268,16 @@ _HOST_MODULES_SETTING_NAMES = (
 # `_name(...)`, `set_name(...)` or `announce(...)` counts. `announce` joined
 # the alternation in Task 6: `ModeBar.announce` is the other place a host
 # module hands live text to an accessibility API, and until this line
-# changed, `self.modebar.announce("Preview")` -- or a literal inside
-# `ModeBar.announce` itself -- would have passed every test in this file.
+# changed, a literal call *site* of `.announce(...)` anywhere in a host
+# module -- e.g. `self.modebar.announce("Preview")` -- would have passed
+# every test in this file. It still cannot see a literal baked directly into
+# `ModeBar.announce`'s own body: that method reaches AT-SPI through
+# `accessible.emit("announcement", text)`, an `.emit(` call, which this
+# alternation deliberately does not match -- widening it to catch every
+# `.emit(` in the codebase would also flag the unrelated `self.emit(...)`
+# GObject signal calls nearby. `text` is passed through as a variable today,
+# so nothing there currently needs catching, but a literal written directly
+# into that `emit(...)` call would not be.
 # `_announce_mode(` and `mode_announcement_name(` do not false-positive on
 # this: `(?<!\w)announce\(` only matches where "announce" is immediately
 # followed by "(", and both of those identifiers have more word characters

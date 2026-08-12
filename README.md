@@ -181,22 +181,33 @@ xedown is built to be driven entirely from the keyboard, and every control it
 creates — the mode buttons, the refresh button, the stale indicator, the
 search bar and the info bars — takes its accessible name from a single source
 of truth. Switching modes moves keyboard focus to the surface you land on and
-changes that surface's checked state to match; both are mechanisms a screen
-reader can use to signal what happened. The rendered document page carries a
-`role="main"` landmark and, when your desktop's language is known, a `lang`
-attribute — an error page carries neither: it is xedown speaking, not the
-document, and there is no document to detect a language from. The focus
-ring's contrast against every surface it is drawn on meets WCAG's 3:1
-non-text threshold, in all four preview themes, light and dark.
+changes that surface's checked state to match; it also speaks the new mode's
+name through an `Atk.Object` announcement, unless the mode bar itself already
+has focus (a mode button tabbed to and activated directly), in which case the
+announcement is suppressed so it is not heard twice. The rendered document
+page carries a `role="main"` landmark and, when your desktop's language is
+known, a `lang` attribute — an error page carries neither: it is xedown
+speaking, not the document, and there is no document to detect a language
+from. The focus ring's contrast against every surface it is drawn on meets
+WCAG's 3:1 non-text threshold, in all four preview themes, light and dark.
 
-**The screen-reader speech itself has not been tested.** Everything above is
-checked against xed's live accessible tree or by unit test — not by listening
-with a screen reader. **Orca on Linux Mint** is the only screen reader this
-project targets or has any plan to test against; it has not been run yet, and
-until it has, this file will not claim that xedown "works with" or "is
-accessible to" a screen reader. See
-[docs/known-issues.md](docs/known-issues.md) and the Orca rows in
-[docs/manual-smoke-test.md](docs/manual-smoke-test.md).
+**The screen-reader speech has been checked, on one machine, with one
+reader.** `scripts/run-orca-tests.sh` drives a real xed session under Orca
+46.1 on Linux Mint (X11) and records what it says. Measured: pressing
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> announces the new mode both
+ways ("Markdown source", then "Preview"); tabbing through the mode bar
+announces each control by name and pressed state; the external-change
+warning bar is announced. Also measured: keyboard-scrolling the preview
+(<kbd>Down</kbd>, <kbd>Page Down</kbd>) produces no screen-reader feedback at
+all — the cause lies inside WebKit2GTK's own AT-SPI bridge, not in xedown's
+code — and the stale indicator and the manual-refresh cue are not announced;
+the only speech when the preview goes stale is the ordinary "document
+modified" title change. This project still will not claim that xedown "works
+with" or "is accessible to" a screen reader in general: only one machine, one
+Orca version and one WebKitGTK build were tested, on X11 only; the View menu's
+route to a mode change and a mouse click on a mode button were never
+separately measured. See [docs/known-issues.md](docs/known-issues.md) and the
+Orca rows in [docs/manual-smoke-test.md](docs/manual-smoke-test.md).
 
 The rendered preview's *content* is exposed to a screen reader by WebKit
 rather than by xedown, so how well a given document reads is largely WebKit's
