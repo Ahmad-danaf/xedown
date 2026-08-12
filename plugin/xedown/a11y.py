@@ -17,6 +17,8 @@ Orca actually speaks a mode change is a manual check, recorded as one.
 
 import re
 
+from .document_state import Mode
+
 # WCAG 1.4.11 (non-text contrast). Deliberately not the 4.5:1 used for text:
 # a focus ring is a user-interface component, not something anybody reads.
 FOCUS_RING_MINIMUM = 3.0
@@ -35,6 +37,23 @@ NAMES = {
     "search_status": "Match count",
     "info_bar_close": "Close",
 }
+
+# Which NAMES key announces each mode when a switch takes effect. Kept as a
+# plain mapping over `Mode` -- not the widgets that emit it -- so which name
+# gets chosen is unit-testable without a display; `controller.py:set_mode` is
+# the host-bound half that decides *whether* to announce (focus elsewhere,
+# not initial build) and `modebar.py:ModeBar.announce` is the half that
+# actually reaches AT-SPI, neither of which CI can reach.
+_MODE_ANNOUNCEMENT_NAMES = {
+    Mode.PREVIEW: "mode_preview",
+    Mode.SOURCE: "mode_source",
+}
+
+
+def mode_announcement_name(mode):
+    """The `NAMES` key that announces `mode`, or None for anything else."""
+    return _MODE_ANNOUNCEMENT_NAMES.get(mode)
+
 
 # A name has to survive being read aloud with no screen in front of you, so
 # it must contain something pronounceable. This is the rule that catches the

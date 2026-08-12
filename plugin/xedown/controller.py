@@ -403,11 +403,22 @@ class TabController:
         window's focus off the tab the user is looking at), and writing to
         the mode store (opening a file must not rewrite the memory it was
         just read from).
+
+        It also decides, before anything below moves focus, whether this
+        switch gets a spoken announcement (see `_announce_mode`): both
+        directions of Ctrl+Shift+M measured completely silent on their own
+        (Task 4 of the Orca verification plan), which is the gap this
+        checks for. `self.modebar.has_focus()` is read first, ahead of
+        every state change below, because it is only meaningful *before*
+        the switch: if the user tabbed to a mode button and activated it,
+        that focus is what makes Orca announce the toggle's own state
+        change, and this must not add a second announcement on top of it.
         """
         if not self._built:
             return
         if mode is self.state.mode and not initial:
             return
+        announce = not initial and not self.modebar.has_focus()
         self._remember_scroll(self.state.mode)
         self.state.mode = mode
         self.modebar.set_mode(mode)
@@ -450,6 +461,22 @@ class TabController:
                 self._restore_source_scroll()
                 self.view.grab_focus()
         self._update_refresh_cue()
+        if announce:
+            self._announce_mode(mode)
+
+    def _announce_mode(self, mode):
+        """Tell a screen reader which mode is now showing.
+
+        Only reached when `set_mode` decided, before it moved anything, that
+        the mode bar did not already have focus -- see that method's own
+        docstring for why the check has to happen that early. The text comes
+        from `a11y.NAMES`, never a literal: `test_a11y.py`'s
+        `test_every_accessible_name_in_the_host_modules_comes_from_names`
+        exists specifically to catch an inlined string here.
+        """
+        key = a11y.mode_announcement_name(mode)
+        if key is not None and self.modebar is not None:
+            self.modebar.announce(a11y.NAMES[key])
 
     def refresh_now(self):
         """Re-render the preview from the document as it is now.

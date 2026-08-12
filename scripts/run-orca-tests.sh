@@ -169,6 +169,16 @@ import sys
 from orca_transcript import evaluate_rows
 
 ROWS = {
+    # Ctrl+Shift+M to Source: Task 4 measured this direction genuinely
+    # silent (Orca's locus of focus was already the source view before the
+    # press). Task 6 added an explicit `Atk.Object` "announcement" emission
+    # in `TabController.set_mode` for exactly this gap -- see
+    # `plugin/xedown/modebar.py:ModeBar.announce` and task-6-report.md.
+    # a11y.NAMES["mode_source"].
+    "row-96-switch-to-source": ["Markdown source"],
+    # Ctrl+Shift+M back to Preview: same mechanism, the other direction.
+    # a11y.NAMES["mode_preview"].
+    "row-96-switch-back-to-preview": ["Preview"],
     # Tabbing through the mode bar announces each control by name and
     # pressed state. Task 4's cleanest, highest-confidence result: identical
     # across three independent live runs.
@@ -182,29 +192,12 @@ ROWS = {
 # be news (something changed) worth surfacing loudly, not something to
 # silently absorb.
 SILENT_ROWS = [
-    # Ctrl+Shift+M to Source: at the moment of the press, Orca's tracked
-    # locus of focus was already the source view -- xed's own tab-open
-    # behaviour put it there before xedown's own mode switch ran -- so the
-    # press is not a new transition from Orca's point of view. This window
-    # is clean (no other probe action shares it) in all three live runs
-    # behind Task 4's report.
-    "row-96-switch-to-source",
     # Down/Page_Down with the preview showing: total AT-SPI silence between
     # mark and next mark, not merely unpresented speech. Reproduced three
     # times, including once with WebKit2's enable-caret-browsing forced on,
     # which changed nothing. Root cause is inside WebKit2GTK's own AT-SPI
     # bridge, outside xedown's Python and outside this project's reach.
     "row-98-preview-scroll",
-    # Ctrl+Shift+M back to Preview: the WebView's own focus event does fire,
-    # but Orca's toolkit layer deems the WebView's outer accessible object
-    # "layout only" and never presents it. Task 4 could only measure this as
-    # "unclear, leaning silent" -- its window was contaminated by
-    # step_row_97_focus_mode_bar's grab_focus(), which had no marker of its
-    # own and produced real speech that landed here instead. Task 5 gave
-    # that grab_focus() its own marker (row-97-focus-mode-bar) and re-ran
-    # live, twice, to confirm this row now measures clean-silent in
-    # isolation.
-    "row-96-switch-back-to-preview",
 ]
 
 # Markers that exist -- every action that can cause speech now owns one, so
@@ -217,10 +210,32 @@ SILENT_ROWS = [
 #                              measure, and asserting on it would duplicate
 #                              row-96-switch-back-to-preview's finding under
 #                              a different name.
-#   row-98-prepare-preview  -- a preparation step (focuses the WebView before
-#                              row 98's own scroll keys). Measures silent
-#                              today by luck, not by design; not a row this
-#                              project has committed to a claim about.
+#   row-97-activate-focused-button -- Task 6: activates the button row 97
+#                              just tabbed to (Space), switching mode from
+#                              *inside* the mode bar -- the suppression half
+#                              of the mode announcement (`ModeBar.has_focus()`
+#                              is True here, so `set_mode` must not call
+#                              `ModeBar.announce`). Not asserted because
+#                              `evaluate_rows` can only check substrings
+#                              present or total silence, and the one thing
+#                              this row needs to show -- exactly one
+#                              utterance, not two -- can't be told apart that
+#                              way: a real state-change announcement and a
+#                              would-be duplicate mode announcement both
+#                              contain "Markdown source" as a substring.
+#                              Verified instead by reading the raw Orca log
+#                              directly; see task-6-report.md.
+#   row-98-prepare-preview  -- a preparation step (corrects mode back to
+#                              Preview if row 97's new activation left it in
+#                              Source, then focuses the WebView before row
+#                              98's own scroll keys). Used to be silent by
+#                              luck (mode was already Preview by
+#                              construction); since Task 6 the correction
+#                              genuinely runs and does speak -- a second,
+#                              unsuppressed measurement of the same
+#                              announcement row 96 already asserts. Still not
+#                              asserted here, to keep one row's proof in one
+#                              place.
 #   row-100-prepare-stale   -- a preparation step (closes the search bar,
 #                              resets AUTO_REFRESH before row 100's own
 #                              edit). Same reasoning as row-98-prepare-preview.

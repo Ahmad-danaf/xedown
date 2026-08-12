@@ -369,9 +369,66 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
                 before_in_bar and after_in_bar,
                 f"{presses} Tab press(es); focus after: {after!r}",
             )
-            self._schedule(SETTLE_MS, self.step_row_98_prepare_preview)
+            self._schedule(SETTLE_MS, self.step_row_97_activate_focused_button)
 
         self._press_tabs(presses, _after_presses)
+        return False
+
+    def step_row_97_activate_focused_button(self):
+        """Row 97 (extra): activate the button just tabbed to, mode bar still
+        focused. The suppression half of Task 6's mode announcement.
+
+        Nothing earlier in this sequence ever presses a mode-bar button --
+        every mode change up to here goes through Ctrl+Shift+M (row 96's two
+        markers), which is the path `TabController.set_mode` is supposed to
+        announce. This is the other path: `ModeBar.has_focus()` is True right
+        now (row 97 just tabbed here without activating anything), so
+        activating this button switches mode from *inside* the bar, and
+        `set_mode` must NOT call `ModeBar.announce` here -- Orca already
+        announces the toggle's own state change, and a second announcement
+        would double it. Space is what `Gtk.Button`'s own binding set uses to
+        activate a focused button, not Return, which risks a window's
+        default action instead of this specific widget.
+
+        Not asserted in `ROWS`/`SILENT_ROWS`: the one thing this row needs to
+        show -- exactly one utterance, not two, since a real state-change
+        announcement and a would-be duplicate mode announcement both contain
+        the same "Markdown source" text as a substring -- cannot be told
+        apart by `evaluate_rows`' substring/silence checks. It was verified
+        by reading the raw Orca log directly, the same way Task 4 verified
+        the announcement signal itself; see task-6-report.md. This step's
+        marker exists so that verification is repeatable, not so it can be
+        wired into the automated gate.
+
+        The state check below waits a full `SETTLE_MS`, not a quick poll:
+        unlike the Ctrl+Shift+M accelerator path (row 96), where `state.mode`
+        already reflects the switch the instant `_press()` returns, a
+        `Gtk.Button`'s own keyboard activation is not that synchronous --
+        measured directly (a throwaway diagnostic build of this step, kept
+        only in task-6-report.md) reading `Mode.PREVIEW` immediately after
+        `_press()` and `Mode.SOURCE` a full 3s later, for the exact same
+        press. The raw Orca log for that same run already showed the real
+        object:state-changed:checked pair (Source -> checked, Preview ->
+        unchecked) and the real AT-SPI focus event onto [text] (only
+        reachable through `set_mode`'s own `self.view.grab_focus()`)
+        starting within milliseconds of the press -- so xedown's own
+        handling is not what is slow here; it is GTK's keyboard-activation
+        path for a focused button being slower to settle than the
+        AT-SPI/Orca side that already reacted to it.
+        """
+        mark("row-97-activate-focused-button")
+        self._press(Gdk.KEY_space, 0)
+
+        def _after_activation():
+            after = self._controller().state.mode if self._controller() else None
+            record(
+                "orca-row-97-activated-focused-button",
+                after is Mode.SOURCE,
+                f"mode after activating the focused mode-bar button: {after}",
+            )
+            self._schedule(SETTLE_MS, self.step_row_98_prepare_preview)
+
+        self._schedule(SETTLE_MS, _after_activation)
         return False
 
     def step_row_98_prepare_preview(self):
@@ -382,15 +439,21 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         click first") for the human tester -- it says nothing about where
         this probe's own synthetic focus should already be. Left alone, the
         Down/Page_Down presses below would land on whatever the mode bar's
-        buttons do with them, not the document. The mode check is defensive:
-        by construction mode is already Preview here, but a future reordering
-        of these steps should not silently start scrolling a hidden pane.
+        buttons do with them, not the document. The mode check used to be
+        purely defensive, on the assumption mode was already Preview by
+        construction; since `step_row_97_activate_focused_button` switches to
+        Source for real (to measure the mode announcement's suppression
+        path), this correction now genuinely runs, every time, taking mode
+        back to Preview -- which happens, unsuppressed, to be a second live
+        measurement of the same announcement row 96 already covers.
 
         Marked (`row-98-prepare-preview`) even though `grab_focus()` measures
         silent today (Task 4) -- that silence is luck, not design, and an
         unmarked action here would corrupt `row-97-mode-bar-tab`'s window
         exactly the way the equivalent call corrupted row 96's, the day this
-        step's own effect stops being silent.
+        step's own effect stops being silent. The Ctrl+Shift+M correction
+        just above it shares the same marker and, since Task 6, genuinely
+        does speak.
         """
         controller = self._controller()
         mark("row-98-prepare-preview")

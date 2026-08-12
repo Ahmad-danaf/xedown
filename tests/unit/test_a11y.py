@@ -55,6 +55,41 @@ def test_the_stale_indicator_says_what_it_means():
     assert a11y.NAMES["stale"] == "Preview is out of date"
 
 
+# --- mode_announcement_name ---------------------------------------------
+#
+# Pure mapping only: *whether* to announce (focus elsewhere, not the
+# build-time call) is `controller.py:set_mode`'s decision, and *actually
+# reaching* AT-SPI is `modebar.py:ModeBar.announce`'s job -- neither of
+# those is reachable from here, both import `gi`. This is the one part of
+# the mechanism CI can hold onto.
+
+
+def test_mode_announcement_name_maps_preview():
+    from xedown.document_state import Mode
+
+    assert a11y.mode_announcement_name(Mode.PREVIEW) == "mode_preview"
+
+
+def test_mode_announcement_name_maps_source():
+    from xedown.document_state import Mode
+
+    assert a11y.mode_announcement_name(Mode.SOURCE) == "mode_source"
+
+
+def test_mode_announcement_name_is_none_for_anything_else():
+    assert a11y.mode_announcement_name("bogus") is None
+    assert a11y.mode_announcement_name(None) is None
+
+
+def test_mode_announcement_names_are_real_names():
+    """Every key `mode_announcement_name` can return exists in `NAMES`."""
+    from xedown.document_state import Mode
+
+    for mode in Mode:
+        key = a11y.mode_announcement_name(mode)
+        assert key in a11y.NAMES, key
+
+
 # --- check_node -------------------------------------------------------
 
 

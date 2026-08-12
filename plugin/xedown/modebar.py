@@ -150,6 +150,54 @@ class ModeBar(Gtk.Box):
             button.set_active(candidate is mode)
         self._updating = False
 
+    def has_focus(self):
+        """True when keyboard focus is on one of this bar's own controls.
+
+        Checked by the controller before a mode switch takes effect: if the
+        user tabbed here and activated a button, Orca already announces the
+        toggle's own state change ("Preview toggle button pressed."), and an
+        `announce()` on top of that would make a focused user hear the mode
+        twice. Only the three controls that can actually hold focus are
+        checked -- the stale dot is a `Gtk.Label` and is never focusable,
+        with or without CSS.
+        """
+        return any(
+            button.has_focus()
+            for button in (
+                self._buttons[Mode.PREVIEW],
+                self._buttons[Mode.SOURCE],
+                self._refresh_button,
+            )
+        )
+
+    def announce(self, text):
+        """Speak `text` through `Atk.Object`'s `announcement` signal.
+
+        Measured live against a real Orca session (Task 4 of the Orca
+        verification plan --
+        .superpowers/sdd/2026-08-11-xedown-v0.2-orca-verification/task-4-report.md)
+        to reach Orca 46.1 unconditionally: whether or not the emitting
+        object currently has focus, and regardless of GTK's "layout only"
+        classification -- the same classification that silently swallows
+        the WebView's own focus event on a switch to Preview (see that
+        report's Q1). This bar's own accessible object is used because it
+        is always realized and visible for the life of a built tab, unlike
+        the source view or the WebView, either of which can be hidden at
+        the moment a switch happens.
+
+        Never raises. An accessibility nicety that could break a mode
+        switch would not be one, and the accessible object can be
+        legitimately unavailable -- the AT-SPI bridge not running, the
+        widget not yet realized -- with nothing this method can do about
+        either.
+        """
+        try:
+            accessible = self.get_accessible()
+            if accessible is not None:
+                accessible.emit("announcement", text)
+        except Exception:  # noqa: BLE001 - never let an a11y nicety break a switch
+            return
+
     def set_refresh_visible(self, visible):
         """Show the manual refresh control. Only ever true with auto off."""
         self._refresh_button.set_visible(visible)
