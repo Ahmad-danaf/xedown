@@ -190,17 +190,16 @@ class ModeBar(Gtk.Box):
     def announce(self, text):
         """Speak `text` through `Atk.Object`'s `announcement` signal.
 
-        Measured live against a real Orca session (Task 4 of the Orca
-        verification plan --
-        .superpowers/sdd/2026-08-11-xedown-v0.2-orca-verification/task-4-report.md)
-        to reach Orca 46.1 unconditionally: whether or not the emitting
-        object currently has focus, and regardless of GTK's "layout only"
-        classification -- the same classification that silently swallows
-        the WebView's own focus event on a switch to Preview (see that
-        report's Q1). This bar's own accessible object is used because it
-        is always realized and visible for the life of a built tab, unlike
-        the source view or the WebView, either of which can be hidden at
-        the moment a switch happens.
+        Measured live against a real Orca session (see
+        docs/orca-verification/measurements.md) to reach Orca 46.1
+        unconditionally: whether or not the emitting object currently has
+        focus, and regardless of GTK's "layout only" classification -- the
+        same classification that silently swallows the WebView's own focus
+        event on a switch to Preview (see that document's
+        row-96-switch-back-to-preview entry). This bar's own accessible
+        object is used because it is always realized and visible for the
+        life of a built tab, unlike the source view or the WebView, either
+        of which can be hidden at the moment a switch happens.
 
         Never raises. An accessibility nicety that could break a mode
         switch would not be one, and the accessible object can be

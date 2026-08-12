@@ -220,9 +220,10 @@ ROWS = {
     # silent (Orca's locus of focus was already the source view before the
     # press). Task 6 added an explicit `Atk.Object` "announcement" emission
     # in `TabController.set_mode` for exactly this gap -- see
-    # `plugin/xedown/modebar.py:ModeBar.announce` and task-6-report.md.
+    # `plugin/xedown/modebar.py:ModeBar.announce` and
+    # docs/orca-verification/measurements.md.
     # a11y.NAMES["mode_source"]. Exact, not a substring check: measured to
-    # be this one utterance and no other (transcript-task6-fixed.json), and
+    # be this one utterance and no other (docs/orca-verification/transcript.json), and
     # a plain substring match on "Markdown source" would also be satisfied
     # by e.g. a toggle's own "Markdown source toggle button pressed." --
     # the misattribution shape that fooled earlier review rounds in this
@@ -298,7 +299,9 @@ SILENT_ROWS = [
 #                              would-be duplicate mode announcement both
 #                              contain "Markdown source" as a substring.
 #                              Verified instead by reading the raw Orca log
-#                              directly; see task-6-report.md.
+#                              directly; see
+#                              docs/orca-verification/measurements.md's
+#                              row-97-activate-focused-button entry.
 #   row-98-prepare-preview  -- a preparation step (corrects mode back to
 #                              Preview if row 97's new activation left it in
 #                              Source, then focuses the WebView before row
@@ -325,7 +328,9 @@ SILENT_ROWS = [
 #                              6-press burst coalesced in Orca's own event
 #                              queue, a probe-timing artifact rather than a
 #                              xedown defect; Task 5 spaced the presses out
-#                              and the row now speaks (see task-5-report.md).
+#                              and the row now speaks (see
+#                              docs/orca-verification/measurements.md's
+#                              row-99-search-bar-tab entry).
 #                              But the fixed 6-press count sweeps focus past
 #                              the search bar's own last control and into
 #                              xed's surrounding chrome -- one of the 7

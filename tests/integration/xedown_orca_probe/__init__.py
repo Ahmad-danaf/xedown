@@ -396,16 +396,18 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         the same "Markdown source" text as a substring -- cannot be told
         apart by `evaluate_rows`' substring/silence checks. It was verified
         by reading the raw Orca log directly, the same way Task 4 verified
-        the announcement signal itself; see task-6-report.md. This step's
-        marker exists so that verification is repeatable, not so it can be
-        wired into the automated gate.
+        the announcement signal itself; see
+        docs/orca-verification/measurements.md's
+        row-97-activate-focused-button entry. This step's marker exists so
+        that verification is repeatable, not so it can be wired into the
+        automated gate.
 
         The state check below waits a full `SETTLE_MS`, not a quick poll:
         unlike the Ctrl+Shift+M accelerator path (row 96), where `state.mode`
         already reflects the switch the instant `_press()` returns, a
         `Gtk.Button`'s own keyboard activation is not that synchronous --
-        measured directly (a throwaway diagnostic build of this step, kept
-        only in task-6-report.md) reading `Mode.PREVIEW` immediately after
+        measured directly (a throwaway diagnostic build of this step, never
+        kept in the repository) reading `Mode.PREVIEW` immediately after
         `_press()` and `Mode.SOURCE` a full 3s later, for the exact same
         press. The raw Orca log for that same run already showed the real
         object:state-changed:checked pair (Source -> checked, Preview ->
@@ -413,7 +415,9 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         reachable through `set_mode`'s own `self.view.grab_focus()`) -- so
         xedown's own handling is not what is slow here. The measured gap
         between mark and that first checked event, in both of the two final
-        live runs behind task-6-report.md, was 263ms (`11:05:46.935904` ->
+        live runs behind this row (see docs/orca-verification/measurements.md's
+        `row-97-activate-focused-button` entry and its "263ms gap" note),
+        was 263ms (`11:05:46.935904` ->
         `11:05:47.198528`, and `11:07:34.762877` -> `11:07:35.026015`), not
         "milliseconds" -- close enough to `GtkButton`'s default 250ms
         `ACTIVATE_TIMEOUT` that a plausible **hypothesis** (not verified

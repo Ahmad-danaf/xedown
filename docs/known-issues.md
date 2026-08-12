@@ -264,9 +264,10 @@ signal, and xedown uses it in `ModeBar.announce()` to make the
 by name. That the signal reaches Orca 46.1 **unconditionally — whether or
 not the emitting object currently has focus** — was measured with a
 standalone throwaway test emitting the signal from both a focused and an
-unfocused `Gtk.Button`, outside xed entirely (Task 4's Run C; see
-`task-4-report.md`'s Q5 and `plugin/xedown/modebar.py:190-203`, which cites
-the same finding). `scripts/run-orca-tests.sh` itself cannot demonstrate the
+unfocused `Gtk.Button`, outside xed entirely (see
+`docs/orca-verification/measurements.md`'s "Method" section and
+`plugin/xedown/modebar.py`'s `ModeBar.announce()` docstring, which cites the
+same finding). `scripts/run-orca-tests.sh` itself cannot demonstrate the
 focused half against xedown's own UI: its emitter is the mode bar's
 `Gtk.Box`, which is never itself keyboard-focusable, and — separately —
 `set_mode` deliberately withholds the emission whenever a mode toggle button
@@ -279,7 +280,8 @@ script, next to the `row-97-activate-focused-button` marker itself):
 `evaluate_rows`'s substring and silence checks cannot tell one utterance
 from two, which is the one thing this row needs to show. It was verified
 instead by hand-reading the raw Orca log directly (see
-`task-6-report.md`). What the mechanism is *not*
+`docs/orca-verification/measurements.md`'s `row-97-activate-focused-button`
+entry). What the mechanism is *not*
 wired to is `update_body()`: the in-place refresh path never calls
 `announce()`, so a change that lands while Preview is already showing still
 produces nothing to hear — inferred from reading `update_body()`'s own code
@@ -365,8 +367,9 @@ are suppressed by mechanisms outside xedown's control: Orca filters the
 dot's event by its role, and the button's description-change event is
 processed but most likely never presented because the button is not the
 current focus at that moment (the event firing, and not being presented, is
-measured; the reason is `task-4-report.md`'s own inference, not separately
-confirmed). Switching mode with the Refresh button (not a mode toggle)
+measured; the reason is `docs/orca-verification/measurements.md`'s own
+`row-100-stale` inference, not separately confirmed). Switching mode with
+the Refresh button (not a mode toggle)
 focused still announces the mode change normally — measured — so this is
 not the same suppression that deliberately silences a mode toggle's own
 double-announcement; only the two mode toggle buttons do that.

@@ -1,0 +1,52 @@
+{
+  "row-96-switch-to-source": [
+    "Markdown source"
+  ],
+  "row-96-switch-back-to-preview": [
+    "Preview"
+  ],
+  "row-97-focus-mode-bar": [
+    "Preview toggle button pressed."
+  ],
+  "row-97-mode-bar-tab": [
+    "Markdown source toggle button not pressed."
+  ],
+  "row-97-activate-focused-button": [
+    "pressed",
+    "text.",
+    "# Scroll Test."
+  ],
+  "row-98-prepare-preview": [
+    "Preview"
+  ],
+  "row-98-preview-scroll": [],
+  "row-99-search-bar-tab": [
+    "Match case toggle button not pressed.",
+    "Previous match push button.",
+    "Next match push button.",
+    "Close search push button.",
+    "toggle button pressed.",
+    "Show or hide the side pane in the current window.",
+    "Markdown toggle button not pressed."
+  ],
+  "row-100-prepare-stale": [],
+  "row-100-stale": [
+    "*orca-sample.md (/tmp/tmp.7xOz6Jve2Q)"
+  ],
+  "row-100-focus-refresh": [
+    "orca-sample.md page tab.",
+    "Refresh the preview push button.",
+    "The preview is out of date — refresh it (Ctrl+Shift+R)"
+  ],
+  "row-100-refresh-focused-switch": [
+    "text.",
+    "# Scroll Test.",
+    "Markdown source"
+  ],
+  "row-101-external-change": [
+    "Warning This file changed on disk. Your unsaved edits are still showing."
+  ],
+  "done": [
+    "Warning The file /tmp/tmp.7xOz6Jve2Q/orca-sample.md has been modified since reading it. If you save it, all the external changes could be lost. Save it anyway?"
+  ]
+}
