@@ -19,6 +19,16 @@ writes) never shares a callback turn with the mark it precedes -- fix round 1
 found two rows where it did, and in one of them (row 97) that was not merely
 an attribution smell but the reason the row measured the wrong thing
 entirely: see `step_row_97_focus_mode_bar`'s docstring.
+
+Every preparation step gets a marker of its own now, even the ones that
+measure silent today, and every burst of key presses is spaced out rather
+than fired in one loop turn. Task 4 found both defects biting for real: an
+unmarked `grab_focus()` in `step_row_97_focus_mode_bar` produced speech that
+landed in `row-96-switch-back-to-preview`'s window and was misread as the
+mode switch announcing itself, and an unthrottled 6x Tab burst in
+`step_row_99_search_bar_tab` collapsed into Orca's own event-coalescing.
+Neither was a xedown defect -- both were the instrument measuring the wrong
+thing. See `TAB_PRESS_INTERVAL_MS` and the per-step docstrings below.
 """
 
 import datetime
@@ -42,6 +52,16 @@ MARKERS = os.environ.get("XEDOWN_ORCA_MARKERS", "/tmp/xedown-orca-markers.txt")
 # long -- generous rather than tight, because the cost of being wrong is a
 # misattributed finding, and the whole run is still under a minute.
 SETTLE_MS = 3000
+
+# Firing several key presses back-to-back, with no mainloop turn between them,
+# puts their focus events within a few microseconds of each other -- well
+# inside Orca's own event-coalescing window, which keeps only the most recent
+# event of a given type from a burst and silently drops the rest. That
+# measures as silence for a reason that has nothing to do with xedown (Task 4,
+# Q3: row-99's 6-press Tab burst). A screen-reader user does not tab that
+# fast, so spacing presses out is not a workaround for Orca -- it is matching
+# what the probe is meant to simulate.
+TAB_PRESS_INTERVAL_MS = 400
 
 results = []
 _sequence_started = False
@@ -199,6 +219,33 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
                 event.set_device(keyboard)
         Gtk.main_do_event(event)
 
+    def _press_tabs(self, count, on_done):
+        """Deliver `count` Gdk.KEY_Tab presses spaced `TAB_PRESS_INTERVAL_MS`
+        apart, then call `on_done()`.
+
+        Not a `for` loop with `self._press` inside it -- that fires every
+        press in the same mainloop turn (see `TAB_PRESS_INTERVAL_MS`'s
+        docstring for why that is wrong). Each press after the first is its
+        own scheduled callback instead, using the same `_schedule` idiom
+        every other step in this file uses, never `time.sleep` -- this runs
+        on the GTK main loop the key events themselves are delivered through,
+        and sleeping here would block delivery of the very events being
+        measured.
+        """
+        if count <= 0:
+            on_done()
+            return False
+        self._press(Gdk.KEY_Tab, 0)
+        remaining = count - 1
+        if remaining <= 0:
+            on_done()
+        else:
+            self._schedule(
+                TAB_PRESS_INTERVAL_MS,
+                lambda: self._press_tabs(remaining, on_done),
+            )
+        return False
+
     # --- the sequence --------------------------------------------------
 
     def step_setup(self):
@@ -273,8 +320,17 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         which removes the accepts-tab hazard, but this step does not lean on
         that alone: it grabs focus onto the bar's first control explicitly,
         so where Tab starts is never again "wherever focus happens to be".
+
+        This `grab_focus()` is marked in its own right (`row-97-focus-mode-bar`)
+        because it is not silent: Task 4 traced "Preview toggle button
+        pressed." -- misread as the mode switch announcing itself -- directly
+        to this call. Before this mark existed, that speech landed inside
+        `row-96-switch-back-to-preview`'s window because this step had no
+        marker of its own. Any action that can cause speech owns a marker
+        now, so that can never happen again.
         """
         controller = self._controller()
+        mark("row-97-focus-mode-bar")
         if controller is not None and controller.modebar is not None:
             self._modebar_focusables(controller.modebar)[0].grab_focus()
         self._schedule(SETTLE_MS, self.step_row_97_mode_bar_tab)
@@ -289,7 +345,9 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         Exactly enough Tab presses are sent to walk from the first focusable
         control to the last one currently visible (`_modebar_focusables`) --
         not a fixed guess, so the "after" check stays meaningful whether the
-        refresh button happens to be showing or not.
+        refresh button happens to be showing or not. The presses themselves
+        are spaced out (`_press_tabs`), not fired in one loop turn -- see
+        `TAB_PRESS_INTERVAL_MS`.
         """
         controller = self._controller()
         modebar = controller.modebar if controller is not None else None
@@ -302,16 +360,18 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
             f"focus: {before!r}",
         )
         presses = max(0, len(self._modebar_focusables(modebar)) - 1) if modebar else 0
-        for _ in range(presses):
-            self._press(Gdk.KEY_Tab, 0)
-        after = self.window.get_focus()
-        after_in_bar = self._in_modebar(modebar, after)
-        record(
-            "orca-mode-bar-tabbed",
-            before_in_bar and after_in_bar,
-            f"{presses} Tab press(es); focus after: {after!r}",
-        )
-        self._schedule(SETTLE_MS, self.step_row_98_prepare_preview)
+
+        def _after_presses():
+            after = self.window.get_focus()
+            after_in_bar = self._in_modebar(modebar, after)
+            record(
+                "orca-mode-bar-tabbed",
+                before_in_bar and after_in_bar,
+                f"{presses} Tab press(es); focus after: {after!r}",
+            )
+            self._schedule(SETTLE_MS, self.step_row_98_prepare_preview)
+
+        self._press_tabs(presses, _after_presses)
         return False
 
     def step_row_98_prepare_preview(self):
@@ -325,8 +385,15 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         buttons do with them, not the document. The mode check is defensive:
         by construction mode is already Preview here, but a future reordering
         of these steps should not silently start scrolling a hidden pane.
+
+        Marked (`row-98-prepare-preview`) even though `grab_focus()` measures
+        silent today (Task 4) -- that silence is luck, not design, and an
+        unmarked action here would corrupt `row-97-mode-bar-tab`'s window
+        exactly the way the equivalent call corrupted row 96's, the day this
+        step's own effect stops being silent.
         """
         controller = self._controller()
+        mark("row-98-prepare-preview")
         if controller is not None and controller.state.mode is not Mode.PREVIEW:
             self._press(
                 Gdk.KEY_m, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK
@@ -372,7 +439,12 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         and actually holding focus (`SearchBar.owns_focus`, the same
         predicate `shortcuts.route_key` itself relies on to tell xedown's own
         entry apart from xed's) -- rather than assumed True regardless of
-        what the key press actually did.
+        what the key press actually did. The 6 Tab presses that follow are
+        spaced out (`_press_tabs`), not fired in one loop turn -- Task 4
+        found the old unthrottled burst collapsed into a sub-10ms cluster
+        that Orca's own event-coalescing discards down to the last
+        transition, measuring as silence for a reason that had nothing to do
+        with xedown. See `TAB_PRESS_INTERVAL_MS`.
         """
         mark("row-99-search-bar-tab")
         self._press(Gdk.KEY_f, Gdk.ModifierType.CONTROL_MASK)
@@ -393,9 +465,11 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
             visible and focused,
             f"visible: {visible}, focus is the search entry: {focused} ({focus!r})",
         )
-        for _ in range(6):
-            self._press(Gdk.KEY_Tab, 0)
-        self._schedule(SETTLE_MS, self.step_row_100_prepare_stale)
+
+        def _after_tabs():
+            self._schedule(SETTLE_MS, self.step_row_100_prepare_stale)
+
+        self._press_tabs(6, _after_tabs)
         return False
 
     def step_row_100_prepare_stale(self):
@@ -406,7 +480,13 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         `xedown_probe.step_manual_refresh_setup` takes before its own
         equivalent buffer edit. None of the three should share a window with
         the mark that follows -- fix round 1 found them doing exactly that.
+
+        Marked (`row-100-prepare-stale`) even though every action here
+        measures silent today (Task 4) -- same reasoning as
+        `row-98-prepare-preview`: that silence is luck, not design, and this
+        step must never be able to corrupt `row-99-search-bar-tab`'s window.
         """
+        mark("row-100-prepare-stale")
         self._press(Gdk.KEY_Escape, 0)
         controller = self._controller()
         if controller is not None and controller.state.mode is not Mode.PREVIEW:

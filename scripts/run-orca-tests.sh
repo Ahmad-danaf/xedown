@@ -155,8 +155,13 @@ cat "$WORKDIR/transcript.json"
 # row on the strength of what it *ought* to say would be exactly the
 # unmeasured claim this whole exercise exists to stop making.
 #
-# row-96 (the mode switch) is deliberately absent -- it is measured to be
-# silent, and Task 4 decides whether that becomes an expectation or a fix.
+# Two tables, with a deliberate asymmetry: in ROWS an empty slice is a
+# FAIL (silence is a finding, not a pass -- a11y.check_tree's rule); in
+# SILENT_ROWS an empty slice is the PASS, because that row was measured, on
+# real hardware, to produce no speech at all, and that is the currently-true,
+# currently-desired result. Both tables FAIL on a *missing* marker either
+# way, because that means the probe never reached the action -- an assertion
+# that found nothing is not a pass.
 PYTHONPATH="$ROOT/tests/unit" python3 - "$WORKDIR/transcript.json" <<'PY'
 import json
 import sys
@@ -164,9 +169,77 @@ import sys
 from orca_transcript import missing
 
 ROWS = {
-    "row-98-preview-scroll": ["Scroll Test"],
+    # Tabbing through the mode bar announces each control by name and
+    # pressed state. Task 4's cleanest, highest-confidence result: identical
+    # across three independent live runs.
+    "row-97-mode-bar-tab": ["Markdown source"],
+    # The external-change warning bar. Unchanged since Task 3.
     "row-101-external-change": ["changed on disk"],
 }
+
+# Rows measured, on real hardware, to produce no speech at all -- not an
+# unmeasured gap, a result. A row here FAILs if Orca *does* speak: that would
+# be news (something changed) worth surfacing loudly, not something to
+# silently absorb.
+SILENT_ROWS = [
+    # Ctrl+Shift+M to Source: at the moment of the press, Orca's tracked
+    # locus of focus was already the source view -- xed's own tab-open
+    # behaviour put it there before xedown's own mode switch ran -- so the
+    # press is not a new transition from Orca's point of view. This window
+    # is clean (no other probe action shares it) in all three live runs
+    # behind Task 4's report.
+    "row-96-switch-to-source",
+    # Down/Page_Down with the preview showing: total AT-SPI silence between
+    # mark and next mark, not merely unpresented speech. Reproduced three
+    # times, including once with WebKit2's enable-caret-browsing forced on,
+    # which changed nothing. Root cause is inside WebKit2GTK's own AT-SPI
+    # bridge, outside xedown's Python and outside this project's reach.
+    "row-98-preview-scroll",
+    # Ctrl+Shift+M back to Preview: the WebView's own focus event does fire,
+    # but Orca's toolkit layer deems the WebView's outer accessible object
+    # "layout only" and never presents it. Task 4 could only measure this as
+    # "unclear, leaning silent" -- its window was contaminated by
+    # step_row_97_focus_mode_bar's grab_focus(), which had no marker of its
+    # own and produced real speech that landed here instead. Task 5 gave
+    # that grab_focus() its own marker (row-97-focus-mode-bar) and re-ran
+    # live, twice, to confirm this row now measures clean-silent in
+    # isolation.
+    "row-96-switch-back-to-preview",
+]
+
+# Markers that exist -- every action that can cause speech now owns one, so
+# none can ever again contaminate a neighbouring row's window -- but are
+# deliberately not asserted on here:
+#   row-97-focus-mode-bar   -- a preparation step (grabs focus onto the mode
+#                              bar before row 97's own Tab presses). It is
+#                              the very grab_focus() described above; its own
+#                              speech was never what this row set out to
+#                              measure, and asserting on it would duplicate
+#                              row-96-switch-back-to-preview's finding under
+#                              a different name.
+#   row-98-prepare-preview  -- a preparation step (focuses the WebView before
+#                              row 98's own scroll keys). Measures silent
+#                              today by luck, not by design; not a row this
+#                              project has committed to a claim about.
+#   row-100-prepare-stale   -- a preparation step (closes the search bar,
+#                              resets AUTO_REFRESH before row 100's own
+#                              edit). Same reasoning as row-98-prepare-preview.
+#   row-99-search-bar-tab   -- Task 4 found the old 6-press burst coalesced
+#                              in Orca's own event queue, a probe-timing
+#                              artifact rather than a xedown defect. Task 5
+#                              spaced the presses out; see task-5-report.md
+#                              for what the re-measurement showed. Left
+#                              unasserted here regardless, because promoting
+#                              a row to an encoded expectation is the one
+#                              judgement call this task was authorised to
+#                              make, and it was spent on row-96-switch-back-
+#                              to-preview, not this row.
+#   row-100-stale           -- the only utterance present is the ordinary
+#                              "document modified" title-change any edit
+#                              produces, not anything about staleness;
+#                              asserting on it would misrepresent that as the
+#                              stale/refresh mechanism being announced, when
+#                              measurement shows the opposite.
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     sliced = json.load(handle)
@@ -189,6 +262,18 @@ for row, expected in ROWS.items():
         failed = True
     else:
         print(f"PASS {row} - {expected}")
+
+for row in SILENT_ROWS:
+    spoken = sliced.get(row)
+    if spoken is None:
+        print(f"FAIL {row} - no such marker in the transcript")
+        failed = True
+        continue
+    if spoken:
+        print(f"FAIL {row} - Orca spoke, expected silence: {spoken}")
+        failed = True
+    else:
+        print(f"PASS {row} - silent, as measured")
 
 sys.exit(1 if failed else 0)
 PY
