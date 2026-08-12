@@ -21,7 +21,7 @@
 #         tree on the way out either way, so this never leaves the editor
 #         configured to load a plugin that is no longer on disk.
 #
-#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.1.0.tar.gz scripts/run-shutdown-tests.sh
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.2.0.tar.gz scripts/run-shutdown-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being tested is the artifact users download. Build it with
 #         scripts/build-release.sh first. The archive is staged and

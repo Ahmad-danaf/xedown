@@ -90,7 +90,7 @@ From a release archive — nothing else required:
 
 ```bash
 mkdir -p ~/.local/share/xed/plugins
-tar -xzf xedown-0.1.0.tar.gz -C ~/.local/share/xed/plugins
+tar -xzf xedown-0.2.0.tar.gz -C ~/.local/share/xed/plugins
 ```
 
 Or from a checkout:

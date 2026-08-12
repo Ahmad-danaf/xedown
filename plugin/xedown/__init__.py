@@ -7,7 +7,7 @@ guarded and the activatable classes are defined only when the host is present.
 
 import sys
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 try:
     import gi
