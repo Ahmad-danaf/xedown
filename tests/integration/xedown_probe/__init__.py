@@ -2117,21 +2117,29 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_txt_sensitivity(self):
-        for action_name in (
-            "XedownToggleAction",
-            "XedownPreviewModeAction",
-            "XedownMarkdownModeAction",
-            "XedownRefreshAction",
-        ):
-            action = self._find_action(action_name)
-            record(f"action-exists-{action_name}", action is not None)
-            if action is not None:
-                # get_sensitive() always reads True regardless of menu state
-                # -- only is_sensitive() reflects the action GROUP
-                # sensitivity that do_update_state() actually toggles.
+        # Expected sensitivity comes from each action's own
+        # requires_markdown, not a second hardcoded list of names -- so an
+        # action added to ACTIONS later is covered here automatically
+        # instead of silently falling through unchecked the way the
+        # settings action originally did.
+        for entry in xedown_shortcuts.ACTIONS:
+            action = self._find_action(entry.name)
+            record(f"action-exists-{entry.name}", action is not None)
+            if action is None:
+                continue
+            # get_sensitive() always reads True regardless of menu state
+            # -- only is_sensitive() reflects the action GROUP
+            # sensitivity that do_update_state() actually toggles.
+            if entry.requires_markdown:
                 record(
-                    f"menu-insensitive-on-txt-{action_name}", not action.is_sensitive()
+                    f"menu-insensitive-on-txt-{entry.name}", not action.is_sensitive()
                 )
+            else:
+                # The settings action is the one entry that must stay
+                # usable on a file xedown does not preview -- exactly when
+                # a user goes looking for the settings that decide what it
+                # previews.
+                record(f"menu-sensitive-on-txt-{entry.name}", action.is_sensitive())
         self.window.set_active_tab(self.tab)
         self.view.grab_focus()
         self._schedule(700, self.step_md_sensitivity)
@@ -2503,6 +2511,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             # as broken, and it is the spelling that actually fires on the
             # layouts where the alias exists at all.
             for accel in (action.accelerator, *action.aliases):
+                # The settings action (Task 6) has accelerator=None by
+                # design -- it has no primary, only a possible future alias
+                # -- and Gtk.accelerator_parse rejects None outright, so
+                # skip it here rather than skip the whole action: an action
+                # with no primary could still carry aliases that do need
+                # checking.
+                if accel is None:
+                    continue
                 # Two values, not three: PyGObject returns (key, mods) here.
                 key, mods = Gtk.accelerator_parse(accel)
                 ours.add((key, int(mods)))
