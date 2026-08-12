@@ -34,7 +34,13 @@ if pgrep -x xed >/dev/null 2>&1; then
 fi
 
 cleanup() {
+  # This trap must run to completion no matter what fails inside it, and a
+  # failed gsettings restore must still fail the run: a caller checking only
+  # the exit code must not see success while the developer's real
+  # active-plugins setting was left wrong. Same restore_failed idiom as
+  # run-integration-tests.sh's cleanup() -- see the reasoning there.
   set +e
+  local restore_failed=0
   pkill -x orca 2>/dev/null
   [ -n "$XEPHYR_PID" ] && kill "$XEPHYR_PID" 2>/dev/null
   # Remove the probe -- it is only ever meant to be installed for the
@@ -43,14 +49,19 @@ cleanup() {
   rm -rf "$PLUGIN_DIR/xedown_orca_probe" "$PLUGIN_DIR/xedown_orca_probe.plugin"
   if [ -n "$SAVED_PLUGINS" ]; then
     gsettings set org.x.editor.plugins active-plugins "$SAVED_PLUGINS"
+    local current
     current="$(gsettings get org.x.editor.plugins active-plugins)"
     if [ "$current" != "$SAVED_PLUGINS" ]; then
       echo "FAILED TO RESTORE org.x.editor.plugins active-plugins:" >&2
       echo "  wanted: $SAVED_PLUGINS" >&2
       echo "  got:    $current" >&2
+      restore_failed=1
     fi
   fi
   echo "Transcript kept at: $WORKDIR"
+  if [ "$restore_failed" -ne 0 ]; then
+    exit 1
+  fi
 }
 trap cleanup EXIT
 
@@ -93,6 +104,23 @@ dbus-run-session -- bash -c '
 
 echo "=== what the probe did ==="
 cat "$REPORT" 2>/dev/null || echo "(no probe report -- the probe never ran)"
+
+# The ROWS assertion further down only ever sees Orca's transcript, not the
+# probe's own report. A failed precondition -- e.g. focus never actually
+# reaching the WebView before the scroll keys were pressed -- would
+# otherwise surface only as silence in the transcript, which is
+# indistinguishable from a genuine "Orca said nothing" finding. Gate on the
+# probe's own PASS/FAIL lines too, same idiom as
+# run-integration-tests.sh:309-316.
+REPORT_FAILED=0
+if grep -q '^FAIL' "$REPORT" 2>/dev/null; then
+  echo "Orca probe reported a FAIL" >&2
+  REPORT_FAILED=1
+fi
+if ! grep -q '^PASS done' "$REPORT" 2>/dev/null; then
+  echo "Orca probe did not run to completion (no 'PASS done' in $REPORT)" >&2
+  REPORT_FAILED=1
+fi
 
 if [ ! -s "$MARKERS" ]; then
   echo "No markers were written: the probe never ran. Nothing to assert on." >&2
@@ -166,7 +194,7 @@ sys.exit(1 if failed else 0)
 PY
 ASSERT_RC=$?
 
-if [ "$ASSERT_RC" -ne 0 ]; then
+if [ "$ASSERT_RC" -ne 0 ] || [ "$REPORT_FAILED" -ne 0 ]; then
   echo "Orca tests FAILED" >&2
   exit 1
 fi
