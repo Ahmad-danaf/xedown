@@ -199,6 +199,24 @@ explained inline below.
 | 99 | Press <kbd>Ctrl</kbd>+<kbd>F</kbd>, tab through the search bar at a normal pace | Each search-bar control is announced by name: "Match case toggle button not pressed.", "Previous match push button.", "Next match push button.", "Close search push button." — measured, once the probe's Tab presses were spaced out at a normal pace (an earlier, zero-delay burst had left Orca silent even though the events were well-formed; that was a probe defect, since fixed). This row still is not asserted automatically by `scripts/run-orca-tests.sh`, for a different, still-current reason: the probe's fixed six-press Tab count overshoots the search bar's own last control into xed's surrounding chrome (measured: "Show or hide the side pane in the current window.", not a search-bar control), and row 99 was never one of the rows this plan's brief required an automated expectation for. Stop counting controls once you reach **Close search** |
 | 100 | Set `"auto_refresh": false`, restart xed, open the file in Preview, switch to Markdown, type a line, switch back to Preview (it renders), then press <kbd>Ctrl</kbd>+<kbd>Z</kbd> so the stale dot appears. With the dot showing, <kbd>Tab</kbd> to the Refresh button, then press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> while it still has focus | The stale dot's own appearance is **not** announced — measured; the only speech at that moment is the ordinary "document modified" title change, nothing about staleness. Reaching the Refresh button *is* announced in full: "Refresh the preview push button." then "The preview is out of date — refresh it (Ctrl+Shift+R)" (measured via a direct focus call in the harness, not an actual Tab press — Tab should reach the same button). Pressing Ctrl+Shift+M with the Refresh button focused still announces the mode change ("Markdown source") — the double-announcement suppression covers only the two mode toggle buttons, not the Refresh button, which is also in the mode bar |
 | 101 | Remove `auto_refresh` from `~/.config/xedown/settings.json`, restart xed, then trigger the external-change bar (edit the file from a terminal while it has unsaved edits) | The bar's warning text is announced: "Warning This file changed on disk. Your unsaved edits are still showing." — measured, reproducibly. (Whether tabbing to the bar's own **Reload…** button announces it by name was not part of this measurement.) |
+| 102 | *Preferences → Plugins*, select **Xedown**, click **Preferences** | The settings panel opens inside the plugin manager's own dialog |
+| 103 | Change **Theme** there with a preview open behind | The preview restyles while the dialog is still open |
+| 104 | *View → Markdown Preview Settings* | The same settings appear, in our own window |
+| 105 | Open a non-Markdown file | **Markdown Preview Settings** stays enabled; the other four xedown entries grey out |
+| 106 | Tab from the top of the window to the bottom | Focus reaches every control in the order they appear, ending on **Close** |
+| 107 | With a screen reader running, Tab through the window | Each control speaks its label and its current value |
+| 108 | **Browse…** beside *Custom stylesheet*, pick a `.css` file | The path appears and every open preview picks it up |
+| 109 | Point *Custom stylesheet* at a file that does not exist | A notice under the row says so, naming the file |
+| 110 | Type `5000` into *Content width* and press Enter | It snaps to 100 in front of you, not silently later |
+| 111 | **Restore defaults…**, then **Cancel** | Nothing changes |
+| 112 | **Restore defaults…**, then **Restore** | All twelve controls snap back and every preview follows |
+| 113 | Open both entry points at once, change a value in one | The other follows immediately |
+| 114 | Run xed under an RTL desktop locale and open the window | Labels right, controls left, nothing clipped |
+| 115 | Open and close the window ten times, then close xed | No warnings on standard error |
+
+Row 107 is the one claim no automated check covers: the probe walks the ATK
+tree without a bridge, and the plugin-manager button in row 102 is the hop the
+probe reaches through peas rather than through xed's dialog.
 
 Any crash, traceback, segfault, warning or `Gtk-CRITICAL` at shutdown is a release
 blocker, not a cosmetic issue — **with exactly one named exception**: the assertion

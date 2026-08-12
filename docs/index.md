@@ -11,7 +11,8 @@
   documents the manual smoke test and `tests/unit/test_fixtures.py` are both run
   against
 - Settings — [settings.md](settings.md), the settings file's location, keys,
-  defaults and recovery behaviour
+  defaults and recovery behaviour, and
+  [the settings window](settings.md#the-settings-window) that edits them live
 - Preview appearance — [themes.md](themes.md), the four built-in themes, your
   own stylesheet, content width and text size, and the contrast policy.
   `scripts/render-themes.sh` renders every fixture in every theme, light and

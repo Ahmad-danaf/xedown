@@ -13,10 +13,18 @@ see [Changes made outside xed](#changes-made-outside-xed).
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
 
-xedown reads this file when it starts, so a change you make by hand takes
-effect the next time xed starts. Nothing watches the file: the preferences
-window that will apply a change to open previews as you make it is still to
-come.
+Everything on this page is also in **Markdown Preview Settings**, and changing
+it there applies to every open preview at once. Two ways in, both showing the
+same settings:
+
+- *Preferences → Plugins*, select **Xedown**, then **Preferences**.
+- **View → Markdown Preview Settings**.
+
+`default_mode` is the one setting the window cannot apply to a tab that is
+already open, because it is read when a tab is built.
+
+Editing the file by hand still works, and still needs a restart: nothing
+watches it while xed is running.
 
 | Key | Values | Default |
 | --- | --- | --- |
@@ -32,6 +40,25 @@ come.
 | `code_copy_buttons` | `true`, `false` | `true` |
 | `text_direction` | `auto`, `ltr`, `rtl` | `auto` |
 | `watch_external_changes` | `true`, `false` | `true` |
+
+## The settings window
+
+Settings are grouped by what they affect: how files open, how the preview
+looks, how it refreshes, and images and changes made outside xed. Each control
+carries a short explanation where its label is not enough.
+
+Changes apply as you make them. A switch or a menu applies the moment you
+change it; a number or the stylesheet path applies a moment after you stop
+typing, or straight away if you press Enter, move to another field, or pick a
+file. Nothing is written just by opening the window.
+
+**Restore defaults** puts all twelve settings back, after asking. That is
+exactly xedown 0.1.0's behaviour. Your custom stylesheet is forgotten — the
+file itself is not touched.
+
+The window also tells you about two things you would otherwise only find on
+standard error: a settings file that could not be saved, and one that was
+found broken at startup and set aside as `settings.json.corrupt`.
 
 Most of these defaults reproduce xedown 0.1.0 exactly: the preview keeps the
 same look, width, text size, refresh timing and starting mode.

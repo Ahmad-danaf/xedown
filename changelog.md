@@ -97,10 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `preview_theme` in `~/.config/xedown/settings.json`. **Repository is the
   default and is identical to 0.1.0**, so upgrading changes nothing until you
   pick another. See [docs/themes.md](docs/themes.md).
-- A settings file at `~/.config/xedown/settings.json`, shared by every window
-  and applied everywhere the moment it changes. See
-  [docs/settings.md](docs/settings.md) for what each one does; the settings
-  window that will edit them is still to come later in v0.2.
+- A settings file at `~/.config/xedown/settings.json`, shared by every window.
+  See [docs/settings.md](docs/settings.md) for what each one does and the
+  settings window (below) that edits them.
 - Find in the preview: `Ctrl+F` searches the rendered document, with match
   counting, wrapping navigation, a case toggle and highlighting themed for all
   four themes in both appearances. `Ctrl+F` over the Markdown source is still
@@ -146,6 +145,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   button); the reverse — tabbing back to an already-focused, now-unpressed
   Preview button and activating it — was not separately measured, though the
   check in `set_mode` is not direction-specific.
+- A settings window covering every xedown setting, reachable from
+  *Preferences → Plugins → Xedown → Preferences* and from *View → Markdown
+  Preview Settings*. Changes apply to every open preview as you make them,
+  and **Restore defaults** returns to xedown 0.1.0's behaviour.
 
 ### Fixed
 

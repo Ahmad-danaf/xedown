@@ -21,7 +21,9 @@ until you choose otherwise.
 
 ## Choosing one
 
-Set `preview_theme` in `~/.config/xedown/settings.json`:
+Choose a theme in **Markdown Preview Settings** (*View → Markdown Preview
+Settings*, or *Preferences → Plugins → Xedown → Preferences*). To set it by
+hand instead, `preview_theme` in `~/.config/xedown/settings.json` takes:
 
 ```json
 {
@@ -32,10 +34,10 @@ Set `preview_theme` in `~/.config/xedown/settings.json`:
 xedown reads the file once per xed session — the first Markdown tab you open
 creates the shared settings store, and every tab after that reuses it — so a
 hand edit takes effect only after you restart xed; closing and reopening the
-file is not enough. Once a settings **window** arrives later in v0.2, changing
-the theme there will apply to every open preview in every window immediately,
-with no restart. [docs/settings.md](settings.md) covers how the file is read
-and what happens when it is malformed.
+file is not enough. Choosing the theme in the settings window instead applies
+it to every open preview in every window immediately, with no restart.
+[docs/settings.md](settings.md) covers how the file is read and what happens
+when it is malformed.
 
 ## Contrast
 

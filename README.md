@@ -69,6 +69,11 @@ Markdown modes inside the same tab.
   while the preview is showing, and on the source while it is not.
 - **Opens how you want.** Choose the mode Markdown files open in, or have
   xedown reopen each file in the mode you left it in.
+- **A settings window** covering every xedown setting, reachable from
+  *Preferences → Plugins → Xedown → Preferences* and from *View → Markdown
+  Preview Settings*. Changes apply to every open preview as you make them,
+  and **Restore defaults** returns to xedown 0.1.0's behaviour. See
+  [docs/settings.md](docs/settings.md).
 
 ## Requirements
 
@@ -153,12 +158,6 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   the plugin can fix or avoid; save before dragging tabs between windows.
   Details and the stack trace are in
   [docs/known-issues.md](docs/known-issues.md).
-- Appearance settings — the theme, content width, text size and custom
-  stylesheet — are chosen by editing `~/.config/xedown/settings.json`, and
-  xedown reads that file once when xed starts. The settings window that will
-  edit them, and apply a change to open previews immediately, is not in this
-  release. The one exception is the custom stylesheet **file**: its contents
-  are watched, so saving an edit to it updates open previews straight away.
 - A custom stylesheet cannot load anything from the network, and cannot load a
   font file even from your own disk — install the font and name it instead.
   See [docs/themes.md](docs/themes.md).
