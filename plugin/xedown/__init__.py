@@ -14,6 +14,7 @@ try:
 
     gi.require_version("Gdk", "3.0")
     gi.require_version("Gtk", "3.0")
+    gi.require_version("PeasGtk", "1.0")
     gi.require_version("Xed", "1.0")
     _HOST_AVAILABLE = True
 except (ImportError, ValueError) as exc:  # pragma: no cover - host-only path
@@ -23,11 +24,12 @@ except (ImportError, ValueError) as exc:  # pragma: no cover - host-only path
     )
 
 if _HOST_AVAILABLE:
-    from gi.repository import Gdk, GLib, GObject, Gtk, Xed
+    from gi.repository import Gdk, GLib, GObject, Gtk, PeasGtk, Xed
 
     from . import shortcuts
     from .controller import TabController
     from .document_state import Mode
+    from .prefswindow import SettingsPanel, SettingsWindow
 
     MENU_PATH = "/MenuBar/ViewMenu/ViewOps_1"
     _CONTROLLER_ATTRIBUTE = "_xedown_controller"
@@ -80,6 +82,7 @@ if _HOST_AVAILABLE:
             self._key_press_handler_id = None
             self._accel_group = None
             self._alias_accels = []
+            self._settings_window = None
 
         def do_activate(self):
             manager = self.window.get_ui_manager()
@@ -89,6 +92,7 @@ if _HOST_AVAILABLE:
                 shortcuts.PREVIEW_MODE: self.show_preview,
                 shortcuts.MARKDOWN_MODE: self.show_markdown,
                 shortcuts.REFRESH: self.refresh_preview,
+                shortcuts.SETTINGS: self.open_settings,
             }
             self._action_group.add_actions(
                 [
@@ -139,8 +143,19 @@ if _HOST_AVAILABLE:
             self._key_press_handler_id = self.window.connect(
                 "key-press-event", self._on_key_press
             )
+            # So the integration probe can find the activatable driving this
+            # window; xed exposes no accessor for its extension set. Removed
+            # in do_deactivate, like everything else this method sets up.
+            self.window._xedown_window_activatable = self
 
         def do_deactivate(self):
+            if self._settings_window is not None:
+                # Destroying it runs the panel's own destroy handler, which is
+                # what releases the settings token and any armed timer.
+                self._settings_window.destroy()
+                self._settings_window = None
+            if getattr(self.window, "_xedown_window_activatable", None) is self:
+                del self.window._xedown_window_activatable
             if self._key_press_handler_id is not None:
                 self.window.disconnect(self._key_press_handler_id)
                 self._key_press_handler_id = None
@@ -209,13 +224,21 @@ if _HOST_AVAILABLE:
             return False
 
         def do_update_state(self):
-            """No preview controls for non-Markdown files."""
+            """No preview controls for non-Markdown files.
+
+            Per action rather than over the whole group: the settings entry
+            must stay reachable on a file xedown does not preview, which is
+            precisely when someone goes looking for the setting that decides
+            what it previews.
+            """
             if self._action_group is None:
                 return
             controller = self._active_controller()
-            self._action_group.set_sensitive(
-                controller is not None and controller.is_markdown
-            )
+            markdown = controller is not None and controller.is_markdown
+            for action in shortcuts.ACTIONS:
+                entry = self._action_group.get_action(action.name)
+                if entry is not None:
+                    entry.set_sensitive(markdown or not action.requires_markdown)
 
         def _active_controller(self):
             view = self.window.get_active_view()
@@ -298,6 +321,21 @@ if _HOST_AVAILABLE:
             if controller is not None:
                 controller.refresh_now()
 
+        def open_settings(self, *_args):
+            """Present this window's settings window, building one if needed.
+
+            One per xed window, reused rather than stacked: a second window
+            bound to the same store would work, but "closes cleanly every
+            time" is far easier to hold true with one of them.
+            """
+            if self._settings_window is None:
+                self._settings_window = SettingsWindow(self.window)
+                self._settings_window.connect("destroy", self._on_settings_closed)
+            self._settings_window.present()
+
+        def _on_settings_closed(self, *_args):
+            self._settings_window = None
+
     class XedownViewActivatable(GObject.Object, Xed.ViewActivatable):
         """One controller per view — this is the per-tab ownership boundary.
 
@@ -324,3 +362,19 @@ if _HOST_AVAILABLE:
 
         def do_deactivate(self):
             _deactivate_view(self.view)
+
+    class XedownConfigurable(GObject.Object, PeasGtk.Configurable):
+        """The plugin manager's Preferences button.
+
+        xed's Preferences → Plugins tab is libpeas-gtk's own plugin manager
+        (`libxed.so` calls `peas_gtk_plugin_manager_new`), and its per-plugin
+        Preferences button is sensitive exactly when the plugin provides this
+        extension. Peas wraps whatever we return in a dialog of its own, with
+        its own Close button — which is why everything the user needs to reach
+        lives inside the panel rather than in an action area.
+        """
+
+        __gtype_name__ = "XedownConfigurable"
+
+        def do_create_configure_widget(self):
+            return SettingsPanel()

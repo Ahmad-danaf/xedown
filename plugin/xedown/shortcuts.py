@@ -13,6 +13,7 @@ TOGGLE = "XedownToggleAction"
 PREVIEW_MODE = "XedownPreviewModeAction"
 MARKDOWN_MODE = "XedownMarkdownModeAction"
 REFRESH = "XedownRefreshAction"
+SETTINGS = "XedownSettingsAction"
 
 
 class Action:
@@ -36,12 +37,18 @@ class Action:
     the alias is the ONLY one of the two that ever fires.
     """
 
-    def __init__(self, name, label, accelerator, tooltip, aliases=()):
+    def __init__(
+        self, name, label, accelerator, tooltip, aliases=(), requires_markdown=True
+    ):
         self.name = name
         self.label = label
         self.accelerator = accelerator
         self.tooltip = tooltip
         self.aliases = aliases
+        # False for the one entry that must stay usable on a file xedown does
+        # not preview -- which is exactly when a user goes looking for the
+        # settings that decide what it previews.
+        self.requires_markdown = requires_markdown
 
 
 ACTIONS = (
@@ -76,6 +83,16 @@ ACTIONS = (
         "_Refresh Preview",
         "<Ctrl><Shift>R",
         "Re-render the preview from the document as it is now",
+    ),
+    Action(
+        SETTINGS,
+        "Markdown Preview _Settings",
+        # No accelerator on purpose. The other four are all about the preview
+        # surface and are pressed while reading; this one is opened once in a
+        # while, and the keyboard is already crowded.
+        None,
+        "Change how xedown previews Markdown",
+        requires_markdown=False,
     ),
 )
 

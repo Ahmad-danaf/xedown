@@ -11,6 +11,8 @@ def test_the_four_actions_exist_with_the_designed_accelerators():
         shortcuts.PREVIEW_MODE: "<Ctrl><Shift>1",
         shortcuts.MARKDOWN_MODE: "<Ctrl><Shift>2",
         shortcuts.REFRESH: "<Ctrl><Shift>R",
+        # No accelerator on purpose -- see shortcuts.SETTINGS's Action entry.
+        shortcuts.SETTINGS: None,
     }
 
 
@@ -26,6 +28,7 @@ def test_the_digit_actions_carry_a_shifted_symbol_alias():
         shortcuts.PREVIEW_MODE: ("<Ctrl><Shift>exclam",),
         shortcuts.MARKDOWN_MODE: ("<Ctrl><Shift>at",),
         shortcuts.REFRESH: (),
+        shortcuts.SETTINGS: (),
     }
 
 
@@ -39,9 +42,14 @@ def test_the_toggle_keeps_its_v01_identity():
 
 
 def test_no_action_reuses_a_name_an_accelerator_or_a_label():
-    for field in ("name", "accelerator", "label"):
+    for field in ("name", "label"):
         values = [getattr(action, field) for action in shortcuts.ACTIONS]
         assert len(set(values)) == len(values)
+
+    # Accelerators are checked separately because an action is allowed to
+    # have none, and two actions having none is not a collision.
+    bound = [a.accelerator for a in shortcuts.ACTIONS if a.accelerator is not None]
+    assert len(set(bound)) == len(bound)
 
     # Primary and alias accelerators share one namespace: an alias that
     # collided with another action's primary (or another action's alias)
@@ -51,6 +59,7 @@ def test_no_action_reuses_a_name_an_accelerator_or_a_label():
         shortcuts.parse_accelerator(accel)
         for action in shortcuts.ACTIONS
         for accel in (action.accelerator, *action.aliases)
+        if accel is not None
     ]
     assert len(set(all_accelerators)) == len(all_accelerators)
 
@@ -61,11 +70,31 @@ def test_every_action_has_a_tooltip_and_a_mnemonic():
         assert "_" in action.label
 
 
+def test_the_settings_action_exists_and_binds_no_key():
+    action = next(a for a in shortcuts.ACTIONS if a.name == shortcuts.SETTINGS)
+    assert action.accelerator is None
+    assert action.aliases == ()
+    assert action.label == "Markdown Preview _Settings"
+
+
+def test_settings_is_the_only_action_that_survives_a_non_markdown_file():
+    relaxed = [a.name for a in shortcuts.ACTIONS if not a.requires_markdown]
+    assert relaxed == [shortcuts.SETTINGS]
+
+
+def test_every_other_action_still_requires_a_markdown_document():
+    for action in shortcuts.ACTIONS:
+        if action.name != shortcuts.SETTINGS:
+            assert action.requires_markdown
+
+
 def test_ctrl_r_is_never_proposed():
     # xed 3.8.9 binds it to Toggle Word Wrap.
     taken = shortcuts.parse_accelerator("<Control>R")
     assert all(
-        shortcuts.parse_accelerator(a.accelerator) != taken for a in shortcuts.ACTIONS
+        shortcuts.parse_accelerator(a.accelerator) != taken
+        for a in shortcuts.ACTIONS
+        if a.accelerator is not None
     )
 
 
@@ -321,7 +350,10 @@ def test_find_is_a_routed_key_not_an_accelerator():
     # would put it in front of the clash fixture as a collision with xed's own
     # <control>F.
     assert "f" in shortcuts.HANDLED_KEYS
-    assert all("F" not in action.accelerator for action in shortcuts.ACTIONS)
+    assert all(
+        action.accelerator is None or "F" not in action.accelerator
+        for action in shortcuts.ACTIONS
+    )
 
 
 FIXTURE = (
@@ -357,6 +389,8 @@ def test_no_xedown_accelerator_collides_with_one_of_xeds():
     taken = {shortcuts.parse_accelerator(a) for a in _xed()["accelerators"]}
     for action in shortcuts.ACTIONS:
         for accel in (action.accelerator, *action.aliases):
+            if accel is None:
+                continue
             assert (
                 shortcuts.parse_accelerator(accel) not in taken
             ), f"{accel} ({action.name}) is already xed's"
