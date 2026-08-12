@@ -120,3 +120,68 @@ def test_missing_matches_inside_a_longer_utterance_and_ignores_case():
 
 def test_missing_returns_nothing_when_everything_was_said():
     assert ot.missing(["Match case", "Close search"], ["Match case"]) == []
+
+
+# --- evaluate_rows: the decision scripts/run-orca-tests.sh's exit code turns
+# on, moved here so it has coverage independent of a live Orca session. ---
+
+
+def test_evaluate_rows_a_rows_entry_that_said_the_expected_substring_passes():
+    sliced = {"row-97-mode-bar-tab": ["Markdown source toggle button not pressed."]}
+    lines = ot.evaluate_rows(sliced, {"row-97-mode-bar-tab": ["Markdown source"]}, [])
+    assert lines == ["PASS row-97-mode-bar-tab - ['Markdown source']"]
+
+
+def test_evaluate_rows_a_rows_entry_that_never_said_the_expected_substring_fails():
+    sliced = {"row-97-mode-bar-tab": ["something unrelated"]}
+    lines = ot.evaluate_rows(sliced, {"row-97-mode-bar-tab": ["Markdown source"]}, [])
+    assert lines == [
+        (
+            "FAIL row-97-mode-bar-tab - never said: ['Markdown source'] "
+            "(said: ['something unrelated'])"
+        )
+    ]
+
+
+def test_evaluate_rows_a_rows_entry_with_an_empty_slice_fails():
+    """Silence is a finding, not a pass -- a11y.check_tree's rule."""
+    sliced = {"row-98-preview-scroll": []}
+    lines = ot.evaluate_rows(sliced, {"row-98-preview-scroll": ["anything"]}, [])
+    assert lines == ["FAIL row-98-preview-scroll - Orca said nothing at all"]
+
+
+def test_evaluate_rows_a_silent_rows_entry_with_an_empty_slice_passes():
+    sliced = {"row-96-switch-to-source": []}
+    lines = ot.evaluate_rows(sliced, {}, ["row-96-switch-to-source"])
+    assert lines == ["PASS row-96-switch-to-source - silent, as measured"]
+
+
+def test_evaluate_rows_a_silent_rows_entry_that_spoke_fails():
+    """The asymmetry with ROWS: here an empty slice is the pass, and any
+    speech at all is the failure -- the opposite polarity, on purpose."""
+    sliced = {"row-96-switch-to-source": ["unexpected speech"]}
+    lines = ot.evaluate_rows(sliced, {}, ["row-96-switch-to-source"])
+    assert lines == [
+        (
+            "FAIL row-96-switch-to-source - Orca spoke, expected silence: "
+            "['unexpected speech']"
+        )
+    ]
+
+
+def test_evaluate_rows_a_missing_marker_fails_in_the_rows_table():
+    """A missing marker means the probe never reached the action -- an
+    assertion that found nothing is not a pass, in either table."""
+    lines = ot.evaluate_rows({}, {"row-101-external-change": ["x"]}, [])
+    assert lines == ["FAIL row-101-external-change - no such marker in the transcript"]
+
+
+def test_evaluate_rows_a_missing_marker_fails_in_the_silent_rows_table():
+    lines = ot.evaluate_rows({}, {}, ["row-98-preview-scroll"])
+    assert lines == ["FAIL row-98-preview-scroll - no such marker in the transcript"]
+
+
+def test_evaluate_rows_preserves_table_order_rows_then_silent_rows():
+    sliced = {"a": ["x"], "b": []}
+    lines = ot.evaluate_rows(sliced, {"a": ["x"]}, ["b"])
+    assert lines == ["PASS a - ['x']", "PASS b - silent, as measured"]

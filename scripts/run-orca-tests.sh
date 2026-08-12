@@ -166,7 +166,7 @@ PYTHONPATH="$ROOT/tests/unit" python3 - "$WORKDIR/transcript.json" <<'PY'
 import json
 import sys
 
-from orca_transcript import missing
+from orca_transcript import evaluate_rows
 
 ROWS = {
     # Tabbing through the mode bar announces each control by name and
@@ -224,16 +224,21 @@ SILENT_ROWS = [
 #   row-100-prepare-stale   -- a preparation step (closes the search bar,
 #                              resets AUTO_REFRESH before row 100's own
 #                              edit). Same reasoning as row-98-prepare-preview.
-#   row-99-search-bar-tab   -- Task 4 found the old 6-press burst coalesced
-#                              in Orca's own event queue, a probe-timing
-#                              artifact rather than a xedown defect. Task 5
-#                              spaced the presses out; see task-5-report.md
-#                              for what the re-measurement showed. Left
-#                              unasserted here regardless, because promoting
-#                              a row to an encoded expectation is the one
-#                              judgement call this task was authorised to
-#                              make, and it was spent on row-96-switch-back-
-#                              to-preview, not this row.
+#   row-99-search-bar-tab   -- not one of the rows Task 5's brief required
+#                              an expectation for. Task 4 found the old
+#                              6-press burst coalesced in Orca's own event
+#                              queue, a probe-timing artifact rather than a
+#                              xedown defect; Task 5 spaced the presses out
+#                              and the row now speaks (see task-5-report.md).
+#                              But the fixed 6-press count sweeps focus past
+#                              the search bar's own last control and into
+#                              xed's surrounding chrome -- one of the 7
+#                              utterances measured is "Show or hide the side
+#                              pane in the current window.", not a search-bar
+#                              control at all. Asserting a clean expectation
+#                              now would encode that overshoot as if it were
+#                              deliberate. Needs the press count re-scoped to
+#                              the bar's own controls before it gets one.
 #   row-100-stale           -- the only utterance present is the ordinary
 #                              "document modified" title-change any edit
 #                              produces, not anything about staleness;
@@ -244,36 +249,15 @@ SILENT_ROWS = [
 with open(sys.argv[1], encoding="utf-8") as handle:
     sliced = json.load(handle)
 
+# evaluate_rows is the tested half of this decision (tests/unit/
+# test_orca_transcript.py) -- this script just prints its lines and turns
+# any "FAIL" into a non-zero exit.
+lines = evaluate_rows(sliced, ROWS, SILENT_ROWS)
 failed = False
-for row, expected in ROWS.items():
-    spoken = sliced.get(row)
-    if spoken is None:
-        print(f"FAIL {row} - no such marker in the transcript")
+for line in lines:
+    print(line)
+    if line.startswith("FAIL"):
         failed = True
-        continue
-    if not spoken:
-        # Silence is a finding, not a pass: a11y.check_tree's rule.
-        print(f"FAIL {row} - Orca said nothing at all")
-        failed = True
-        continue
-    absent = missing(spoken, expected)
-    if absent:
-        print(f"FAIL {row} - never said: {absent} (said: {spoken})")
-        failed = True
-    else:
-        print(f"PASS {row} - {expected}")
-
-for row in SILENT_ROWS:
-    spoken = sliced.get(row)
-    if spoken is None:
-        print(f"FAIL {row} - no such marker in the transcript")
-        failed = True
-        continue
-    if spoken:
-        print(f"FAIL {row} - Orca spoke, expected silence: {spoken}")
-        failed = True
-    else:
-        print(f"PASS {row} - silent, as measured")
 
 sys.exit(1 if failed else 0)
 PY

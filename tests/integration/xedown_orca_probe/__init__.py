@@ -535,8 +535,18 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         equivalent detour -- this probe must not leave a developer's real
         setting flipped, independently of whatever config sandboxing Task 3's
         harness adds.
+
+        Marked *before* that write, not after: at this point in the sequence
+        `state.preview_stale` is True (row 100's own edit set it) and mode is
+        still Preview, so flipping `AUTO_REFRESH` back on really does reach
+        `_refresh_body_now()` (`controller.py:1298-1353`) -- a genuine,
+        speech-capable action. Writing the mark after it, as this step used
+        to, would have left it landing inside `row-101-external-change`'s
+        window, an *asserted* `ROWS` entry, which is exactly the contamination
+        shape this task exists to close off. It happens to be silent today,
+        but that must not be why it is unmarked.
         """
-        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, True)
         mark("done")
+        xedown_settings.get_settings().set(xedown_settings.AUTO_REFRESH, True)
         record("done", True)
         return False

@@ -131,6 +131,61 @@ def missing(spoken, expected):
     ]
 
 
+def evaluate_rows(sliced, rows, silent_rows):
+    """Check a sliced transcript against two expectation tables.
+
+    `rows` maps marker name -> a list of substrings that must all appear,
+    case-insensitively, somewhere in what was spoken during that marker's
+    window. An empty or missing slice FAILs there: silence is a finding, not
+    a pass -- a11y.check_tree's rule.
+
+    `silent_rows` is an iterable of marker names that must have produced NO
+    speech at all. A marker with any utterance FAILs there -- that would be
+    news (something changed) worth surfacing loudly, not something to
+    silently absorb.
+
+    Both tables FAIL on a *missing* marker (the key absent from `sliced`
+    entirely), because that means the probe never reached the action, in
+    either direction: an assertion that found nothing is not a pass. This is
+    the one place the two tables agree; on an *empty but present* slice they
+    deliberately disagree -- that is `rows` vs. `silent_rows`'s whole reason
+    to exist as two tables rather than one with a sign bit.
+
+    Returns one "PASS <row> - ..." or "FAIL <row> - ..." line per row, in
+    the order `rows` then `silent_rows` were given -- `scripts/run-orca-
+    tests.sh` prints these directly and fails the run if any starts with
+    "FAIL". Kept here, not inline in that script, so the decision that
+    publishes an accessibility finding has unit test coverage independent of
+    a live Orca session.
+    """
+    lines = []
+    for row, expected in rows.items():
+        spoken = sliced.get(row)
+        if spoken is None:
+            lines.append(f"FAIL {row} - no such marker in the transcript")
+            continue
+        if not spoken:
+            lines.append(f"FAIL {row} - Orca said nothing at all")
+            continue
+        absent = missing(spoken, expected)
+        if absent:
+            lines.append(f"FAIL {row} - never said: {absent} (said: {spoken})")
+        else:
+            lines.append(f"PASS {row} - {expected}")
+
+    for row in silent_rows:
+        spoken = sliced.get(row)
+        if spoken is None:
+            lines.append(f"FAIL {row} - no such marker in the transcript")
+            continue
+        if spoken:
+            lines.append(f"FAIL {row} - Orca spoke, expected silence: {spoken}")
+        else:
+            lines.append(f"PASS {row} - silent, as measured")
+
+    return lines
+
+
 def _main(argv):
     """`python -m orca_transcript <orca.log> <markers>`.
 
