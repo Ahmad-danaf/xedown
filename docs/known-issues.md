@@ -389,10 +389,11 @@ behind the claims elsewhere in this file and in the README, not a bug.
 `scripts/run-orca-tests.sh` drove Orca 46.1 against a real xed session and
 measured, reproducibly across multiple runs, that
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> announces the new mode both
-ways, tabbing through the mode bar announces each control by name and
-pressed state, and the external-change warning bar is announced. That is
-real, not inferred — but several adjacent things were checked and found
-**unknown**, not working:
+ways, tabbing to the Source toggle announces it by name and pressed state
+(its neighbors in the bar were reached by direct focus calls in the probe,
+not measured via Tab), and the external-change warning bar is announced.
+That is real, not inferred — but several adjacent things were checked and
+found **unknown**, not working:
 
 - The View menu's *Toggle Markdown Preview* entry and a mouse click on a
   mode-bar button were never exercised by the probe. Both run through the

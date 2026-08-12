@@ -126,8 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   semantic colour pair xedown draws, checked by unit test. **Screen-reader
   speech has now been checked against Orca 46.1 on Linux Mint** (X11,
   `scripts/run-orca-tests.sh`), on one machine: the mode switch announces
-  (below), tabbing through the mode bar announces each control by name and
-  pressed state, and the external-change warning bar is announced.
+  (below), tabbing to the Source toggle announces it by name and pressed
+  state (its neighbors in the bar were reached by direct focus calls in the
+  probe, not measured via Tab), and the external-change warning bar is
+  announced.
   Keyboard-scrolling the preview and the stale/refresh indicator are not
   announced — see [docs/known-issues.md](docs/known-issues.md).
 - The <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> mode switch now announces

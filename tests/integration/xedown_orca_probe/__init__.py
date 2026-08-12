@@ -414,8 +414,10 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         unchecked) and the real AT-SPI focus event onto [text] (only
         reachable through `set_mode`'s own `self.view.grab_focus()`) -- so
         xedown's own handling is not what is slow here. The measured gap
-        between mark and that first checked event, in both of the two final
-        live runs behind this row (see docs/orca-verification/measurements.md's
+        between mark and that first checked event, in the two runs behind
+        Task 6's own report (four more runs followed this row in the fix
+        round and the final whole-branch review wave, without re-measuring
+        the gap -- see docs/orca-verification/measurements.md's
         `row-97-activate-focused-button` entry and its "263ms gap" note),
         was 263ms (`11:05:46.935904` ->
         `11:05:47.198528`, and `11:07:34.762877` -> `11:07:35.026015`), not

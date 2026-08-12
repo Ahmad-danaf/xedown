@@ -199,15 +199,17 @@ dark.
 reader.** `scripts/run-orca-tests.sh` drives a real xed session under Orca
 46.1 on Linux Mint (X11) and records what it says. Measured: pressing
 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> announces the new mode both
-ways ("Markdown source", then "Preview"); tabbing through the mode bar
-announces each control by name and pressed state; the external-change
-warning bar is announced. Also measured: keyboard-scrolling the preview
-(<kbd>Down</kbd>, <kbd>Page Down</kbd>) produces no screen-reader feedback at
-all — the cause lies inside WebKit2GTK's own AT-SPI bridge, not in xedown's
-code — and the stale indicator and the manual-refresh cue are not announced;
-the only speech when the preview goes stale is the ordinary "document
-modified" title change. This project still will not claim that xedown "works
-with" or "is accessible to" a screen reader in general: only one machine, one
+ways ("Markdown source", then "Preview"); tabbing to the Source toggle
+announces it by name and pressed state (its neighbors in the bar were
+reached by direct focus calls in the probe, not measured via Tab); the
+external-change warning bar is announced. Also measured: keyboard-scrolling
+the preview (<kbd>Down</kbd>, <kbd>Page Down</kbd>) produces no
+screen-reader feedback at all — the cause lies inside WebKit2GTK's own
+AT-SPI bridge, not in xedown's code — and the stale indicator and the
+manual-refresh cue are not announced; the only speech when the preview goes
+stale is the ordinary "document modified" title change. This project still
+will not claim that xedown "works with" or "is accessible to" a screen
+reader in general: only one machine, one
 Orca version and one WebKitGTK build were tested, on X11 only; the View menu's
 route to a mode change and a mouse click on a mode button were never
 separately measured. See [docs/known-issues.md](docs/known-issues.md) and the
