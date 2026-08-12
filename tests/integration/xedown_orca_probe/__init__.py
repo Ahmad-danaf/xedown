@@ -740,10 +740,8 @@ class XedownOrcaProbe(GObject.Object, Xed.WindowActivatable):
         AUTO_REFRESH-switched-back-on branch -- named here rather than only
         by line, because a line citation rots the moment an earlier method
         grows or shrinks (this one already did once: correct at `26bf1e9`,
-        wrong three commits later). For anyone checking it anyway, as of this
-        commit that branch is `controller.py:1325-1380`, with the call
-        itself at `:1379`. It is a genuine, speech-capable action. Writing
-        the mark after it, as this step used
+        wrong three commits later). It is a genuine, speech-capable action.
+        Writing the mark after it, as this step used
         to, would have left it landing inside `row-101-external-change`'s
         window, an *asserted* `ROWS` entry, which is exactly the contamination
         shape this task exists to close off. It happens to be silent today,
