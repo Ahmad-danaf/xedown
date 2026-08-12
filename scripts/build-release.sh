@@ -90,10 +90,35 @@ find "$STAGING" -name '*.py[cod]' -delete
 # broken promise, not a missing nicety.
 
 REQUIRED=(
+  # Every module the package imports, gated by
+  # tests/unit/test_release_manifest.py rather than by hand: the array had
+  # drifted to five of twenty-seven before that test existed.
   "xedown/__init__.py"
+  "xedown/a11y.py"
+  "xedown/appearance.py"
+  "xedown/controller.py"
+  "xedown/direction.py"
+  "xedown/diskstate.py"
+  "xedown/document_state.py"
+  "xedown/errors.py"
+  "xedown/filewatch.py"
+  "xedown/images.py"
+  "xedown/links.py"
+  "xedown/mdext.py"
+  "xedown/modebar.py"
+  "xedown/modestore.py"
+  "xedown/prefs.py"
+  "xedown/prefswindow.py"
+  "xedown/preview.py"
   "xedown/renderer.py"
+  "xedown/sanitizer.py"
+  "xedown/search.py"
+  "xedown/searchbar.py"
+  "xedown/settings.py"
+  "xedown/shortcuts.py"
   "xedown/stylesheets.py"
   "xedown/stylewatcher.py"
+  "xedown/themes.py"
   "xedown/vendoring.py"
   "xedown/vendor/MANIFEST.md"
   "xedown/vendor/markdown/__init__.py"
