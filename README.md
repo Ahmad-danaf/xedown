@@ -33,6 +33,33 @@ Markdown modes inside the same tab.
 - The preview refreshes automatically about a quarter second after an edit,
   but only while it is actually visible; edits made while in Markdown mode
   are rendered the next time you switch to Preview.
+- **Refreshing, under your control.** Turn automatic refresh off with
+  `auto_refresh` and the mode bar grows a **Refresh** button, marked when the
+  preview is behind the document; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>
+  refreshes on demand either way. `refresh_delay_ms` sets how long xedown waits
+  after a change.
+- **The preview follows the file on disk.** When git, a terminal command,
+  another editor or an AI coding agent rewrites the open file, the preview
+  updates at the scroll position it had, with no dialog and nothing to press.
+  With unsaved edits nothing is replaced: the preview keeps showing your work
+  and a dismissible bar offers **Reload…**, which hands off to xed's own
+  Revert. xedown never writes to your text. Turn it off with
+  `watch_external_changes`.
+- **Find in the preview.** <kbd>Ctrl</kbd>+<kbd>F</kbd> searches the rendered
+  document — match count, wrapping navigation, a case toggle, highlighting
+  themed for all four themes in both appearances. See *Finding text* below.
+- **A copy button on every code block**, revealed on hover and reachable by
+  keyboard. It copies exactly what the author wrote and says so when a copy
+  fails rather than pretending it worked. Turn it off with
+  `code_copy_buttons`.
+- **Task-list checkboxes drawn from the theme** rather than by the browser, in
+  both light and dark. They stay read-only: xedown never writes to your file.
+- **Wide tables scroll inside their own area**, with a shadow at whichever edge
+  has more to show, instead of being squeezed into unreadable columns. The page
+  itself never scrolls sideways.
+- **Images fit the reading column**, and a very tall one fits the window too,
+  keeping its proportions. A small image keeps its own size, and an image you
+  sized yourself in HTML is left alone.
 - External links open in your default browser. Local links to other Markdown
   files open in a new xed tab. Other local files are handed to your desktop's
   file opener, which asks for confirmation first for anything that can run
@@ -41,9 +68,7 @@ Markdown modes inside the same tab.
   installer, JAR, AppImage, or shared library, judged by its extension
   whether or not it is marked executable.
 - Relative links and images resolve against the document's own directory,
-  rather than guessing a path. In a document that has never been saved there
-  is no directory to resolve against: a relative image says so in place of the
-  image, while a relative link is rendered inert — see the limitations below.
+  rather than guessing a path.
 - Remote images are never fetched. A visible placeholder is shown in their
   place instead. Nothing xedown does ever reaches out to the network.
 - Right-to-left documents: Arabic and Hebrew lay out as well as they read.
@@ -131,8 +156,7 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
 ## Known limitations
 
 - Go-to-line operates on the source text and is inert while Preview is
-  showing; switch to Markdown mode to use it. Find is no longer among them —
-  `Ctrl+F` in Preview searches the rendered document (see *Finding text*).
+  showing; switch to Markdown mode to use it.
 - The preview follows changes made to the file outside xed, but the **source
   buffer does not**: xedown never writes to your text. After an external
   change the preview shows the file and the editor still holds what you had.
@@ -145,11 +169,15 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   placeholder naming the address. No setting changes this — the preview's
   content security policy blocks the request whatever the settings say.
   `remote_images` only chooses whether there is a placeholder, and how it looks.
-- In a document that has never been saved, relative links cannot be resolved:
-  they render as inert text with no click target and no on-page message.
-  Relative images in the same situation do get an explanatory placeholder.
-  Save the file to give relative links and images a location to resolve
-  against.
+- **On a non-Latin keyboard layout** (Cyrillic, Greek, Arabic and others),
+  <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>A</kbd> in the preview
+  fall through to xed's own Copy and Select All, which act on the Markdown
+  source rather than on the rendered page. Right-click the preview for **Copy**
+  and **Select All**, which are unaffected. See
+  [docs/known-issues.md](docs/known-issues.md).
+- **A document opened through a symbolic link never follows changes to its
+  file.** A file monitor on a link watches the link, and nothing writes to the
+  link. Open the file by its real path, or use *File → Revert*.
 - xedown supports selected GitHub-flavored Markdown features (tables, task
   lists, strikethrough, fenced code, footnotes, and lists that interrupt a
   paragraph), not full GFM compatibility.
