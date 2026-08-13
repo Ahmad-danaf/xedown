@@ -1,5 +1,5 @@
-"""xedown's own Markdown extensions: task lists, strikethrough, and
-lists that interrupt a paragraph.
+"""xedown's own Markdown extensions: task lists, strikethrough, lists that
+interrupt a paragraph, and a heading-hash CommonMark-conformance override.
 
 Built by a factory rather than at import time, because these subclass types from
 the vendored Markdown module, which only exists on sys.path once `vendoring` has
@@ -45,6 +45,7 @@ def make_extensions(markdown_module):
     Treeprocessor = markdown_module.treeprocessors.Treeprocessor
     BlockProcessor = markdown_module.blockprocessors.BlockProcessor
     SimpleTagInlineProcessor = markdown_module.inlinepatterns.SimpleTagInlineProcessor
+    HashHeaderProcessor = markdown_module.blockprocessors.HashHeaderProcessor
 
     class TaskListTreeprocessor(Treeprocessor):
         def run(self, root):
@@ -97,6 +98,34 @@ def make_extensions(markdown_module):
                 175,
             )
 
+    class SpacedHashHeaderProcessor(HashHeaderProcessor):
+        """CommonMark requires a space (or end of line) after the `#`
+        markers; the vendored regex has no such requirement, so `#NoSpace`
+        becomes an `<h1>` and `####### Seven` becomes an `<h6>` with a
+        literal `#` left in its text (task 12 / F9, F10).
+
+        `test` and `run` are inherited unchanged from the vendored
+        processor -- both just use `self.RE` -- so overriding `RE` alone is
+        enough. `[ ]+` is required after the hashes, except when they run
+        straight into the end of the line: a bare `#` (or `###` alone) is a
+        valid, empty ATX heading in CommonMark, and must keep rendering as
+        one.
+        """
+
+        RE = re.compile(
+            r"(?:^|\n)(?P<level>#{1,6})(?:[ ]+|(?=\n|$))"
+            r"(?P<header>(?:\\.|[^\\])*?)#*(?:\n|$)"
+        )
+
+    class HashHeaderOverrideExtension(Extension):
+        def extendMarkdown(self, md):
+            # Same name and priority as the vendored processor it replaces
+            # (`Registry.register` swaps an existing name in place), so it
+            # sits exactly where `hashheader` already sat in the chain.
+            md.parser.blockprocessors.register(
+                SpacedHashHeaderProcessor(md.parser), "hashheader", 70
+            )
+
     class ListInterruptProcessor(BlockProcessor):
         """Split a paragraph block where a list starts inside it.
 
@@ -130,4 +159,9 @@ def make_extensions(markdown_module):
                 ListInterruptProcessor(md.parser), "xedown_list_interrupt", 12
             )
 
-    return [TaskListExtension(), StrikethroughExtension(), ListInterruptExtension()]
+    return [
+        TaskListExtension(),
+        StrikethroughExtension(),
+        HashHeaderOverrideExtension(),
+        ListInterruptExtension(),
+    ]

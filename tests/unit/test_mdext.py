@@ -74,6 +74,46 @@ def test_tables_and_fenced_code_still_work_alongside(convert):
     assert 'class="language-python"' in html
 
 
+# --- Heading hash edge cases (task 12 / F9, F10) ---
+#
+# The vendored `HashHeaderProcessor.RE` has no space requirement after the
+# hashes: `#NoSpace` became an `<h1>` and `####### Seven hashes` became an
+# `<h6>` with a literal `#` left in its text. CommonMark makes both of these
+# paragraphs. `[ ]+` (or end of line) is now required after the hashes.
+
+
+def test_a_hash_with_no_following_space_is_not_a_heading(convert):
+    html = convert("#NoSpace")
+    assert "<h1" not in html
+    assert "<p>#NoSpace</p>" in html
+
+
+def test_seven_hashes_is_not_a_heading_and_leaves_no_stray_hash(convert):
+    html = convert("####### Seven hashes")
+    assert "<h6" not in html
+    assert "<p>####### Seven hashes</p>" in html
+
+
+def test_a_normal_heading_still_works(convert):
+    assert "<h1" in convert("# Normal")
+
+
+def test_a_six_hash_heading_still_works(convert):
+    assert "<h6" in convert("###### Six")
+
+
+def test_a_lone_hash_is_still_an_empty_heading(convert):
+    # A bare "#" runs straight into end of line, which CommonMark treats
+    # the same as a following space: a valid, empty ATX heading.
+    html = convert("#")
+    assert "<h1" in html
+
+
+def test_a_heading_with_trailing_hashes_still_works(convert):
+    html = convert("## Trailing ##")
+    assert '<h2 id="trailing">Trailing</h2>' in html
+
+
 # --- What must not change (brief 16) ---
 #
 # These pass against the parser as it was before a list could interrupt a
