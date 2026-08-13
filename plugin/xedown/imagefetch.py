@@ -238,9 +238,14 @@ class Fetcher:
 
     Everything here runs on the GTK main thread except the work handed to the
     executor, so the registry needs no locking: `request` and the delivery
-    that follows it are both main-thread, and the worker touches nothing but
-    its own local `result` -- it hands that back through `_schedule`/`dispatch`
-    rather than writing it anywhere shared.
+    that follows it are both main-thread, and the worker's only outside call
+    besides the fetch itself is the host-supplied `proxies_for` hook, which
+    deliberately also runs off the main thread -- Task 12 backs it with
+    `Gio.ProxyResolver.lookup()`, which blocks and can consult a PAC script,
+    and the whole point of doing the fetch off the main thread is to keep
+    exactly that kind of call from stalling the editor. The worker still
+    writes to nothing shared: it hands its `result` back through
+    `_schedule`/`dispatch` rather than mutating any registry itself.
     """
 
     def __init__(
@@ -315,13 +320,20 @@ class Fetcher:
 
     def _start(self, url):
         def work():
-            proxies = self._proxies_for(url) if self._proxies_for is not None else None
-            result = fetch_once(
-                url,
-                opener=self._opener,
-                resolver=self._resolver,
-                proxies=proxies,
-            )
+            try:
+                proxies = (
+                    self._proxies_for(url) if self._proxies_for is not None else None
+                )
+                result = fetch_once(
+                    url,
+                    opener=self._opener,
+                    resolver=self._resolver,
+                    proxies=proxies,
+                )
+            except Exception as exc:  # noqa: BLE001 - the slot must always be released
+                # Nothing here may leave the URL in flight: the waiters would
+                # never hear back and the pending slot would never come back.
+                result = _refuse(NETWORK, str(exc))
             self._schedule(lambda: self._settle(url, result))
 
         if self._executor is None:

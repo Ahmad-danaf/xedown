@@ -488,3 +488,77 @@ def test_proxies_for_is_consulted_with_the_url_and_reaches_the_opener():
 
     assert seen_urls == ["https://e.com/a.png"]
     assert opener.calls[0]["proxies"] == {"https": "http://chosen:8080"}
+
+
+def _exploding_proxies_for(_url):
+    raise RuntimeError("proxy lookup exploded")
+
+
+def test_a_raising_proxies_for_does_not_leak_the_in_flight_slot():
+    # `on_done` is guarded by `_deliver_one`, but `proxies_for` runs inside
+    # `work()` too, unguarded: an exception there used to leave `_settle`
+    # never scheduled, so the URL stayed in `_waiting` forever -- a permanent
+    # loading spinner and one of MAX_PENDING_URLS gone for the life of the
+    # process. Checking only "a result arrived" would not catch that, so the
+    # slot itself is asserted, not just the callback.
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor, proxies_for=_exploding_proxies_for)
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    executor.run_all()
+
+    assert len(seen) == 1
+    assert seen[0].ok is False
+    assert "https://e.com/a.png" not in fetcher._waiting
+
+
+def test_a_raising_proxies_for_on_the_inline_path_does_not_propagate():
+    # executor=None runs `work()` synchronously inside `request()` -- the
+    # exception must still be turned into a FetchResult there, not escape
+    # out of `request()` itself.
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor=None, proxies_for=_exploding_proxies_for)
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)  # must not raise
+
+    assert len(seen) == 1
+    assert seen[0].ok is False
+    assert "https://e.com/a.png" not in fetcher._waiting
+
+
+def test_a_reclaimed_slot_lets_the_next_request_fetch_again():
+    # The real proof the slot was released: after the (now-cached) failure is
+    # invalidated, a following request for the same URL must actually start a
+    # fresh fetch. If `_waiting` still held the leaked entry from the
+    # unguarded exception, this request would instead be silently absorbed
+    # into that phantom waiter list -- no job submitted to the executor, and
+    # a callback nobody would ever hear from.
+    def explode_once():
+        calls = {"count": 0}
+
+        def proxies_for(_url):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise RuntimeError("proxy lookup exploded")
+
+        return proxies_for
+
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor, proxies_for=explode_once())
+
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+
+    fetcher.invalidate_failures()  # what Refresh and [Load] do
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    assert len(executor.jobs) == 1, "a fresh fetch must actually start"
+    executor.run_all()
+
+    assert len(opener.calls) == 1
+    assert seen[0].ok
