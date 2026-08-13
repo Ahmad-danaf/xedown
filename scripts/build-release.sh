@@ -110,6 +110,7 @@ REQUIRED=(
   "xedown/mdext.py"
   "xedown/modebar.py"
   "xedown/modestore.py"
+  "xedown/pageready.py"
   "xedown/prefs.py"
   "xedown/prefswindow.py"
   "xedown/preview.py"

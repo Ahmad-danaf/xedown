@@ -10,7 +10,7 @@ gi.require_version("WebKit2", "4.1")
 
 from gi.repository import GLib, Gtk, WebKit2
 
-from . import a11y
+from . import a11y, pageready
 
 _MESSAGE_HANDLER = "xedown"
 
@@ -37,8 +37,11 @@ class PreviewView:
         # Whichever of the page's own "ready" message or LoadEvent.FINISHED
         # arrives first does the post-load work; the other is then a no-op.
         # Reset on every load_document, not only here, or the second document
-        # loaded into this view would never restore its scroll.
-        self._settled = False
+        # loaded into this view would never restore its scroll. The gating
+        # logic (including why COMMITTED must arrive before a "ready" is
+        # accepted) lives in pageready.py, on the pure side of the `gi`
+        # boundary, where it can actually be unit tested.
+        self._page_ready = pageready.PageReadyGate()
 
         self._content_manager = WebKit2.UserContentManager()
         self._content_manager.register_script_message_handler(_MESSAGE_HANDLER)
@@ -91,7 +94,7 @@ class PreviewView:
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = restore_scroll
-        self._settled = False
+        self._page_ready.reset()
         self.widget.load_html(html, base_uri)
 
     def update_body(self, fragment_html, text_direction=None):
@@ -359,7 +362,9 @@ class PreviewView:
         return uri
 
     def _on_load_changed(self, _view, load_event):
-        if load_event == WebKit2.LoadEvent.FINISHED:
+        if load_event == WebKit2.LoadEvent.COMMITTED:
+            self._page_ready.commit()
+        elif load_event == WebKit2.LoadEvent.FINISHED:
             self._on_page_ready()
 
     def _on_page_ready(self):
@@ -369,11 +374,13 @@ class PreviewView:
         message, or `LoadEvent.FINISHED`. They are not interchangeable --
         FINISHED waits for every subresource, so a remote image still in
         flight would hold back the scroll restore for as long as the fetch
-        takes.
+        takes. `self._page_ready.ready()` is what actually decides "first,
+        and only once" -- including the narrowing against a stale signal from
+        an outgoing page; see pageready.py for why that narrows the race
+        rather than closing it.
         """
-        if self._settled:
+        if not self._page_ready.ready():
             return
-        self._settled = True
         self.set_scroll(self._pending_scroll)
         self._pending_scroll = 0.0
         # A reload (theme change, revert, external change) replaced the JS
