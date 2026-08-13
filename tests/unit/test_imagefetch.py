@@ -513,6 +513,43 @@ def test_being_offline_fails_immediately_without_dialling():
     assert opener.calls == []
 
 
+def test_an_offline_refusal_is_cached_and_invalidate_failures_clears_it():
+    # `controller._on_image_error` (host-bound, so untestable here) looks a
+    # failure up by `cached(url)` alone -- without this, the reader never
+    # saw the offline-specific sentence, only the generic fallback text,
+    # because the lookup always missed. `invalidate_failures()` is the same
+    # "try again" mechanism a normal cached failure gets (called on
+    # reconnect, on Refresh, and on Load), and the placeholder's own wording
+    # ("Refresh once you are back online") promises exactly that lifetime.
+    opener = StubOpener()
+    fetcher = make_fetcher(opener, ManualExecutor(), network_available=lambda: False)
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    assert seen[0].error == imagefetch.OFFLINE
+
+    cached = fetcher.cached("https://e.com/a.png")
+    assert cached is not None and cached.error == imagefetch.OFFLINE
+
+    fetcher.invalidate_failures()  # what reconnecting, Refresh and [Load] do
+    assert fetcher.cached("https://e.com/a.png") is None
+
+
+def test_too_many_refusal_is_not_cached():
+    # Deliberately asymmetric with OFFLINE above: TOO_MANY is a fact about
+    # the pending queue being full right now, not about the URL, so caching
+    # it would strand the URL failed long after the queue has drained and a
+    # fresh request would have succeeded.
+    executor = ManualExecutor()
+    fetcher = make_fetcher(StubOpener(*[StubResponse(body=PNG_1X1)] * 200), executor)
+    seen = []
+    for index in range(remoteimages.MAX_PENDING_URLS + 1):
+        fetcher.request(f"https://e.com/{index}.png", seen.append)
+
+    refused_url = f"https://e.com/{remoteimages.MAX_PENDING_URLS}.png"
+    assert seen[-1].error == imagefetch.TOO_MANY
+    assert fetcher.cached(refused_url) is None
+
+
 def test_a_raising_callback_does_not_stop_the_other_waiters():
     executor = ManualExecutor()
     fetcher = make_fetcher(StubOpener(StubResponse(body=PNG_1X1)), executor)

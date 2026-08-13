@@ -307,13 +307,28 @@ class Fetcher:
             return
 
         if self._network_available is not None and not self._network_available():
-            self._deliver_one(
-                on_done,
-                _refuse(OFFLINE, "you appear to be offline"),
-            )
+            # Cached like any other failure -- unlike TOO_MANY below. Without
+            # this, `controller._on_image_error` (which looks a failure up by
+            # `cached(url)`) always missed, and the reader never saw "you
+            # appear to be offline. Refresh once you are back online": only
+            # the generic fallback text, in precisely the situation that
+            # sentence exists for. `invalidate_failures()` -- already called
+            # on reconnect by the process-wide NetworkMonitor subscription,
+            # on Refresh, and on Load -- is exactly the right lifetime for a
+            # cached OFFLINE entry: the placeholder's own wording promises
+            # exactly that "try again" moment clears it.
+            result = _refuse(OFFLINE, "you appear to be offline")
+            self.cache.put(url, result)
+            self._deliver_one(on_done, result)
             return
 
         if len(self._waiting) >= remoteimages.MAX_PENDING_URLS:
+            # Deliberately NOT cached, unlike OFFLINE above: this is a fact
+            # about the pending queue being full right now, not about the
+            # URL. Caching it would leave the URL stuck failed long after the
+            # queue has drained and a fresh request would have succeeded --
+            # the generic text is the right price for a condition that
+            # resolves itself on the very next render.
             self._deliver_one(
                 on_done,
                 _refuse(TOO_MANY, "too many images are already loading"),
