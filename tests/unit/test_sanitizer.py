@@ -1,5 +1,5 @@
 import pytest
-from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, sanitize
+from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, RemoteImage, sanitize
 
 
 def test_keeps_ordinary_markup():
@@ -352,3 +352,38 @@ def test_a_mark_in_the_source_document_never_reaches_the_page():
     assert "<mark" not in html
     # The tag goes; the words the author wrote stay.
     assert "highlight" in html
+
+
+def test_the_private_scheme_is_never_accepted_from_document_content():
+    # THE bypass. If `xedown-image:` ever enters ALLOWED_URI_SCHEMES, a
+    # hostile document can mint its own fetchable URL and the whole
+    # preference becomes decorative. This test is the guard on that.
+    html = '<img src="xedown-image:https%3A%2F%2Fevil.example%2Fpixel.png">'
+    assert "xedown-image" not in sanitize(html)
+    assert "xedown-image" not in sanitize(html, on_image=lambda ref, alt: ref)
+
+
+def test_the_private_scheme_is_not_in_the_allowlist():
+    from xedown import remoteimages, sanitizer
+
+    assert remoteimages.SCHEME not in sanitizer.ALLOWED_URI_SCHEMES
+
+
+def test_a_remote_image_result_carries_xedowns_own_class():
+    html = '<img src="https://e.com/a.png" alt="a diagram">'
+    out = sanitize(html, on_image=lambda ref, alt: RemoteImage("xedown-image:x"))
+    assert 'class="xedown-remote"' in out
+    assert 'alt="a diagram"' in out
+    assert 'src="xedown-image:x"' in out
+
+
+def test_document_content_cannot_produce_the_remote_class():
+    html = '<img src="a.png" class="xedown-remote">'
+    out = sanitize(html, on_image=lambda ref, alt: "file:///tmp/a.png")
+    assert "xedown-remote" not in out
+
+
+def test_a_remote_image_with_an_unusable_uri_emits_nothing():
+    html = '<img src="https://e.com/a.png">'
+    out = sanitize(html, on_image=lambda ref, alt: RemoteImage("javascript:alert(1)"))
+    assert "<img" not in out

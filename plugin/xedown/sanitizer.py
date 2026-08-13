@@ -7,6 +7,8 @@ expressions or string replacement is not sound and is forbidden here.
 import html as html_module
 from html.parser import HTMLParser
 
+from . import remoteimages
+
 ALLOWED_ELEMENTS = frozenset(
     {
         "a",
@@ -164,6 +166,22 @@ _PLACEHOLDER_CLASSES = {"error": "xedown-image-error", "alt": "xedown-image-alt"
 _DEFAULT_PLACEHOLDER_CLASS = _PLACEHOLDER_CLASSES["error"]
 
 
+class RemoteImage:
+    """An image to be fetched through xedown's private scheme.
+
+    Distinct from a plain `str` src so the sanitizer adds the marker class
+    itself. That is what keeps "document content can never produce an
+    `xedown-` class" true: `_filter_class` refuses the prefix from content,
+    and only this module ever writes one.
+    """
+
+    def __init__(self, uri):
+        self.uri = uri
+
+
+REMOTE_IMAGE_CLASS = "xedown-remote"
+
+
 class _Sanitizer(HTMLParser):
     def __init__(self, resolve_uri=None, on_image=None):
         super().__init__(convert_charrefs=True)
@@ -306,6 +324,18 @@ class _Sanitizer(HTMLParser):
             escaped = html_module.escape(outcome.text or "", quote=False)
             self.parts.append(f'<span class="{css_class}">{escaped}</span>')
             return
+        if isinstance(outcome, RemoteImage):
+            candidate = str(outcome.uri)
+            # Re-checked like every other emitted URI. The scheme is ours, so
+            # it is allowed here and only here -- never through
+            # ALLOWED_URI_SCHEMES, which is what document content is measured
+            # against.
+            if not candidate.startswith(remoteimages.SCHEME + ":"):
+                return
+            rendered.insert(0, f'class="{REMOTE_IMAGE_CLASS}"')
+            rendered.insert(0, f'src="{html_module.escape(candidate, quote=True)}"')
+            self.parts.append(f"<img {' '.join(rendered)} />")
+            return
         # The callback is trusted code (the only production callback returns
         # links.uri_for_path(...) or a data: URI this module already
         # validated) -- but this module's whole job is rebuilding HTML from
@@ -329,10 +359,11 @@ def sanitize(html, resolve_uri=None, on_image=None):
     not consulted for `<img>` when `on_image` is set.
 
     `on_image` is an optional callable taking (reference, alt) and returning
-    one of three things: a string, used as the `src`; an `ImagePlaceholder`,
-    emitted as `<span class="…">TEXT</span>`; or None, which emits nothing.
-    When it is not set, `<img>` is emitted through `resolve_uri` exactly as
-    before.
+    one of four things: a string, used as the `src`; a `RemoteImage`, emitted
+    as an `<img>` carrying xedown's own `xedown-remote` class; an
+    `ImagePlaceholder`, emitted as `<span class="…">TEXT</span>`; or None,
+    which emits nothing. When it is not set, `<img>` is emitted through
+    `resolve_uri` exactly as before.
     """
     parser = _Sanitizer(resolve_uri=resolve_uri, on_image=on_image)
     parser.feed(html or "")
