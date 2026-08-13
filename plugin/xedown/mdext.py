@@ -1,5 +1,7 @@
 """xedown's own Markdown extensions: task lists, strikethrough, lists that
-interrupt a paragraph, and a heading-hash CommonMark-conformance override.
+interrupt a paragraph, and a couple of CommonMark-conformance overrides
+(heading hashes need a following space; ordered-list markers may end in
+`)` as well as `.`).
 
 Built by a factory rather than at import time, because these subclass types from
 the vendored Markdown module, which only exists on sys.path once `vendoring` has
@@ -7,6 +9,7 @@ placed it there.
 """
 
 import re
+from typing import ClassVar
 from xml.etree.ElementTree import Element
 
 # Matches a leading task marker only at the very start of a list item's text.
@@ -14,15 +17,30 @@ _TASK_MARKER = re.compile(r"^\[([ xX])\]\s+")
 
 _STRIKETHROUGH_PATTERN = r"(~{2})(.+?)~{2}"
 
+# A backslash immediately followed by a newline is a hard line break in
+# CommonMark, the same as two trailing spaces (the vendored `linebreak`
+# pattern, `LINE_BREAK_RE = r'  \n'`, already handles that spelling). The
+# vendored `escape` inline pattern (priority 180, `ESCAPE_RE = r'\\(.)'`
+# compiled with `re.DOTALL`) runs first and *does* match a backslash before
+# a newline, but declines it -- `\n` is not in `Markdown.ESCAPED_CHARS` --
+# which leaves the raw "\\\n" text untouched for this pattern to claim at a
+# lower priority. A backslash that escapes another backslash
+# (`"a\\\\\nb"`) is consumed whole by `escape` before this pattern ever
+# sees it, so that case is unaffected.
+_BACKSLASH_BREAK_PATTERN = r"\\\n"
+
 # A list marker allowed to interrupt a paragraph: up to three spaces of
-# indent, then `-`, `*`, `+` or `1.`, then a space and real content.
+# indent, then `-`, `*`, `+`, `1.` or `1)`, then a space and real content.
 #
-# `1.` rather than `\d+\.` is GFM's own rule, and it is what keeps prose that
-# wraps onto a line starting with a number ("...was\n1985. What a year.") a
-# paragraph rather than an `<ol start="1985">`. The lookahead is GFM's rule
-# that an empty list item cannot interrupt. Three spaces is the tolerance the
-# vendored list processors already use.
-_INTERRUPTING_MARKER = re.compile(r"^[ ]{0,3}(?:[*+-]|1\.)[ ]+(?=\S)")
+# `1.`/`1)` rather than `\d+[.)]` is GFM's own rule, and it is what keeps
+# prose that wraps onto a line starting with a number ("...was\n1985. What a
+# year.") a paragraph rather than an `<ol start="1985">`. `1)` was added
+# alongside `1.` for the same reason and under the same restriction (task 14 /
+# F20) -- CommonMark accepts both spellings of an ordered marker, and
+# "1985) what a year" must stay prose exactly as "1985. what a year" does.
+# The lookahead is GFM's rule that an empty list item cannot interrupt.
+# Three spaces is the tolerance the vendored list processors already use.
+_INTERRUPTING_MARKER = re.compile(r"^[ ]{0,3}(?:[*+-]|1[.)])[ ]+(?=\S)")
 
 
 def find_list_interrupt(block):
@@ -45,7 +63,11 @@ def make_extensions(markdown_module):
     Treeprocessor = markdown_module.treeprocessors.Treeprocessor
     BlockProcessor = markdown_module.blockprocessors.BlockProcessor
     SimpleTagInlineProcessor = markdown_module.inlinepatterns.SimpleTagInlineProcessor
+    SubstituteTagInlineProcessor = (
+        markdown_module.inlinepatterns.SubstituteTagInlineProcessor
+    )
     HashHeaderProcessor = markdown_module.blockprocessors.HashHeaderProcessor
+    OListProcessor = markdown_module.blockprocessors.OListProcessor
 
     class TaskListTreeprocessor(Treeprocessor):
         def run(self, root):
@@ -98,6 +120,14 @@ def make_extensions(markdown_module):
                 175,
             )
 
+    class BackslashBreakExtension(Extension):
+        def extendMarkdown(self, md):
+            md.inlinePatterns.register(
+                SubstituteTagInlineProcessor(_BACKSLASH_BREAK_PATTERN, "br"),
+                "xedown_backslash_break",
+                170,
+            )
+
     class SpacedHashHeaderProcessor(HashHeaderProcessor):
         """CommonMark requires a space (or end of line) after the `#`
         markers; the vendored regex has no such requirement, so `#NoSpace`
@@ -124,6 +154,53 @@ def make_extensions(markdown_module):
             # sits exactly where `hashheader` already sat in the chain.
             md.parser.blockprocessors.register(
                 SpacedHashHeaderProcessor(md.parser), "hashheader", 70
+            )
+
+    class ParenOListProcessor(OListProcessor):
+        """CommonMark accepts `)` as well as `.` to end an ordered-list
+        marker; the vendored processor only accepts `.` (task 14 / F20), so
+        `1) one\\n2) two` fell through to a single paragraph instead of an
+        `<ol>`.
+
+        `markdown.extensions.sane_lists` (loaded via
+        `vendoring.MARKDOWN_EXTENSIONS`, ahead of xedown's own extensions in
+        the list `Markdown()` is built with) already replaces the vendored
+        `olist` with one that sets `SIBLING_TAGS = ['ol']` (so a `ul`
+        followed by an `ol` across a blank line stays two lists, not one
+        merged list) and `LAZY_OL = False` (an explicit start number
+        survives into `start=`), and narrows `CHILD_RE` to drop the
+        `[*+-]` alternative. Registering under the same name replaces
+        `sane_lists`' processor outright, so subclassing the *plain*
+        vendored `OListProcessor` would silently lose all three -- as
+        confirmed by `test_fragment_renders_core_markdown` in
+        `test_renderer.py`, which merged a trailing `1. first` into the
+        preceding `ul` before this was caught. Reproducing them here is
+        what keeps the previous behaviour instead of quietly reverting it.
+
+        `INDENT_RE` is untouched by `sane_lists` and keeps the vendored
+        default's `[*+-]` alternation for detecting a nested item of either
+        type; `[.)]` is added there too, for the same reason it is added
+        everywhere else here.
+        """
+
+        SIBLING_TAGS: ClassVar = ["ol"]
+        LAZY_OL = False
+
+        def __init__(self, parser):
+            super().__init__(parser)
+            indent = self.tab_length - 1
+            self.RE = re.compile(rf"^[ ]{{0,{indent}}}\d+[.)][ ]+(.*)")
+            self.CHILD_RE = re.compile(rf"^[ ]{{0,{indent}}}((\d+[.)]))[ ]+(.*)")
+            self.INDENT_RE = re.compile(
+                rf"^[ ]{{{self.tab_length},{self.tab_length * 2 - 1}}}"
+                r"((\d+[.)])|[*+-])[ ]+.*"
+            )
+
+    class ParenOListExtension(Extension):
+        def extendMarkdown(self, md):
+            # Same name and priority as the vendored `olist` it replaces.
+            md.parser.blockprocessors.register(
+                ParenOListProcessor(md.parser), "olist", 40
             )
 
     class ListInterruptProcessor(BlockProcessor):
@@ -162,6 +239,8 @@ def make_extensions(markdown_module):
     return [
         TaskListExtension(),
         StrikethroughExtension(),
+        BackslashBreakExtension(),
         HashHeaderOverrideExtension(),
+        ParenOListExtension(),
         ListInterruptExtension(),
     ]

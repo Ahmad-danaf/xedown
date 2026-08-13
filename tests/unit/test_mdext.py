@@ -114,6 +114,75 @@ def test_a_heading_with_trailing_hashes_still_works(convert):
     assert '<h2 id="trailing">Trailing</h2>' in html
 
 
+# --- Paren-delimited ordered lists (task 14 / F20) ---
+#
+# The vendored `OListProcessor` only accepts `.` after the number.
+# `1) one\n2) two` fell all the way through to a single paragraph -- a
+# destroyed list, not merely renumbered.
+
+
+def test_a_paren_ordered_list_becomes_an_ol(convert):
+    html = convert("1) one\n2) two")
+    assert "<ol>" in html
+    assert html.count("<li>") == 2
+    assert "<p>1) one" not in html
+
+
+def test_a_period_ordered_list_still_works(convert):
+    # Regression: the override must not lose the spelling it already had.
+    html = convert("1. one\n2. two")
+    assert "<ol>" in html
+    assert html.count("<li>") == 2
+
+
+def test_an_unordered_list_still_works(convert):
+    html = convert("- a\n- b")
+    assert "<ul>" in html
+    assert html.count("<li>") == 2
+
+
+def test_a_paren_list_interrupts_a_paragraph(convert):
+    # Same terms as `1.`: interruption is allowed, following the same
+    # restriction (find_list_interrupt only recognises `1)`, not `2)`).
+    html = convert("Text.\n1) one\n2) two")
+    assert "<p>Text.</p>" in html
+    assert "<ol>" in html
+    assert html.count("<li>") == 2
+
+
+def test_wrapped_prose_starting_with_a_year_and_a_paren_stays_prose(convert):
+    # The `)` counterpart of the existing `1985. What a year.` regression:
+    # prose wrapping onto a line that merely looks like a paren list marker
+    # must not become one.
+    html = convert("The winning year was\n1985) what a year.")
+    assert "<ol" not in html
+    assert "1985)" in html
+
+
+def test_a_paren_marker_starting_above_one_does_not_interrupt(convert):
+    assert "<ol" not in convert("Text.\n3) one\n4) two")
+
+
+# --- Backslash line breaks (task 14 / F21) ---
+#
+# CommonMark makes a backslash at the end of a line a hard break, the same
+# as two trailing spaces. The vendored parser left the backslash as visible
+# text with no break at all.
+
+
+def test_a_trailing_backslash_becomes_a_hard_break(convert):
+    html = convert("line one\\\nline two")
+    assert "<br />" in html
+    assert "\\" not in html
+
+
+def test_two_trailing_spaces_still_make_a_hard_break(convert):
+    # The spelling the brief says already worked -- pinned so the new
+    # inline pattern cannot be the thing that breaks it.
+    html = convert("line one  \nline two")
+    assert "<br />" in html
+
+
 # --- What must not change (brief 16) ---
 #
 # These pass against the parser as it was before a list could interrupt a
