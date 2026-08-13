@@ -8,8 +8,8 @@ the vendored Markdown module, which only exists on sys.path once `vendoring` has
 placed it there.
 """
 
+import importlib
 import re
-from typing import ClassVar
 from xml.etree.ElementTree import Element
 
 # Matches a leading task marker only at the very start of a list item's text.
@@ -67,7 +67,19 @@ def make_extensions(markdown_module):
         markdown_module.inlinepatterns.SubstituteTagInlineProcessor
     )
     HashHeaderProcessor = markdown_module.blockprocessors.HashHeaderProcessor
-    OListProcessor = markdown_module.blockprocessors.OListProcessor
+    # `markdown_module.extensions.sane_lists` is not yet an attribute of the
+    # `extensions` package at this point -- nothing has imported that
+    # submodule yet, since `make_extensions` runs *before* the `Markdown()`
+    # call that would load it as one of `vendoring.MARKDOWN_EXTENSIONS`.
+    # `importlib.import_module`, keyed off `markdown_module.__name__` (which
+    # is already the vendored package, resolved once by
+    # `vendoring.import_markdown()`), reaches the same vendored submodule
+    # without a bare top-level `import markdown...` in this file -- which
+    # would risk resolving to a non-vendored copy if this module happened to
+    # be imported before the vendoring guard runs.
+    SaneOListProcessor = importlib.import_module(
+        f"{markdown_module.__name__}.extensions.sane_lists"
+    ).SaneOListProcessor
 
     class TaskListTreeprocessor(Treeprocessor):
         def run(self, root):
@@ -156,7 +168,7 @@ def make_extensions(markdown_module):
                 SpacedHashHeaderProcessor(md.parser), "hashheader", 70
             )
 
-    class ParenOListProcessor(OListProcessor):
+    class ParenOListProcessor(SaneOListProcessor):
         """CommonMark accepts `)` as well as `.` to end an ordered-list
         marker; the vendored processor only accepts `.` (task 14 / F20), so
         `1) one\\n2) two` fell through to a single paragraph instead of an
@@ -165,26 +177,30 @@ def make_extensions(markdown_module):
         `markdown.extensions.sane_lists` (loaded via
         `vendoring.MARKDOWN_EXTENSIONS`, ahead of xedown's own extensions in
         the list `Markdown()` is built with) already replaces the vendored
-        `olist` with one that sets `SIBLING_TAGS = ['ol']` (so a `ul`
-        followed by an `ol` across a blank line stays two lists, not one
-        merged list) and `LAZY_OL = False` (an explicit start number
-        survives into `start=`), and narrows `CHILD_RE` to drop the
-        `[*+-]` alternative. Registering under the same name replaces
-        `sane_lists`' processor outright, so subclassing the *plain*
-        vendored `OListProcessor` would silently lose all three -- as
-        confirmed by `test_fragment_renders_core_markdown` in
-        `test_renderer.py`, which merged a trailing `1. first` into the
-        preceding `ul` before this was caught. Reproducing them here is
-        what keeps the previous behaviour instead of quietly reverting it.
+        `olist` with `SaneOListProcessor`, which sets `SIBLING_TAGS = ['ol']`
+        (so a `ul` followed by an `ol` across a blank line stays two lists,
+        not one merged list), `LAZY_OL = False` (an explicit start number
+        survives into `start=`), and narrows `CHILD_RE` to drop the `[*+-]`
+        alternative. Registering under the same name replaces that processor
+        outright, so this subclasses `SaneOListProcessor` itself rather than
+        the plain vendored `OListProcessor` -- inheriting `SIBLING_TAGS` and
+        `LAZY_OL` instead of copying them, so a change to `sane_lists` at the
+        next re-vendor is picked up automatically rather than silently going
+        stale. An earlier version of this fix *did* copy them, and lost both
+        without any local test catching it -- only
+        `test_fragment_renders_core_markdown` in `test_renderer.py`, which
+        merged a trailing `1. first` into a preceding `ul`, three files away
+        from this one.
 
-        `INDENT_RE` is untouched by `sane_lists` and keeps the vendored
-        default's `[*+-]` alternation for detecting a nested item of either
-        type; `[.)]` is added there too, for the same reason it is added
-        everywhere else here.
+        Only `RE`, `CHILD_RE` and `INDENT_RE` are widened for `)` here, since
+        those are the three `sane_lists` does not claim ownership of by
+        inheritance alone: `CHILD_RE` is `SaneOListProcessor`'s own
+        (narrower, no `[*+-]`) shape with `[.)]` substituted for the literal
+        `\\.`; `RE` and `INDENT_RE` are genuinely untouched by `sane_lists`
+        and keep rebuilding the vendored `OListProcessor` defaults (the
+        latter still with its `[*+-]` alternation, for detecting a nested
+        item of either type) with the same substitution.
         """
-
-        SIBLING_TAGS: ClassVar = ["ol"]
-        LAZY_OL = False
 
         def __init__(self, parser):
             super().__init__(parser)

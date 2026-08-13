@@ -163,6 +163,22 @@ def test_a_paren_marker_starting_above_one_does_not_interrupt(convert):
     assert "<ol" not in convert("Text.\n3) one\n4) two")
 
 
+def test_a_ul_then_ol_across_a_blank_line_stays_two_lists(convert):
+    # sane_lists sets SIBLING_TAGS = ['ol'] on its OListProcessor precisely
+    # so that a `ul` immediately above (separated only by a blank line)
+    # does not get treated as the same list. A `ParenOListProcessor` built
+    # by subclassing the plain vendored `OListProcessor` instead of
+    # `SaneOListProcessor` would inherit `SIBLING_TAGS = ['ol', 'ul']` and
+    # silently merge these into one `<ul>` with three `<li>` -- exactly
+    # what `test_fragment_renders_core_markdown` in test_renderer.py caught
+    # once, with no local test in this file to explain why.
+    html = convert("- one\n- two\n\n1. first")
+    assert html.count("<ul>") == 1
+    assert html.count("<ol>") == 1
+    assert "<ul>\n<li>one</li>\n<li>two</li>\n</ul>" in html
+    assert "<ol>\n<li>first</li>\n</ol>" in html
+
+
 # --- Backslash line breaks (task 14 / F21) ---
 #
 # CommonMark makes a backslash at the end of a line a hard break, the same
