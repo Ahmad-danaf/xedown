@@ -422,3 +422,85 @@ def test_img_never_receives_a_class_attribute_from_content():
         '<img src="a.png" class="hljs" alt="x">',
         on_image=lambda ref, alt: "file:///tmp/a.png",
     )
+
+
+def test_details_and_summary_survive():
+    # Before this, a collapsible section rendered as its label run inline
+    # into permanently-visible body text -- the single most damaging thing
+    # the allowlist did to a real README.
+    out = sanitizer.sanitize("<details><summary>More</summary><p>hidden</p></details>")
+    assert "<details>" in out
+    assert "<summary>More</summary>" in out
+    assert "<p>hidden</p>" in out
+
+
+def test_nested_details_survive_both_levels():
+    out = sanitizer.sanitize(
+        "<details><summary>Outer</summary>"
+        "<details><summary>Inner</summary>deep</details></details>"
+    )
+    assert out.count("<details>") == 2
+    assert out.count("</details>") == 2
+
+
+def test_details_keeps_open_and_drops_a_handler():
+    out = sanitizer.sanitize(
+        '<details open onclick="steal()"><summary>S</summary>b</details>'
+    )
+    assert "open" in out
+    assert "onclick" not in out
+    assert "steal" not in out
+
+
+def test_definition_lists_survive():
+    out = sanitizer.sanitize("<dl><dt>Term</dt><dd>Definition</dd></dl>")
+    assert "<dl>" in out and "<dt>Term</dt>" in out and "<dd>Definition</dd>" in out
+
+
+def test_kbd_survives():
+    assert "<kbd>Ctrl</kbd>" in sanitizer.sanitize("Press <kbd>Ctrl</kbd>")
+
+
+def test_abbr_survives_with_its_title():
+    out = sanitizer.sanitize('<abbr title="HyperText">HTML</abbr>')
+    assert "<abbr" in out and 'title="HyperText"' in out
+
+
+def test_abbr_drops_a_handler():
+    out = sanitizer.sanitize('<abbr title="x" onmouseover="steal()">HTML</abbr>')
+    assert "onmouseover" not in out and "steal" not in out
+
+
+def test_table_caption_and_colgroup_survive():
+    out = sanitizer.sanitize(
+        "<table><caption>Cap</caption><colgroup><col></colgroup>"
+        "<tr><td>1</td></tr></table>"
+    )
+    assert "<caption>Cap</caption>" in out
+    assert "<colgroup>" in out
+    assert "<col />" in out
+
+
+def test_the_new_elements_add_no_uri_surface():
+    # The point of choosing these ten elements is that none of them can
+    # reference anything. If that stops being true, this fails.
+    for markup in (
+        '<details src="http://evil/x">a</details>',
+        '<kbd href="http://evil/x">a</kbd>',
+        '<abbr src="http://evil/x">a</abbr>',
+        '<col src="http://evil/x">',
+    ):
+        assert "evil" not in sanitizer.sanitize(markup)
+
+
+def test_uri_scheme_allowlist_is_unchanged():
+    # A widening must never ride along quietly with an element addition.
+    assert sanitizer.ALLOWED_URI_SCHEMES == frozenset(
+        {"http", "https", "mailto", "file"}
+    )
+
+
+def test_content_dropping_elements_are_unchanged():
+    for tag in ("script", "style", "svg", "math", "template"):
+        out = sanitizer.sanitize(f"<{tag}>SECRET</{tag}>")
+        assert "SECRET" not in out

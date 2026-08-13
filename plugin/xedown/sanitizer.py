@@ -9,15 +9,29 @@ from html.parser import HTMLParser
 
 from . import remoteimages
 
+# Every element here is inert: none can execute, and none can reference
+# anything off-document. That is the rule additions are measured against,
+# not "GitHub allows it" -- the ten added for the compatibility pass
+# (details, summary, kbd, dl/dt/dd, abbr, caption, colgroup/col) were
+# chosen because they carry no URI and no scripting surface, which is why
+# widening to them left ALLOWED_URI_SCHEMES untouched.
 ALLOWED_ELEMENTS = frozenset(
     {
         "a",
+        "abbr",
         "bdi",
         "blockquote",
         "br",
+        "caption",
         "code",
+        "col",
+        "colgroup",
+        "dd",
         "del",
+        "details",
         "div",
+        "dl",
+        "dt",
         "em",
         "h1",
         "h2",
@@ -28,6 +42,7 @@ ALLOWED_ELEMENTS = frozenset(
         "hr",
         "img",
         "input",
+        "kbd",
         "li",
         "ol",
         "p",
@@ -35,6 +50,7 @@ ALLOWED_ELEMENTS = frozenset(
         "s",
         "span",
         "strong",
+        "summary",
         "sup",
         "sub",
         "table",
@@ -51,7 +67,7 @@ ALLOWED_ELEMENTS = frozenset(
 # Elements whose *content* must be discarded along with the tag.
 _DROP_CONTENT_ELEMENTS = frozenset({"script", "style", "svg", "math", "template"})
 
-_VOID_ELEMENTS = frozenset({"br", "hr", "img", "input"})
+_VOID_ELEMENTS = frozenset({"br", "col", "hr", "img", "input"})
 
 # `dir` is here rather than per-element because it is meaningful on any of
 # them: it is how a document says "this run reads the other way" for a case
@@ -74,6 +90,7 @@ ALLOWED_ATTRIBUTES = {
     "td": frozenset({"align", "colspan", "rowspan"}),
     "th": frozenset({"align", "colspan", "rowspan"}),
     "sup": frozenset({"class"}),
+    "details": frozenset({"open"}),
 }
 
 ALLOWED_URI_SCHEMES = frozenset({"http", "https", "mailto", "file"})
