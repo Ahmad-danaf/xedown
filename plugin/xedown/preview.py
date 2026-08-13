@@ -34,6 +34,11 @@ class PreviewView:
         # fresh page is a fresh JS context and knows nothing about it. Body
         # swaps need no help -- preview.js re-applies the search itself.
         self._search_request = None
+        # Whichever of the page's own "ready" message or LoadEvent.FINISHED
+        # arrives first does the post-load work; the other is then a no-op.
+        # Reset on every load_document, not only here, or the second document
+        # loaded into this view would never restore its scroll.
+        self._settled = False
 
         self._content_manager = WebKit2.UserContentManager()
         self._content_manager.register_script_message_handler(_MESSAGE_HANDLER)
@@ -86,6 +91,7 @@ class PreviewView:
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = restore_scroll
+        self._settled = False
         self.widget.load_html(html, base_uri)
 
     def update_body(self, fragment_html, text_direction=None):
@@ -138,9 +144,19 @@ class PreviewView:
         controller.
         """
         payload = json.dumps(
-            {"codeCopy": bool(code_copy_buttons), "imageDisplay": str(image_display)}
+            {"codeCopy": bool(code_copy_buttons), "imageFallback": str(image_display)}
         )
         self._run(f"if (window.xedown) {{ window.xedown.setConfig({payload}); }}")
+
+    def set_image_message(self, src, text):
+        """Tell the page why one image did not load."""
+        self._run(
+            "if (window.xedown) { window.xedown.setImageMessage("
+            + json.dumps(src)
+            + ", "
+            + json.dumps(text)
+            + "); }"
+        )
 
     def scroll_to_anchor(self, anchor):
         self._run(
@@ -245,6 +261,8 @@ class PreviewView:
             self.on_search(count, bool(payload.get("capped")), token)
         elif kind == "copy":
             self._copy_to_clipboard(payload.get("token"), payload.get("text"))
+        elif kind == "ready":
+            self._on_page_ready()
 
     def _copy_to_clipboard(self, token, text):
         """Put a code block on the clipboard on the page's behalf.
@@ -342,13 +360,27 @@ class PreviewView:
 
     def _on_load_changed(self, _view, load_event):
         if load_event == WebKit2.LoadEvent.FINISHED:
-            self.set_scroll(self._pending_scroll)
-            self._pending_scroll = 0.0
-            # A reload (theme change, revert, external change) replaced the JS
-            # context, so a search that is still live has to be asked for
-            # again -- the page has no memory of it.
-            if self._search_request is not None:
-                self.search(*self._search_request)
+            self._on_page_ready()
+
+    def _on_page_ready(self):
+        """Restore scroll and re-issue a search, once per load.
+
+        Driven by whichever arrives first: the page's own DOMContentLoaded
+        message, or `LoadEvent.FINISHED`. They are not interchangeable --
+        FINISHED waits for every subresource, so a remote image still in
+        flight would hold back the scroll restore for as long as the fetch
+        takes.
+        """
+        if self._settled:
+            return
+        self._settled = True
+        self.set_scroll(self._pending_scroll)
+        self._pending_scroll = 0.0
+        # A reload (theme change, revert, external change) replaced the JS
+        # context, so a search that is still live has to be asked for
+        # again -- the page has no memory of it.
+        if self._search_request is not None:
+            self.search(*self._search_request)
 
     # --- teardown ----------------------------------------------------------
 

@@ -344,3 +344,24 @@ img:not([width]):not([height]) { max-height: 80vh; width: auto; }
   font-style: italic;
   color: var(--xedown-muted);
 }
+
+/* A remote image occupies a modest box until its bytes arrive, so a
+   paragraph does not jump when they do -- and so a scroll fraction restored
+   on a fresh page lands near where it should. Cleared by preview.js on
+   `load`, which is also when the real dimensions take over. */
+.xedown-remote.xedown-loading {
+  min-width: 8rem;
+  min-height: 4rem;
+  background: var(--xedown-code-bg);
+  border-radius: 4px;
+  animation: xedown-image-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes xedown-image-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xedown-remote.xedown-loading { animation: none; }
+}

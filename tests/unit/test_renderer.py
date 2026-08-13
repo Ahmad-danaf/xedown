@@ -637,14 +637,12 @@ def test_stats_are_optional():
 
 
 def test_the_config_block_renames_the_fallback_key():
-    # Scoped to the window.xedownConfig assignment itself, not the whole
-    # page: preview.js still spells its own default-config key
-    # "imageDisplay" until Task 13 renames it there too, and that inlined
-    # script text is not what this test is about. Anchoring on the config
-    # blob keeps this test about the one thing Task 11 owns -- the JSON key
-    # -- rather than a text search a later, unrelated task would break.
+    # Task 13 renamed preview.js's own "imageDisplay" spelling to match, so
+    # this can now assert across the whole rendered page rather than being
+    # scoped to the window.xedownConfig blob -- which is what it should have
+    # said all along.
     page = renderer.render_document("hello")
     after = page.split("window.xedownConfig = ", 1)[1]
     config_block = after.split("</script>", 1)[0]
     assert "imageFallback" in config_block
-    assert "imageDisplay" not in config_block
+    assert "imageDisplay" not in page

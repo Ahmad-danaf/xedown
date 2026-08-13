@@ -4,7 +4,7 @@
 
   var CONTENT_ID = "xedown-content";
 
-  var DEFAULT_CONFIG = { codeCopy: true, imageDisplay: "placeholder" };
+  var DEFAULT_CONFIG = { codeCopy: true, imageFallback: "placeholder" };
   var MAX_COPY_CHARS = 1048576;
   var COPY_ANSWER_MS = 1500;
   var COPY_REVERT_MS = 1500;
@@ -20,13 +20,13 @@
   function readConfig() {
     var merged = {
       codeCopy: DEFAULT_CONFIG.codeCopy,
-      imageDisplay: DEFAULT_CONFIG.imageDisplay
+      imageFallback: DEFAULT_CONFIG.imageFallback
     };
     try {
       var supplied = window.xedownConfig || {};
       if (typeof supplied.codeCopy === "boolean") { merged.codeCopy = supplied.codeCopy; }
-      if (typeof supplied.imageDisplay === "string") {
-        merged.imageDisplay = supplied.imageDisplay;
+      if (typeof supplied.imageFallback === "string") {
+        merged.imageFallback = supplied.imageFallback;
       }
     } catch (e) {
       /* A page rendered without a config block still works. */
@@ -39,8 +39,8 @@
   function setConfig(partial) {
     if (!partial) { return; }
     if (typeof partial.codeCopy === "boolean") { config.codeCopy = partial.codeCopy; }
-    if (typeof partial.imageDisplay === "string") {
-      config.imageDisplay = partial.imageDisplay;
+    if (typeof partial.imageFallback === "string") {
+      config.imageFallback = partial.imageFallback;
     }
     applyCodeCopy(content() || document.body);
   }
@@ -186,17 +186,23 @@
     window.setTimeout(function () { setCopyLabel(button, "Copy"); }, COPY_REVERT_MS);
   }
 
-  /* Remote images are meant to be replaced with a placeholder before this
-     page ever sees them (the CSP also blocks the request as a second layer),
-     but this handler still tells the two failure causes apart in case a
-     remote reference ever reaches the DOM: readers need to know whether a
-     file is missing versus whether the plugin refused to fetch it. */
-  function isRemoteSource(src) {
-    return /^https?:\/\//i.test(src);
+  /* A remote image can legitimately reach the DOM now: the renderer emits one
+     whenever the document is permitted to fetch, marked with the
+     `xedown-remote` class -- never inferred from the src string, which would
+     mean naming our own private scheme here and leaking it into every page
+     regardless of whether fetching was ever permitted (the CSP omits the
+     scheme entirely when it was not). What this handler cannot do is tell the
+     reader WHY a fetch failed -- only Python knows that -- so the generic
+     sentence here is replaced by setImageMessage once the host answers the
+     imageError we post below. The bare `https?://` check stays as a fallback
+     for the case a remote reference reaches the DOM some other way. */
+  function isRemoteSource(image, src) {
+    return (image && image.classList && image.classList.contains("xedown-remote")) ||
+      /^https?:\/\//i.test(src);
   }
 
-  function brokenImageMessage(src) {
-    if (isRemoteSource(src)) { return "Remote image, not fetched: " + src; }
+  function brokenImageMessage(image, src) {
+    if (isRemoteSource(image, src)) { return "Remote image, not fetched: " + src; }
     /* The renderer already replaced anything it could see was missing, so
        reaching here means the file was there at render time: it vanished
        since, or it is not a decodable image. Either way it could not be
@@ -204,17 +210,27 @@
     return "Image could not be read: " + src;
   }
 
-  function brokenImageReplacement(source, alt) {
-    if (config.imageDisplay === "hidden") { return null; }
+  function setImageMessage(src, text) {
+    var spans = document.querySelectorAll(".xedown-image-error");
+    for (var i = 0; i < spans.length; i++) {
+      if (spans[i].getAttribute("data-xedown-src") === src) {
+        spans[i].textContent = text;
+      }
+    }
+  }
+
+  function brokenImageReplacement(image, source, alt) {
+    if (config.imageFallback === "hidden") { return null; }
     var span = document.createElement("span");
-    if (config.imageDisplay === "alt") {
+    if (config.imageFallback === "alt") {
       if (!alt) { return null; }
       span.className = "xedown-image-alt";
       span.textContent = alt;
       return span;
     }
     span.className = "xedown-image-error";
-    span.textContent = brokenImageMessage(source) +
+    span.setAttribute("data-xedown-src", source);
+    span.textContent = brokenImageMessage(image, source) +
       (alt ? " — “" + alt + "”" : "");
     return span;
   }
@@ -222,7 +238,7 @@
   function markBrokenImage(image) {
     if (!image.parentNode) { return; }
     var source = image.getAttribute("src") || "(no source)";
-    var replacement = brokenImageReplacement(source, image.getAttribute("alt") || "");
+    var replacement = brokenImageReplacement(image, source, image.getAttribute("alt") || "");
     if (replacement === null) {
       image.parentNode.removeChild(image);
     } else {
@@ -236,6 +252,17 @@
     for (var i = 0; i < images.length; i++) {
       (function (image) {
         image.addEventListener("error", function () { markBrokenImage(image); });
+        image.addEventListener("load", function () {
+          image.classList.remove("xedown-loading");
+        });
+        /* Marked by class, never by id: `class` is prefix-filtered by the
+           sanitizer so document content can never claim "xedown-remote", but
+           `id` is an unfiltered global attribute and a hostile document could
+           write one. Keying the loading state off the class is what keeps an
+           ordinary local image with a mischievous id from ever entering it. */
+        if (image.classList.contains("xedown-remote") && !image.complete) {
+          image.classList.add("xedown-loading");
+        }
         if (image.complete && image.naturalWidth === 0) { markBrokenImage(image); }
       })(images[i]);
     }
@@ -608,7 +635,8 @@
     copyResult: copyResult,
     search: runSearch,
     setSearchIndex: setSearchIndex,
-    clearSearch: clearSearch
+    clearSearch: clearSearch,
+    setImageMessage: setImageMessage
   };
 
   if (document.readyState === "loading") {
@@ -617,5 +645,20 @@
     });
   } else {
     decorate(content() || document.body);
+  }
+
+  /* WebKit's `load-changed: FINISHED` does not arrive while an <img>
+     subresource is still in flight -- a remote image outstanding at load
+     time would otherwise hold FINISHED back for as long as the fetch takes,
+     delaying the scroll restore and a re-issued search on every full page
+     load. DOMContentLoaded needs neither, so the host treats whichever of
+     this message or FINISHED arrives first as the page being ready (see
+     `_on_page_ready` in preview.py). */
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      post({ type: "ready" });
+    });
+  } else {
+    post({ type: "ready" });
   }
 })();

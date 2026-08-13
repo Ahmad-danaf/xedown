@@ -97,6 +97,15 @@ ADDITIONS = {
     # test_mark_is_not_an_allowed_element in tests/unit/test_sanitizer.py.
     "mark.xedown-match",
     "mark.xedown-match-current",
+    # v0.1 fetched nothing remote at all, so no v0.1 page ever contained the
+    # `xedown-remote` class this combined selector requires -- fetching a
+    # `https://` image is new in v0.2. The keyframes and the reduced-motion
+    # override belong to the same loading-skeleton feature.
+    ".xedown-remote.xedown-loading",
+    "@keyframes xedown-image-pulse 0%",
+    "@keyframes xedown-image-pulse 50%",
+    "@keyframes xedown-image-pulse 100%",
+    "@media (prefers-reduced-motion: reduce) .xedown-remote.xedown-loading",
 }
 
 # Declarations v0.1 shipped that v0.2 deliberately DROPS, with no v0.2

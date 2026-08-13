@@ -349,3 +349,26 @@ def test_the_watcher_module_imports_without_a_desktop():
     assert stylewatcher.DEBOUNCE_MS > 0
     assert stylewatcher.get_watcher() is stylewatcher.get_watcher()
     assert stylewatcher.get_watcher().current().problem is None
+
+
+# --- the page side: loading state, failure text, readiness -------------------
+
+
+def test_a_loading_remote_image_reserves_space():
+    css = vendoring.read_resource("preview.css")
+    assert ".xedown-remote.xedown-loading" in css
+    assert "min-height" in css
+
+
+def test_the_loading_shimmer_respects_reduced_motion():
+    css = vendoring.read_resource("preview.css")
+    reduced = css.split("prefers-reduced-motion", 1)
+    assert len(reduced) == 2, "no reduced-motion block at all"
+    assert "animation: none" in reduced[1]
+
+
+def test_the_page_reports_readiness_and_can_be_told_an_image_message():
+    script = vendoring.read_resource("preview.js")
+    assert "DOMContentLoaded" in script
+    assert '"ready"' in script or "'ready'" in script
+    assert "setImageMessage" in script
