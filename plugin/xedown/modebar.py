@@ -94,11 +94,12 @@ class ModeBar(Gtk.Box):
 
         self.pack_start(segments, False, False, 0)
 
-        # Packed from the trailing edge inward, so the button sits at the end
-        # of the bar and the dot immediately before it. Both are
-        # set_no_show_all so a show_all() on the tab cannot reveal either --
-        # the same mitigation the controller applies to the source frame and
-        # the WebView, for the same reason.
+        # Packed from the trailing edge inward: each successive pack_end call
+        # lands further inward than the one before it, so the button sits at
+        # the very end of the bar and whatever is packed next sits just
+        # inside it. Both are set_no_show_all so a show_all() on the tab
+        # cannot reveal either -- the same mitigation the controller applies
+        # to the source frame and the WebView, for the same reason.
         self._refresh_button = Gtk.Button()
         self._refresh_button.add(self._make_content("Refresh", "view-refresh-symbolic"))
         self._refresh_button.set_no_show_all(True)
@@ -110,6 +111,22 @@ class ModeBar(Gtk.Box):
         self._refresh_button.connect("clicked", self._on_refresh_clicked)
         self.pack_end(self._refresh_button, False, False, 0)
 
+        # Packed immediately after the refresh button -- deliberately, and
+        # before the chip below -- so it stays adjacent to the button it
+        # describes. The dot means "the preview is out of date, refresh it";
+        # set_stale rewrites the refresh button's tooltip in the same call,
+        # and the dot would be close to meaningless sitting apart from it.
+        self._stale_dot = Gtk.Label(label="●")
+        self._stale_dot.get_style_context().add_class("xedown-stale-dot")
+        self._stale_dot.set_no_show_all(True)
+        # Without a name this reads as "black circle" -- a description of a
+        # shape rather than of what it means. It appears and disappears, so
+        # the name is what makes its appearing mean something.
+        self._name(self._stale_dot, a11y.NAMES["stale"])
+        self.pack_end(self._stale_dot, False, False, 0)
+
+        # Packed inward of the dot, so it reads left to right as
+        # "<count> remote images [Load]" ahead of the refresh/stale pair.
         # Blocked is the safe default, so this is a quiet chip rather than a
         # warning bar: a document with one badge image should not raise an
         # alarm every time it is opened. `set_no_show_all` for the same
@@ -127,15 +144,6 @@ class ModeBar(Gtk.Box):
         self._remote_label.get_style_context().add_class("xedown-remote-notice")
         self._name(self._remote_label, a11y.NAMES["remote_images_notice"])
         self.pack_end(self._remote_label, False, False, 0)
-
-        self._stale_dot = Gtk.Label(label="●")
-        self._stale_dot.get_style_context().add_class("xedown-stale-dot")
-        self._stale_dot.set_no_show_all(True)
-        # Without a name this reads as "black circle" -- a description of a
-        # shape rather than of what it means. It appears and disappears, so
-        # the name is what makes its appearing mean something.
-        self._name(self._stale_dot, a11y.NAMES["stale"])
-        self.pack_end(self._stale_dot, False, False, 0)
 
         self.set_mode(Mode.PREVIEW)
 
