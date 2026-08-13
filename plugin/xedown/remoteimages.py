@@ -118,10 +118,17 @@ def _default_resolver(host):
 def _is_public(address):
     """True only for an address on the public internet.
 
-    `is_global` rather than `not is_private`: carrier-grade NAT space
-    (100.64.0.0/10) is neither global nor private, and only `is_global`
-    rejects it. A v4-mapped v6 address is unwrapped first, so
-    `::ffff:127.0.0.1` is judged as the loopback it is.
+    `is_global` alone is not enough: the IPv4-compatible IPv6 form `::a.b.c.d`
+    (the `::/96` family) reports `is_global=True` regardless of what its low 32
+    bits hold — an attacker-controlled AAAA record could return `::127.0.0.1`.
+    `is_reserved` is checked after `is_global` to exclude it and other reserved
+    ranges.
+
+    Carrier-grade NAT space (100.64.0.0/10) is rejected by `is_global`. A
+    v4-mapped v6 address is unwrapped first, so `::ffff:127.0.0.1` is judged
+    as the loopback it is, and the check reads the unwrapped address so
+    legitimate v4-mapped public hosts are not refused by the outer address
+    being reserved.
     """
     try:
         parsed = ipaddress.ip_address(address)
@@ -129,7 +136,7 @@ def _is_public(address):
         return False
     if parsed.version == 6 and parsed.ipv4_mapped is not None:
         parsed = parsed.ipv4_mapped
-    return parsed.is_global
+    return parsed.is_global and not parsed.is_reserved
 
 
 def check_destination(host, resolver=None):

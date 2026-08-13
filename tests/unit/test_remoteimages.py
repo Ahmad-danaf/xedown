@@ -99,6 +99,10 @@ def test_a_public_address_is_allowed():
         "0.0.0.0",  # unspecified
         "100.64.0.1",  # carrier NAT: neither global NOR private
         "::ffff:127.0.0.1",  # loopback wearing a v6 mapping
+        "::127.0.0.1",  # IPv4-compatible: loopback, but is_global says True
+        "::169.254.169.254",  # IPv4-compatible: the cloud metadata endpoint
+        "::10.0.0.5",  # IPv4-compatible: private
+        "::7f00:1",  # the same address, hex spelling
     ],
 )
 def test_non_public_addresses_are_refused(address):
@@ -136,3 +140,13 @@ def test_the_real_resolver_rejects_the_numeric_spellings_of_loopback():
     # hostname string. These are real DNS-free resolutions.
     for spelling in ("2130706433", "0x7f000001", "0177.0.0.1", "localhost"):
         assert remoteimages.check_destination(spelling).ok is False
+
+
+def test_a_v4_mapped_public_address_is_still_allowed():
+    # The fix adds `not is_reserved`, which must be read AFTER the ipv4_mapped
+    # unwrap: the ::ffff:0:0/96 block is itself reserved, so applying it to the
+    # outer address would refuse every v4-mapped public host.
+    verdict = remoteimages.check_destination(
+        "mapped.example", resolver=resolver_returning("::ffff:93.184.216.34")
+    )
+    assert verdict.ok is True
