@@ -248,7 +248,21 @@ class Settings:
             self._quarantine("does not contain a JSON object")
             return
 
-        stored = _migrate_legacy_remote_images(stored)
+        migrated = _migrate_legacy_remote_images(stored)
+        if IMAGE_FALLBACK in migrated and IMAGE_FALLBACK not in stored:
+            # The migration itself stays in memory -- nothing is written here
+            # -- but `_write` merges only the keys this instance has set, so a
+            # migrated value that is not marked would never reach the file.
+            # The write that loses it is the very one an upgrading reader
+            # makes first: setting `remote_images` to the new fetch policy
+            # replaces the legacy value the migration was reading, and the
+            # display choice it carried is then nowhere on disk. Marking it
+            # dirty carries it forward on whatever the next write turns out to
+            # be. The file is still not rewritten until the user changes
+            # something, so the legacy key outliving the migration -- the
+            # documented residual -- is unchanged.
+            self._dirty.add(IMAGE_FALLBACK)
+        stored = migrated
 
         for name, value in stored.items():
             setting = _BY_NAME.get(name)

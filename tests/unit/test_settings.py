@@ -838,3 +838,56 @@ def test_migration_is_idempotent_across_loads(tmp_path):
         assert (
             settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == "alt"
         )
+
+
+def test_a_migrated_fallback_survives_turning_the_fetch_policy_on(tmp_path):
+    # Every other migration test exercises a *load* only, which is how this
+    # got through: the migration is in memory, and `_write` merges only the
+    # keys the instance has set. So the first thing an upgrading reader does
+    # -- turn fetching on -- wrote `remote_images: "https"` over the legacy
+    # value the migration was reading, without ever writing the
+    # `image_fallback` it had been read as. The next session then loaded a
+    # file with no display setting in it at all and silently used the default.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+
+    first = settings_module.Settings(path)
+    first.set(settings_module.REMOTE_IMAGES, "https")
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["remote_images"] == "https"
+    assert on_disk["image_fallback"] == "alt"
+
+    second = settings_module.Settings(path)
+    assert second.get(settings_module.IMAGE_FALLBACK) == "alt"
+    assert second.get(settings_module.REMOTE_IMAGES) == "https"
+
+
+def test_a_migrated_fallback_survives_a_write_of_some_unrelated_setting(tmp_path):
+    # The same loss, reached by any other save: the legacy key survives here,
+    # so the value is not lost yet -- but it must be written all the same, or
+    # it depends on a key this version no longer means to read.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "hidden"}), encoding="utf-8")
+
+    loaded = settings_module.Settings(path)
+    loaded.set(settings_module.TEXT_SIZE_PX, 20.0)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["image_fallback"] == "hidden"
+
+
+def test_a_migrated_default_fallback_is_not_written_as_an_explicit_key(tmp_path):
+    # "placeholder" is the default, and a key sitting at its default is
+    # written as absent -- the rule that keeps a later release free to change
+    # a default. Marking the migration dirty must not quietly break it.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "placeholder"}), encoding="utf-8")
+
+    loaded = settings_module.Settings(path)
+    loaded.set(settings_module.REMOTE_IMAGES, "https")
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "image_fallback" not in on_disk
+    assert settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == (
+        "placeholder"
+    )
