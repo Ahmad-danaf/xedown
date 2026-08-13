@@ -1,4 +1,5 @@
 import pytest
+from xedown import sanitizer
 from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, RemoteImage, sanitize
 
 
@@ -387,3 +388,37 @@ def test_a_remote_image_with_an_unusable_uri_emits_nothing():
     html = '<img src="https://e.com/a.png">'
     out = sanitize(html, on_image=lambda ref, alt: RemoteImage("javascript:alert(1)"))
     assert "<img" not in out
+
+
+def test_class_filtering_is_identical_on_img_and_non_img():
+    # _render_attributes and _emit_img filter `class` separately. Before
+    # extracting that duplication, pin the behaviour both must keep.
+    assert 'class="hljs"' in sanitizer.sanitize('<span class="hljs">x</span>')
+    assert "class" not in sanitizer.sanitize('<span class="evil">x</span>')
+
+
+def test_dir_filtering_is_identical_on_img_and_non_img():
+    assert 'dir="rtl"' in sanitizer.sanitize('<p dir="rtl">x</p>')
+    assert "dir" not in sanitizer.sanitize('<p dir="sideways">x</p>')
+
+
+def test_img_keeps_a_valid_dir_and_drops_an_invalid_one():
+    kept = sanitizer.sanitize('<img src="a.png" dir="rtl" alt="x">')
+    dropped = sanitizer.sanitize('<img src="a.png" dir="sideways" alt="x">')
+    assert 'dir="rtl"' in kept
+    assert "dir" not in dropped
+
+
+def test_img_never_receives_a_class_attribute_from_content():
+    # Unlike `dir`, `class` is not in ALLOWED_ATTRIBUTES["img"] and is not a
+    # _GLOBAL_ATTRIBUTES entry either, so a content-authored <img class=...>
+    # is dropped by the `name not in allowed` check before either emit
+    # path's class-filtering branch is ever reached -- true whether `<img>`
+    # goes through _render_attributes (no on_image) or _emit_img (on_image
+    # set), and true for both an allowlisted and a non-allowlisted value.
+    assert "class" not in sanitizer.sanitize('<img src="a.png" class="hljs" alt="x">')
+    assert "class" not in sanitizer.sanitize('<img src="a.png" class="evil" alt="x">')
+    assert "class" not in sanitizer.sanitize(
+        '<img src="a.png" class="hljs" alt="x">',
+        on_image=lambda ref, alt: "file:///tmp/a.png",
+    )

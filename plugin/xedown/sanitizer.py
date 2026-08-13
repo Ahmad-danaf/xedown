@@ -148,6 +148,24 @@ def _filter_dir(value):
     return normalized if normalized in _ALLOWED_DIR_VALUES else ""
 
 
+def _filter_attribute_value(name, value):
+    """The value to emit for `name`, or None to drop the attribute.
+
+    One dispatch shared by `_render_attributes` and `_emit_img`, which
+    previously each carried their own copy. Two copies of a security
+    filter is one more than the number that can be reviewed at once, and
+    the set of value-filtered attributes is still growing.
+
+    URI attributes are NOT handled here: they need the resolver callback
+    and the image pipeline, which are per-call-site concerns.
+    """
+    if name == "class":
+        return _filter_class(value) or None
+    if name == "dir":
+        return _filter_dir(value) or None
+    return value
+
+
 class ImagePlaceholder:
     """What to show in place of an image that cannot be displayed.
 
@@ -256,14 +274,11 @@ class _Sanitizer(HTMLParser):
                     if resolved is None:
                         continue
                     value = resolved
-            elif name == "class":
-                value = _filter_class(value)
-                if not value:
+            else:
+                filtered = _filter_attribute_value(name, value)
+                if filtered is None:
                     continue
-            elif name == "dir":
-                value = _filter_dir(value)
-                if not value:
-                    continue
+                value = filtered
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
         if tag == "input":
             # Task-list checkboxes are display only; never interactive.
@@ -297,14 +312,10 @@ class _Sanitizer(HTMLParser):
                     continue
                 reference = _strip_control_characters(html_module.unescape(value))
                 continue
-            if name == "class":
-                value = _filter_class(value)
-                if not value:
-                    continue
-            if name == "dir":
-                value = _filter_dir(value)
-                if not value:
-                    continue
+            filtered = _filter_attribute_value(name, value)
+            if filtered is None:
+                continue
+            value = filtered
             if name == "alt":
                 alt = value
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
