@@ -210,3 +210,36 @@ def test_a_failure_kind_becomes_a_sentence():
     text = errors.remote_image_failure_text(imagefetch.TOO_MANY_PIXELS, "10000×10000")
     assert "10000×10000" in text
     assert errors.remote_image_failure_text(imagefetch.OFFLINE, "").strip()
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["https:///a.png", "https://", "https:/a.png", "https://[oops/a.png"],
+)
+def test_a_malformed_remote_reference_is_unresolved_not_remote(reference):
+    decision = images.classify_image(reference, None, fetch_remote=True)
+    assert decision.status == images.UNRESOLVED
+
+
+def test_mailto_and_credentials_stay_remote_not_unresolved():
+    assert (
+        images.classify_image("mailto:a@b.c", None, fetch_remote=True).status
+        == images.REMOTE
+    )
+    assert (
+        images.classify_image(
+            "https://u:p@example.com/a.png", None, fetch_remote=True
+        ).status
+        == images.REMOTE
+    )
+
+
+def test_reason_text_refuses_to_call_a_usable_image_missing():
+    fetch_decision = images.classify_image(
+        "https://e.com/a.png", None, fetch_remote=True
+    )
+    ok_decision = images.classify_image("data:image/png;base64,iVBORw0KGgo=", None)
+    for decision in (fetch_decision, ok_decision):
+        text = images.reason_text(decision)
+        assert "not found" not in text
+        assert "has not been saved" not in text

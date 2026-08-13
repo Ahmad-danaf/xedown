@@ -10,6 +10,7 @@ both, and the reader needs to know which.
 
 import os
 import stat
+import sys
 import urllib.parse
 
 from . import errors, links, remoteimages, settings
@@ -79,10 +80,15 @@ def classify_image(reference, base_dir, fetch_remote=False):
             return ImageDecision(
                 FETCH, uri=remoteimages.scheme_uri(remote.url), reference=reference
             )
-        # mailto:, credentials, or something unparseable. None of these is a
-        # thing the reader can choose to load, so they keep the older,
-        # deliberately vaguer wording rather than gaining a control they
-        # cannot act on.
+        if remote.status == remoteimages.MALFORMED:
+            # Not a well-formed reference at all (empty authority, missing
+            # host) -- the same "unresolved" wording an unparseable local
+            # path gets, not the remote wording, because there is no address
+            # here for a remote sentence to name.
+            return ImageDecision(UNRESOLVED, reference=reference)
+        # mailto:, or credentials. Neither is a thing the reader can choose
+        # to load, so they keep the older, deliberately vaguer wording
+        # rather than gaining a control they cannot act on.
         return ImageDecision(REMOTE, reference=reference)
 
     path = links.resolve_to_path(reference, base_dir)
@@ -126,8 +132,23 @@ def classify_image(reference, base_dir, fetch_remote=False):
     )
 
 
+_NOT_A_REFUSAL = frozenset({OK, FETCH})
+
+
 def reason_text(decision):
-    """Why this image is not being shown, as one sentence."""
+    """Why this image is not being shown, as one sentence.
+
+    `OK` and `FETCH` are not refusals -- each carries a URI the caller is
+    meant to use -- so reaching here with one means a caller skipped that
+    branch. Say something neutral and complain to stderr rather than tell
+    the reader a working image is missing, which is what the fall-through
+    below would otherwise do.
+    """
+    if decision.status in _NOT_A_REFUSAL:
+        sys.stderr.write(
+            f"xedown: reason_text called for a usable image ({decision.status})\n"
+        )
+        return "This image could not be displayed."
     if decision.status == REMOTE:
         return errors.remote_image_text(decision.reference)
     if decision.status == REMOTE_BLOCKED:
