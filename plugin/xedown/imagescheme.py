@@ -265,8 +265,9 @@ def shutdown():
     """Stop taking new fetches, and release this fetcher's resources.
 
     Queued work is cancelled; work already running is not -- the
-    interpreter joins those threads at exit either way, and `TIMEOUT_S` is
-    what bounds how long that can delay closing xed. Callers whose fetch
+    interpreter joins those threads at exit either way, and `MAX_TOTAL_S`
+    (the wall-clock deadline on one fetch, not the socket timeout) is what
+    bounds how long that can delay closing xed. Callers whose fetch
     was already queued when this runs and whose callback never fires as a
     result are a pre-existing, documented residual of `Fetcher.shutdown()`
     itself (it clears its waiters without answering them); this module

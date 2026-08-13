@@ -112,6 +112,25 @@ def test_non_public_addresses_are_refused(address):
     assert verdict.ok is False
 
 
+@pytest.mark.parametrize(
+    "address",
+    [
+        "224.0.0.1",  # the IPv4 all-hosts group
+        "239.1.1.1",  # administratively scoped multicast
+        "ff02::1",  # the IPv6 all-nodes group
+        "ff0e::1",  # global-scope multicast
+    ],
+)
+def test_multicast_is_not_the_public_internet(address):
+    # Neither reserved nor private, and `is_global` says True for all four.
+    # Nothing is reachable over TCP this way, so no hole is being closed --
+    # but a predicate named for the public internet must not answer yes here.
+    verdict = remoteimages.check_destination(
+        "group.example", resolver=resolver_returning(address)
+    )
+    assert verdict.ok is False
+
+
 def test_a_host_resolving_to_both_public_and_private_is_refused():
     # Refusing needs only one bad address: a round-robin that sometimes
     # answers privately would otherwise be allowed on a lucky ordering.
@@ -133,6 +152,25 @@ def test_a_resolver_failure_is_refused_rather_than_raised():
         raise OSError("no such host")
 
     assert remoteimages.check_destination("x.example", resolver=explode).ok is False
+
+
+def test_a_refusal_says_whether_the_host_resolved_at_all():
+    # Both are refusals, and they are not the same statement. Reported alike,
+    # an ordinary typo or DNS outage reached the reader as "that address is
+    # not on the public internet" -- an accusation about an address nobody
+    # managed to look up.
+    def explode(_host):
+        raise OSError("no such host")
+
+    assert remoteimages.check_destination("x.example", resolver=explode).unresolved
+    assert remoteimages.check_destination(
+        "void.example", resolver=resolver_returning()
+    ).unresolved
+    private = remoteimages.check_destination(
+        "internal.example", resolver=resolver_returning("10.0.0.5")
+    )
+    assert private.ok is False
+    assert private.unresolved is False
 
 
 def test_the_real_resolver_rejects_the_numeric_spellings_of_loopback():

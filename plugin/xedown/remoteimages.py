@@ -26,7 +26,20 @@ MALFORMED = "malformed"
 # `imagelimits.py`, because they also govern inline `data:` images, which have
 # nothing to download.
 MAX_BYTES = 8 * 1024 * 1024
+
+# The timeout handed to the opener, which becomes a *socket* timeout: it
+# bounds one `recv`, not the transfer. A server sending a few bytes at a time
+# satisfies it forever, which is why the deadline below exists as well.
 TIMEOUT_S = 5
+
+# Wall-clock seconds for one whole fetch, redirects included. This is what
+# actually bounds how long closing xed can be delayed: the fetch runs on a
+# non-daemon worker thread that the interpreter joins at exit, so a fetch that
+# will not end is a shutdown that will not finish. Generous for any image
+# inside an 8 MB cap on an ordinary link, and short enough to be an honest
+# worst case to write down.
+MAX_TOTAL_S = 15
+
 MAX_REDIRECTS = 3
 MAX_CONCURRENT = 4
 MAX_PENDING_URLS = 64
@@ -102,11 +115,18 @@ def parse_scheme_uri(uri):
 
 
 class DestinationVerdict:
-    """Whether a host may be contacted, and why not when it may not."""
+    """Whether a host may be contacted, and why not when it may not.
 
-    def __init__(self, ok, detail=""):
+    `unresolved` separates the two refusals, which are not the same statement:
+    a host that resolves to a private address was caught pointing somewhere it
+    may not go, while a host that does not resolve at all has been accused of
+    nothing. The caller needs the difference to say the right sentence.
+    """
+
+    def __init__(self, ok, detail="", unresolved=False):
         self.ok = ok
         self.detail = detail
+        self.unresolved = unresolved
 
 
 def _default_resolver(host):
@@ -129,6 +149,12 @@ def _is_public(address):
     as the loopback it is, and the check reads the unwrapped address so
     legitimate v4-mapped public hosts are not refused by the outer address
     being reserved.
+
+    Multicast is excluded by name rather than left to the two predicates
+    above: `224.0.0.1` and `ff02::1` are neither reserved nor private, and
+    `is_global` says True for them. Nothing can be reached over TCP that way,
+    so this closes no hole -- but a predicate called "is this on the public
+    internet" should not answer yes about the all-hosts group.
     """
     try:
         parsed = ipaddress.ip_address(address)
@@ -136,7 +162,7 @@ def _is_public(address):
         return False
     if parsed.version == 6 and parsed.ipv4_mapped is not None:
         parsed = parsed.ipv4_mapped
-    return parsed.is_global and not parsed.is_reserved
+    return parsed.is_global and not parsed.is_reserved and not parsed.is_multicast
 
 
 def check_destination(host, resolver=None):
@@ -154,9 +180,13 @@ def check_destination(host, resolver=None):
     try:
         addresses = list(resolve(host))
     except Exception:  # noqa: BLE001 - a resolver failure is a refusal
-        return DestinationVerdict(False, "the address could not be resolved")
+        return DestinationVerdict(
+            False, "that address could not be found", unresolved=True
+        )
     if not addresses:
-        return DestinationVerdict(False, "the address could not be resolved")
+        return DestinationVerdict(
+            False, "that address could not be found", unresolved=True
+        )
     for address in addresses:
         if not _is_public(address):
             return DestinationVerdict(

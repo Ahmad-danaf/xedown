@@ -343,6 +343,136 @@ def test_a_timeout_is_reported_as_a_timeout():
     assert fetch("https://e.com/a.png", opener).error == imagefetch.TIMEOUT
 
 
+class TricklingResponse:
+    """A server that never stops sending, and never sends much.
+
+    This is the shape a socket timeout does not bound: every individual read
+    succeeds well inside `TIMEOUT_S`, so nothing ever times out, and the
+    transfer never ends either.
+    """
+
+    def __init__(self, per_read=8):
+        self.status = 200
+        self.headers = {"Content-Type": "image/png"}
+        self.per_read = per_read
+        self.reads = 0
+
+    def read(self, amount):
+        self.reads += 1
+        return b"\x00" * min(self.per_read, amount)
+
+    def close(self):
+        pass
+
+
+def fake_clock(monkeypatch, step=1.0):
+    """Drive `imagefetch`'s deadline off a counter instead of real seconds."""
+    ticks = iter(float(i) * step for i in range(100_000))
+    monkeypatch.setattr(imagefetch, "_now", lambda: next(ticks))
+
+
+def test_a_trickling_server_is_cut_off_by_the_total_deadline(monkeypatch):
+    # `TIMEOUT_S` reaches the socket, where it bounds one recv and not the
+    # transfer -- so a server dribbling eight bytes at a time held a worker
+    # open for as long as it liked. Those workers are non-daemon and joined
+    # at interpreter exit, which made "closing xed can be delayed by up to 5
+    # seconds" a claim with nothing behind it.
+    fake_clock(monkeypatch)
+    response = TricklingResponse()
+    result = fetch("https://e.com/a.png", StubOpener(response))
+    assert result.error == imagefetch.TIMEOUT
+    assert result.detail == "the server did not respond"
+    # Cut off mid-transfer, not turned away at the door: some of the body was
+    # read, and the count is bounded by the deadline rather than by the cap.
+    assert 0 < response.reads <= remoteimages.MAX_TOTAL_S
+
+
+def test_a_timeout_while_reading_the_body_says_the_server_did_not_respond():
+    # Reported through the broad handler as NETWORK before this -- "it could
+    # not be reached", for a server that answered and then went quiet.
+    class TimingOutResponse(StubResponse):
+        def read(self, amount):
+            raise TimeoutError("The read operation timed out")
+
+    result = fetch("https://e.com/a.png", StubOpener(TimingOutResponse()))
+    assert result.error == imagefetch.TIMEOUT
+    assert result.detail == "the server did not respond"
+
+
+def test_the_body_is_read_with_read1_where_the_response_offers_it():
+    # A real `read(n)` blocks until it has all n bytes, and the socket timeout
+    # bounds only the recvs underneath it -- so a deadline checked around such
+    # a call is never reached while a dribbling server keeps feeding it. Both
+    # forms are bounded now, but `read1` is what makes the deadline hold to
+    # the second rather than to a whole chunk. Measured against a stub that
+    # sends 8 bytes per recv: 15.0s through `read1`, 19s through `read`.
+    class BothReaders(StubResponse):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.read1_calls = 0
+
+        def read1(self, amount):
+            self.read1_calls += 1
+            return StubResponse.read(self, amount)
+
+    response = BothReaders(body=PNG_1X1)
+    assert fetch("https://e.com/a.png", StubOpener(response)).ok
+    assert response.read1_calls > 0
+
+
+def test_a_body_larger_than_one_chunk_is_read_whole():
+    # The read is a loop now, so the obvious way to break it is to keep only
+    # the first chunk.
+    body = PNG_1X1 + b"\x00" * (5 * imagefetch._CHUNK_BYTES + 17)
+    result = fetch("https://e.com/a.png", StubOpener(StubResponse(body=body)))
+    assert result.ok
+    assert result.data == body
+
+
+def test_the_deadline_covers_a_redirect_chain_rather_than_restarting(monkeypatch):
+    # Four hops, each of them slow, must not add up to four deadlines.
+    fake_clock(monkeypatch, step=6.0)
+    hops = [
+        StubResponse(status=302, headers={"Location": f"https://e.com/{i}.png"})
+        for i in range(remoteimages.MAX_REDIRECTS + 1)
+    ]
+    result = fetch("https://e.com/a.png", StubOpener(*hops))
+    assert result.error == imagefetch.TIMEOUT
+
+
+def test_the_socket_timeout_and_the_total_deadline_are_different_numbers():
+    # One bounds a single recv, the other the whole transfer. Collapsing them
+    # into one constant is how this was wrong in the first place.
+    assert remoteimages.MAX_TOTAL_S > remoteimages.TIMEOUT_S
+
+
+def test_a_host_that_does_not_resolve_is_not_called_a_private_address():
+    # Both refusals used to arrive as BLOCKED_DESTINATION, so an ordinary
+    # typo or DNS outage read as "that address is not on the public internet
+    # (the address could not be resolved)" -- an accusation about an address
+    # nobody managed to look up.
+    def explode(_host):
+        raise OSError("Name or service not known")
+
+    result = fetch("https://nope.example/a.png", StubOpener(), resolver=explode)
+    assert result.error == imagefetch.NETWORK
+    assert "not on the public internet" not in result.detail
+    assert "could not be found" in result.detail
+
+
+JPEG_1X1 = b"\xff\xd8\xff\xc0\x00\x0b\x08\x00\x01\x00\x01\x01\x01\x11\x00\xff\xd9"
+
+
+def test_a_server_saying_image_jpg_is_reported_to_webkit_as_image_jpeg():
+    # `image/jpg` is a spelling in the wild and in no registry. It is
+    # accepted, because refusing an ordinary photo over a header typo helps
+    # nobody, but it is not passed on.
+    response = StubResponse(headers={"Content-Type": "image/jpg"}, body=JPEG_1X1)
+    result = fetch("https://e.com/a.jpg", StubOpener(response))
+    assert result.ok
+    assert result.mime == "image/jpeg"
+
+
 def test_proxies_are_passed_through_and_never_read_from_the_environment(monkeypatch):
     monkeypatch.setenv("https_proxy", "http://should-not-be-used:3128")
     opener = StubOpener(StubResponse(body=PNG_1X1))

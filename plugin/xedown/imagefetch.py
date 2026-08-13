@@ -13,6 +13,7 @@ attempts a second for as long as the reader keeps typing.
 import collections
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 
@@ -35,6 +36,35 @@ NETWORK = "network"
 # but not free: a document naming ten thousand broken URLs should still be
 # bounded by the same number the successes are.
 _FAILURE_WEIGHT = 256
+
+# The most that is asked for at a time. An upper bound rather than a target:
+# `read1` hands back whatever one recv produced, so a fast 8 MB image is a few
+# hundred iterations of a loop that does nothing but append. It matters only
+# as the ceiling on how much a single read can be waiting for.
+_CHUNK_BYTES = 64 * 1024
+
+
+def _now():
+    """Monotonic seconds, as one named call so a test can drive the deadline.
+
+    The alternative is a test that waits out real seconds, which is both slow
+    and the kind of thing that flakes on a loaded machine.
+    """
+    return time.monotonic()
+
+
+def _reader_for(response):
+    """`response.read1` where there is one, `response.read` otherwise.
+
+    This is what lets the deadline actually bite. `read(n)` on an HTTP
+    response blocks until it has all n bytes or the body ends, and the socket
+    timeout only bounds the individual `recv` calls underneath it -- so a
+    server sending one byte every four seconds keeps a single `read` call
+    going for as long as it likes, and a deadline checked around that call is
+    never reached. `read1` returns as soon as one `recv` completes, which puts
+    the deadline check between every piece of the response as it arrives.
+    """
+    return getattr(response, "read1", None) or response.read
 
 
 class FetchResult:
@@ -134,9 +164,16 @@ def fetch_once(url, opener, resolver=None, proxies=None):
     redirect instead: the document did not name that address, the server's
     Location header did, and "redirected somewhere xedown will not follow" is
     the truer description of what the reader hit.
+
+    One deadline covers the whole call, redirects included, so a chain of slow
+    hops cannot restart the clock -- see `remoteimages.MAX_TOTAL_S` for why
+    the socket timeout alone is not a bound.
     """
+    deadline = _now() + remoteimages.MAX_TOTAL_S
     current = url
     for hop in range(remoteimages.MAX_REDIRECTS + 1):
+        if _now() >= deadline:
+            return _refuse(TIMEOUT, "the server did not respond")
         decision = remoteimages.classify_remote(current)
         if decision.status != remoteimages.FETCHABLE:
             if hop == 0 and decision.status == remoteimages.CREDENTIALS:
@@ -150,6 +187,13 @@ def fetch_once(url, opener, resolver=None, proxies=None):
         host = urllib.parse.urlsplit(current).hostname
         verdict = remoteimages.check_destination(host, resolver=resolver)
         if not verdict.ok:
+            if verdict.unresolved:
+                # A name that does not resolve has not been caught doing
+                # anything: reporting it as a blocked destination told the
+                # reader "that address is not on the public internet", which
+                # accuses an ordinary typo or an ordinary DNS outage of being
+                # a private-network probe.
+                return _refuse(NETWORK, verdict.detail)
             return _refuse(BLOCKED_DESTINATION, verdict.detail)
 
         try:
@@ -201,7 +245,7 @@ def fetch_once(url, opener, resolver=None, proxies=None):
                 continue
             if status != 200:
                 return _refuse(HTTP_ERROR, f"the server said {status}")
-            return _read_body(response)
+            return _read_body(response, deadline)
         except Exception as exc:  # noqa: BLE001 - a malformed response must not raise
             return _refuse(NETWORK, str(exc))
         finally:
@@ -218,21 +262,56 @@ def fetch_once(url, opener, resolver=None, proxies=None):
     return _refuse(REDIRECT_REFUSED, "it redirected too many times")
 
 
-def _read_body(response):
-    """Read, cap, and measure. Nothing reaches WebKit that is not measured."""
+def _read_body(response, deadline=None):
+    """Read, cap, and measure. Nothing reaches WebKit that is not measured.
+
+    Read in chunks against a wall-clock `deadline` rather than in one call.
+    The timeout handed to the opener is a *socket* timeout: it bounds one
+    `recv`, and a server sending a handful of bytes every few seconds
+    satisfies it indefinitely. Since the fetch runs on a non-daemon worker the
+    interpreter joins at exit, an unbounded read is an unbounded wait for
+    anyone closing xed -- which is the wait the documentation puts a number
+    on. `deadline` is what makes that number true.
+    """
     subtype = _subtype(response.headers.get("Content-Type"))
     if subtype not in remoteimages.FETCHABLE_SUBTYPES:
         return _refuse(NOT_AN_IMAGE, "that address is not an image xedown can measure")
 
     # One byte past the cap: enough to know it was exceeded, and the
-    # Content-Length header is never trusted to say so.
-    try:
-        body = response.read(remoteimages.MAX_BYTES + 1)
-    except Exception as exc:  # noqa: BLE001
-        return _refuse(NETWORK, str(exc))
-    if body is None:
-        return _refuse(NETWORK, "the server sent nothing")
-    if len(body) > remoteimages.MAX_BYTES:
+    # Content-Length header is never trusted to say so -- the cap is enforced
+    # on what was actually read, here as before.
+    cap = remoteimages.MAX_BYTES + 1
+    read = _reader_for(response)
+    chunks = []
+    read_so_far = 0
+    while read_so_far < cap:
+        if deadline is not None and _now() >= deadline:
+            return _refuse(TIMEOUT, "the server did not respond")
+        try:
+            chunk = read(min(_CHUNK_BYTES, cap - read_so_far))
+        except TimeoutError:
+            # `socket.timeout` is this exact class from Python 3.10 on, which
+            # is the floor this project supports -- naming both is what ruff's
+            # UP041 refuses. Without this branch a socket timeout mid-body
+            # fell through to the broad handler below and was reported as
+            # NETWORK, "it could not be reached", for a server that answered
+            # perfectly well and then stopped talking.
+            return _refuse(TIMEOUT, "the server did not respond")
+        except Exception as exc:  # noqa: BLE001
+            return _refuse(NETWORK, str(exc))
+        if chunk is None:
+            # Nothing at all, on the first read: not an empty image, a
+            # response that never produced a body.
+            if not chunks:
+                return _refuse(NETWORK, "the server sent nothing")
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+        read_so_far += len(chunk)
+
+    body = b"".join(chunks)
+    if read_so_far > remoteimages.MAX_BYTES:
         return _refuse(TOO_LARGE, "it is larger than 8 MB")
 
     # The same verdict the `data:` path uses, from the same module, so the two
@@ -250,7 +329,10 @@ def _read_body(response):
         # or evasive, and either way not something to hand to a decoder.
         return _refuse(NOT_AN_IMAGE, "that image is damaged or could not be read")
 
-    return FetchResult(data=body, mime=f"image/{subtype}")
+    # `image/jpg` is a spelling servers use and no registry has: WebKit is
+    # handed the canonical type rather than one it has to be forgiving about.
+    mime = "image/jpeg" if subtype == "jpg" else f"image/{subtype}"
+    return FetchResult(data=body, mime=mime)
 
 
 class Fetcher:
@@ -345,8 +427,10 @@ class Fetcher:
         only work still *queued*; anything already *running* runs to
         completion regardless, and the interpreter's own `atexit` hook joins
         the worker threads either way, so this method does not bound how long
-        the process can take to exit -- `TIMEOUT_S` does, by bounding how long
-        a single running fetch can take.
+        the process can take to exit -- `MAX_TOTAL_S` does, by bounding one
+        running fetch to that much wall clock. `TIMEOUT_S` cannot do it: it is
+        a socket timeout, and a server that keeps dribbling bytes never trips
+        it.
         """
         self._waiting.clear()
         executor = self._executor
@@ -396,7 +480,12 @@ class Fetcher:
 
 
 def _urllib_opener(url, headers, timeout, proxies):
-    """The real opener. Redirects are handled by `fetch_once`, not here."""
+    """The real opener. Redirects are handled by `fetch_once`, not here.
+
+    `timeout` becomes the socket timeout on the connection, which bounds each
+    individual network operation and nothing more. The transfer as a whole is
+    bounded by `fetch_once`'s deadline instead -- see `MAX_TOTAL_S`.
+    """
     import urllib.request
 
     class _NoRedirects(urllib.request.HTTPRedirectHandler):

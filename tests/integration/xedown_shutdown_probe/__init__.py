@@ -419,7 +419,10 @@ def _scenario_close_with_fetches_in_flight(probe):
     contract. Anything already RUNNING keeps running regardless, and the
     interpreter's own `atexit` hook joins those threads either way, so a
     close request that lands mid-fetch can delay the process exiting by up
-    to `remoteimages.TIMEOUT_S` (5s). This scenario exists to confirm that
+    to `remoteimages.MAX_TOTAL_S` (15s), the wall-clock deadline on one whole
+    fetch. `TIMEOUT_S` (5s) is the socket timeout and bounds a single read,
+    not the transfer -- a server that keeps dribbling never trips it, which
+    is why the deadline exists. This scenario exists to confirm that
     close still completes CLEANLY within that bound -- not that it completes
     instantly, which it does not and is not supposed to.
 
