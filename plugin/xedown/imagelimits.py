@@ -75,15 +75,34 @@ def _gif_dimensions(data):
 
 
 def _bmp_dimensions(data):
-    if len(data) < 26 or data[:2] != b"BM":
+    if len(data) < 18 or data[:2] != b"BM":
         return None
-    width, height = struct.unpack("<ii", data[18:26])
-    # A negative height means a top-down bitmap; the magnitude is the size.
-    return abs(width), abs(height)
+    # Read DIB header size at bytes 14-18
+    dib_size = struct.unpack("<I", data[14:18])[0]
+
+    if dib_size == 12:
+        # BITMAPCOREHEADER (OS/2): two unsigned 16-bit fields
+        if len(data) < 22:
+            return None
+        width, height = struct.unpack("<HH", data[18:22])
+        return width, abs(height)
+
+    if dib_size >= 40:
+        # BITMAPINFOHEADER or later: two signed 32-bit fields
+        if len(data) < 26:
+            return None
+        width, height = struct.unpack("<ii", data[18:26])
+        return abs(width), abs(height)
+
+    # Unknown DIB header size
+    return None
 
 
 def _webp_dimensions(data):
-    if len(data) < 30 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+    # Check RIFF/WEBP header
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
+        return None
+    if len(data) < 20:
         return None
     kind = data[12:16]
     if kind == b"VP8X" and len(data) >= 30:
@@ -124,25 +143,65 @@ def _jpeg_dimensions(data):
         return None
     index = 2
     limit = len(data)
-    while index + 4 <= limit:
-        if data[index] != 0xFF:
+    loop_limit = 4096  # Prevent DoS on highly fragmented files
+
+    while index < limit:
+        # Use find() for speed: C time instead of Python loop over non-marker bytes
+        ff_pos = data.find(b"\xff", index)
+        if ff_pos == -1:
+            return None
+        index = ff_pos
+
+        # Skip consecutive 0xFF bytes (fill bytes per ITU-T.81)
+        fill_start = index
+        while index + 1 < limit and data[index + 1] == 0xFF:
             index += 1
-            continue
+            # Cap the fill-byte scan to prevent DoS
+            if index - fill_start > 16:
+                break
+
+        if index + 1 >= limit:
+            return None
+
         marker = data[index + 1]
-        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+
+        # Markers with no segment length
+        if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
             index += 2
+            loop_limit -= 1
+            if loop_limit < 0:
+                return None
             continue
+
+        # Byte stuffing: 0xFF 0x00 is escaped and not a marker
+        if marker == 0x00:
+            index += 2
+            loop_limit -= 1
+            if loop_limit < 0:
+                return None
+            continue
+
+        # All other markers carry a segment with length field
         if index + 4 > limit:
             return None
+
         length = struct.unpack(">H", data[index + 2 : index + 4])[0]
+        if length < 2:
+            return None
+
+        # Check for start-of-frame marker
         if marker in _JPEG_SOF:
             if index + 9 > limit:
                 return None
             height, width = struct.unpack(">HH", data[index + 5 : index + 9])
             return width, height
-        if length < 2:
-            return None
+
+        # Skip this segment (index points to FF, so add 2 for marker + length bytes)
         index += 2 + length
+        loop_limit -= 1
+        if loop_limit < 0:
+            return None
+
     return None
 
 
@@ -160,13 +219,16 @@ def image_dimensions(data):
 
     None means "cannot be measured". What that should cause is the caller's
     decision, not this function's -- see `PixelVerdict.known`.
+
+    Formats with large headers (JPEG with EXIF) are read in full. Format-
+    specific readers enforce their own bounds; this module's DoS protection
+    lives in _jpeg_dimensions' loop limit.
     """
     if not isinstance(data, (bytes, bytearray)) or not data:
         return None
-    view = bytes(data[:4096])
     for reader in _READERS:
         try:
-            result = reader(view)
+            result = reader(data)
         except (struct.error, IndexError, ValueError):
             continue
         if result is not None and result[0] > 0 and result[1] > 0:
