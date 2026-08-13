@@ -1,9 +1,12 @@
 """What an image reference means, and what is shown when it cannot be shown."""
 
+import base64
 import os
+import struct
+import zlib
 
 import pytest
-from xedown import images, remoteimages
+from xedown import imagelimits, images, remoteimages
 from xedown.sanitizer import ImagePlaceholder
 
 # Root bypasses the read permission bit, so an unreadable-file assertion
@@ -29,8 +32,28 @@ def test_a_readable_local_file_is_shown(tmp_path, image):
     assert decision.uri.endswith("/pics/a.png")
 
 
+def data_uri(width, height, subtype="png"):
+    """A `data:` image that is tiny on the wire whatever it declares."""
+
+    def chunk(tag, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    )
+    encoded = base64.b64encode(png).decode("ascii")
+    return f"data:image/{subtype};base64,{encoded}"
+
+
 def test_a_data_uri_is_shown_without_touching_the_filesystem():
-    reference = "data:image/png;base64,iVBORw0KGgo="
+    # A real 1x1 PNG, not just the bare signature: the size check now reads
+    # the IHDR, and a signature with no header is corrupt, not tiny.
+    reference = data_uri(1, 1)
     decision = images.classify_image(reference, None)
     assert decision.status == images.OK
     assert decision.uri == reference
@@ -238,8 +261,69 @@ def test_reason_text_refuses_to_call_a_usable_image_missing():
     fetch_decision = images.classify_image(
         "https://e.com/a.png", None, fetch_remote=True
     )
-    ok_decision = images.classify_image("data:image/png;base64,iVBORw0KGgo=", None)
+    ok_decision = images.classify_image(data_uri(1, 1), None)
     for decision in (fetch_decision, ok_decision):
         text = images.reason_text(decision)
         assert "not found" not in text
         assert "has not been saved" not in text
+
+
+def test_a_data_image_declaring_too_many_pixels_is_refused():
+    decision = images.classify_image(data_uri(10000, 10000), None)
+    assert decision.status == images.TOO_LARGE_TO_DECODE
+    assert "10000" in images.reason_text(decision)
+
+
+def test_the_data_limit_matches_the_remote_one_exactly():
+    # One shared set of limits, not two that can drift apart.
+    #
+    # 5000x5001 is chosen so it trips the PIXEL cap and nothing else: both
+    # sides are far below MAX_SIDE, so this fails if and only if MAX_PIXELS
+    # is what it should be. A shape like (MAX_PIXELS + 1) x 1 would look
+    # equivalent and is not -- its width also exceeds MAX_SIDE, so it would
+    # keep passing even if the pixel cap were wrong.
+    assert 5000 * 5001 > imagelimits.MAX_PIXELS
+    assert max(5000, 5001) < imagelimits.MAX_SIDE
+    assert images.classify_image(data_uri(5000, 5001), None).status == (
+        images.TOO_LARGE_TO_DECODE
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "width", "height"),
+    [
+        ("4K screenshot", 3840, 2160),
+        ("24 MP DSLR photo", 6000, 4000),
+        ("tall full-page screenshot", 1200, 20000),
+        ("small inline badge", 88, 31),
+    ],
+)
+def test_ordinary_inline_images_still_render(name, width, height):
+    decision = images.classify_image(data_uri(width, height), None)
+    assert decision.status == images.OK, f"{name} must still render"
+
+
+def test_exactly_the_pixel_cap_still_renders():
+    assert images.classify_image(data_uri(5000, 5000), None).status == images.OK
+
+
+def test_an_unmeasurable_data_image_is_left_exactly_as_it_was():
+    # AVIF cannot be measured. Refusing what has always worked would be a
+    # worse regression than the bug being fixed.
+    decision = images.classify_image("data:image/avif;base64,AAAA", None)
+    assert decision.status == images.OK
+
+
+def test_a_non_base64_data_uri_is_left_alone():
+    decision = images.classify_image("data:image/gif,%89PNG", None)
+    assert decision.status == images.OK
+
+
+def test_a_malformed_payload_does_not_raise():
+    decision = images.classify_image("data:image/png;base64,!!!not base64!!!", None)
+    assert decision.status == images.OK
+
+
+def test_the_refusal_honours_the_fallback_setting():
+    decision = images.classify_image(data_uri(10000, 10000), None)
+    assert images.placeholder_for(decision, "alt", images.DISPLAY_HIDDEN) is None

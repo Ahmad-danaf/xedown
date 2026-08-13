@@ -89,7 +89,13 @@ def test_resolvable_local_image_still_renders_as_an_img(base):
 
 
 def test_data_image_still_renders_as_an_img():
-    html = renderer.render_fragment("![pic](data:image/png;base64,iVBORw0KGgo=)")
+    # A real 1x1 PNG, not just the bare signature: the decode-size check now
+    # reads the IHDR, and a signature with no header is corrupt, not tiny.
+    tiny_png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA"
+        "C0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    html = renderer.render_fragment(f"![pic](data:image/png;base64,{tiny_png})")
     assert "<img" in html
     assert "data:image/png" in html
     assert "xedown-image-error" not in html
@@ -707,3 +713,28 @@ def test_the_config_block_renames_the_fallback_key():
     config_block = after.split("</script>", 1)[0]
     assert "imageFallback" in config_block
     assert "imageDisplay" not in page
+
+
+def test_an_oversized_inline_image_produces_a_page_not_an_exception():
+    # A refused image must never break the preview: render_document promises
+    # never to raise, and a placeholder is what the reader gets.
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", 20000, 20000, 8, 0, 0, 0, 0)
+    )
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    page = renderer.render_document(f"![x]({uri})")
+    assert "xedown-image-error" in page
+    assert "20000" in page
+    assert "Cannot render this document" not in page

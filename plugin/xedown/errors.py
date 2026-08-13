@@ -175,6 +175,11 @@ def local_image_unresolved_text(uri):
     return f"Image not found: {uri}. {UNSAVED_DOCUMENT_HINT}"
 
 
+def oversized_image_text(detail):
+    """Placeholder text for an image too large to decode safely."""
+    return f"Image is too large to display safely ({detail})"
+
+
 def with_alt(text, alt):
     """`text`, followed by the author's alt text when there is any.
 

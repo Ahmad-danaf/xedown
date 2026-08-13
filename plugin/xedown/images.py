@@ -8,12 +8,13 @@ tell "no such file" from "permission denied". It reports one load error for
 both, and the reader needs to know which.
 """
 
+import base64
 import os
 import stat
 import sys
 import urllib.parse
 
-from . import errors, links, remoteimages, settings
+from . import errors, imagelimits, links, remoteimages, settings
 from .sanitizer import ImagePlaceholder
 
 OK = "ok"
@@ -24,6 +25,7 @@ REMOTE_INSECURE = "remote_insecure"
 UNRESOLVED = "unresolved"
 MISSING = "missing"
 UNREADABLE = "unreadable"
+TOO_LARGE_TO_DECODE = "too_large_to_decode"
 
 DISPLAY_PLACEHOLDER = "placeholder"
 DISPLAY_ALT = "alt"
@@ -69,6 +71,18 @@ def classify_image(reference, base_dir, fetch_remote=False):
         return ImageDecision(UNRESOLVED, reference=reference)
 
     if scheme == "data":
+        # The byte cap that guards a fetched image has no equivalent here --
+        # the bytes are already in the document -- but the decode cost is
+        # identical, so the *decode* limit is the same one, from the same
+        # module. Refused here rather than downstream: the URI is never
+        # emitted, so WebKit never sees the payload at all.
+        verdict = _data_uri_verdict(reference)
+        if verdict is not None and verdict.known and not verdict.ok:
+            return ImageDecision(
+                TOO_LARGE_TO_DECODE,
+                reference=reference,
+                detail=verdict.describe(),
+            )
         return ImageDecision(OK, uri=reference, reference=reference)
     if scheme in links.REMOTE_SCHEMES:
         remote = remoteimages.classify_remote(reference)
@@ -132,6 +146,28 @@ def classify_image(reference, base_dir, fetch_remote=False):
     )
 
 
+def _data_uri_verdict(reference):
+    """`imagelimits.PixelVerdict` for a base64 `data:` image, or None.
+
+    None and `known=False` both mean "not judged", and both leave the image
+    exactly as it renders today. Only a payload that can actually be measured
+    is refused: taking away an inline image that has always worked, because
+    xedown cannot read its header, would be a worse regression than the bug
+    this guards against.
+    """
+    head, separator, payload = reference.partition(",")
+    if not separator or "base64" not in head.lower():
+        return None
+    # Only the leading bytes are needed. Base64 encodes 3 bytes per 4
+    # characters, so the slice is trimmed to a whole quantum before decoding.
+    try:
+        prefix = payload[:8192]
+        prefix = prefix[: len(prefix) - (len(prefix) % 4)]
+        return imagelimits.pixel_verdict(base64.b64decode(prefix))
+    except Exception:  # noqa: BLE001 - unmeasurable is not a failure
+        return None
+
+
 _NOT_A_REFUSAL = frozenset({OK, FETCH})
 
 
@@ -161,6 +197,8 @@ def reason_text(decision):
         return errors.local_image_unreadable_text(
             decision.path or decision.reference, decision.detail
         )
+    if decision.status == TOO_LARGE_TO_DECODE:
+        return errors.oversized_image_text(decision.detail)
     return errors.local_image_unresolved_text(decision.reference)
 
 
