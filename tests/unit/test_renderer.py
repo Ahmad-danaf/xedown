@@ -40,6 +40,34 @@ def test_fragment_renders_task_lists():
     assert "checked" in html
 
 
+def test_table_column_alignment_survives_as_align_attribute():
+    html = renderer.render_fragment("| a | b |\n|:-:|--:|\n| 1 | 2 |\n")
+    assert '<th align="center">a</th>' in html
+    assert '<th align="right">b</th>' in html
+    assert '<td align="center">1</td>' in html
+    assert '<td align="right">2</td>' in html
+
+
+def test_table_explicit_left_alignment_survives_as_align_attribute():
+    # A left-aligned column is meaningful (not merely redundant) in a
+    # right-to-left document, so an explicit `:---` must still produce
+    # `align="left"` rather than being treated as "no alignment".
+    html = renderer.render_fragment("| a |\n|:---|\n| 1 |\n")
+    assert '<th align="left">a</th>' in html
+    assert '<td align="left">1</td>' in html
+
+
+def test_table_without_alignment_row_has_no_align_attribute():
+    html = renderer.render_fragment("| a | b |\n|---|---|\n| 1 | 2 |\n")
+    assert "align=" not in html
+
+
+def test_table_alignment_never_emits_style_attribute():
+    html = renderer.render_fragment("| a | b |\n|:-:|--:|\n| 1 | 2 |\n")
+    assert "style=" not in html
+    assert "text-align" not in html
+
+
 def test_relative_image_is_resolved_to_an_absolute_file_uri(base):
     html = renderer.render_fragment("![pic](pic.png)", base_dir=base)
     assert "file://" + os.path.join(base, "pic.png") in html

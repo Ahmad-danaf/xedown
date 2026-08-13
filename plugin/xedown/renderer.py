@@ -20,6 +20,21 @@ from .sanitizer import RemoteImage, sanitize
 
 CONTENT_ELEMENT_ID = "xedown-content"
 
+# Per-extension configuration, keyed by the same fully-qualified name used in
+# `vendoring.MARKDOWN_EXTENSIONS` -- that tuple is "what we load", this is
+# "how we configure what we load", and it lives here rather than there
+# because it is a rendering/sanitizing decision, not a vendoring one.
+#
+# `tables`, by default, emits `style="text-align: ...;"` for an aligned
+# column. The sanitizer drops `style` -- correctly, and that must not
+# change, since letting document content set arbitrary CSS is a security
+# regression. `use_align_attribute` makes the same extension emit
+# `align="..."` instead, which `sanitizer.ALLOWED_ATTRIBUTES` already
+# allows on `td`/`th`. No sanitizer change and no vendored-code edit needed.
+_EXTENSION_CONFIGS = {
+    "markdown.extensions.tables": {"use_align_attribute": True},
+}
+
 _CSP_TEMPLATE = (
     "default-src 'none'; "
     "img-src {img_sources}; "
@@ -95,6 +110,7 @@ def _build_converter():
     return markdown_module.Markdown(
         extensions=list(vendoring.MARKDOWN_EXTENSIONS)
         + make_extensions(markdown_module),
+        extension_configs=_EXTENSION_CONFIGS,
         output_format="html",
     )
 
