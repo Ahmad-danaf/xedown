@@ -122,6 +122,41 @@ def test_a_tilde_fence_still_works(convert):
     assert '<pre><code class="language-python">x = 1' in html
 
 
+# --- Fenced code: `{attrs}` (task 13 review, fix round 1) ---
+#
+# `attr_list` is loaded (`vendoring.MARKDOWN_EXTENSIONS`), and
+# "```{.python #myid}" is how a document sets an id on a fenced block --
+# live syntax, not dead code like the bare `hl_lines="..."` branch. The
+# widened `(?P<info>[^\n]*)` alternative would otherwise swallow the whole
+# "{.python #myid}" as info-string text, losing the id and (before the
+# language-token validation below existed) surfacing "{.python" itself as a
+# malformed class.
+
+
+def test_curly_attrs_set_both_id_and_language_class(convert):
+    # The exact shape rendered at 062cf95, before this task touched
+    # fenced-code recognition at all -- this must still be what
+    # "```{.python #myid}" produces.
+    html = convert("```{.python #myid}\nx=1\n```\n")
+    assert '<pre id="myid"><code class="language-python">x=1' in html
+
+
+def test_curly_attrs_with_only_a_class_set_no_id(convert):
+    html = convert("```{.python}\nx=1\n```\n")
+    assert '<code class="language-python">x=1' in html
+    assert " id=" not in html
+
+
+def test_an_unclosed_curly_brace_falls_back_to_plain_info_text(convert):
+    # No closing "}" on the line, so the {attrs} branch never matches and
+    # this falls through to the plain info-string branch instead. Its first
+    # token, "{.python", is not a plausible language identifier, so no
+    # class is emitted -- not a crash, and not a malformed one either.
+    html = convert("```{.python\nx=1\n```\n")
+    assert "<pre><code>x=1" in html
+    assert "language-" not in html
+
+
 @pytest.mark.parametrize("spaces", [1, 2, 3])
 def test_a_fence_indented_one_to_three_spaces_is_recognised(convert, spaces):
     html = convert(f"{' ' * spaces}```sh\necho hi\n```\n")
@@ -166,6 +201,39 @@ def test_the_desynchronisation_regression_from_f2(convert):
     ), "the paragraph after the fence must not be inside <pre>"
 
 
+# --- Fenced code: language token validation (task 13 review, fix round 1) ---
+#
+# `class="language-..."` reaches the rendered page unexamined --
+# `sanitizer._ALLOWED_CLASS_PREFIXES` is a prefix check for blocking style
+# injection, not a semantic validator -- so a first token that is not
+# itself a plausible language identifier must emit no class at all, not an
+# escaped-but-nonsensical one.
+
+
+@pytest.mark.parametrize("lang", ["c++", "shell-session", "Rust", "objective-c"])
+def test_a_plausible_identifier_still_gets_a_class(convert, lang):
+    html = convert(f"```{lang}\ncode\n```\n")
+    assert f'class="language-{lang}"' in html
+
+
+def test_a_brace_led_token_with_no_closing_brace_gets_no_class(convert):
+    html = convert("```{oops\ncode\n```\n")
+    assert "<pre><code>code" in html
+    assert "language-" not in html
+
+
+def test_a_quoted_token_gets_no_class(convert):
+    html = convert('```"weird\ncode\n```\n')
+    assert "<pre><code>code" in html
+    assert "language-" not in html
+
+
+def test_an_empty_info_string_gets_no_class_and_does_not_crash(convert):
+    html = convert("```\ncode\n```\n")
+    assert "<pre><code>code" in html
+    assert "language-" not in html
+
+
 # --- `fence_lang` itself (task 13 / F2) ---
 
 
@@ -185,6 +253,11 @@ def test_fence_lang_returns_none_for_an_empty_info_string():
     assert fence_lang("") is None
     assert fence_lang(None) is None
     assert fence_lang("   ") is None
+
+
+def test_fence_lang_rejects_a_token_that_is_not_a_plausible_identifier():
+    assert fence_lang("{.python") is None
+    assert fence_lang('"weird') is None
 
 
 # --- Heading hash edge cases (task 12 / F9, F10) ---

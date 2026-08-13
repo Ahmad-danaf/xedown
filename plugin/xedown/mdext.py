@@ -69,18 +69,40 @@ def find_list_interrupt(block):
 # for whatever follows -- the desynchronisation this task exists to stop.
 _FENCE_LANG_TOKEN = re.compile(r"[^\s,]+")
 
+# The shape the vendored fence regex used to require of the *entire* info
+# string, now used the other way around: as a check on the one token pulled
+# out of it. `class="language-..."` reaches the rendered page unexamined --
+# `sanitizer._ALLOWED_CLASS_PREFIXES` is a prefix check for blocking style
+# injection, not a semantic validator, and is not the layer that catches a
+# malformed token. A token that fails this (a stray `{` left over from an
+# unclosed attribute list, an embedded quote, ...) gets no class at all,
+# not an escaped-but-nonsensical one: cmark-gfm's *raw* output would put it
+# in `lang=` on `<pre>`, but `lang` is not an attribute the sanitizer allows
+# there, so cmark's *sanitized* output -- the audit's actual yardstick --
+# has nothing at all in that case either.
+_PLAUSIBLE_LANG = re.compile(r"[\w#.+-]+")
+
+
+def _plausible_lang(token):
+    """Whether `token` looks like a language identifier at all."""
+    return bool(token) and _PLAUSIBLE_LANG.fullmatch(token) is not None
+
 
 def fence_lang(info):
     """The language class for a fence's info string, or None.
 
     The remainder of the info string (`no_run`, `title="x"`) is free text a
     doc tool reads for its own purposes; xedown does not understand it and
-    discards it rather than emitting it.
+    discards it rather than emitting it. Also None if the first token
+    itself is not a plausible language identifier -- see `_plausible_lang`.
     """
     if not info:
         return None
     match = _FENCE_LANG_TOKEN.match(info.strip())
-    return match.group(0) if match else None
+    if match is None:
+        return None
+    token = match.group(0)
+    return token if _plausible_lang(token) else None
 
 
 def _dedent_fence_body(code, width):
@@ -103,7 +125,7 @@ def _dedent_fence_body(code, width):
 
 
 # Same shape as the vendored `FencedBlockPreprocessor.FENCED_BLOCK_RE`
-# (fenced_code.py:56-67), widened in exactly two ways:
+# (fenced_code.py:56-67), widened in one way and narrowed in another:
 #
 #  - `(?P<indent>[ ]{0,3})` in front of the fence -- CommonMark tolerates up
 #    to three leading spaces on both the opening and the closing fence, the
@@ -116,19 +138,49 @@ def _dedent_fence_body(code, width):
 #    text is now a valid info string, not just a bare word. `fence_lang`
 #    above pulls the language out of it afterwards.
 #
-# The vendored `{attrs}` and bare `hl_lines="..."` branches are dropped
-# rather than carried forward: nothing in the fixtures or the audit corpus
-# uses either, and the info-string rule above already says what happens to
-# text after the language -- it is read, not re-parsed.
+# The `{attrs}` branch is carried forward unchanged (same group name and
+# position as the vendored regex) because it is live, not dead: `attr_list`
+# is loaded (`vendoring.MARKDOWN_EXTENSIONS`) and "```{.python #myid}" is
+# how a document sets an id on a fenced block. Without this branch, the
+# widened `info` alternative below would swallow the whole "{.python #myid}"
+# as info-string text instead, and its first token -- "{.python", not a
+# plausible language identifier -- would previously have surfaced as a
+# malformed class (`_plausible_lang` now blocks that too, independently).
+#
+# The bare `hl_lines="..."` branch (outside of `{attrs}`) is the one piece
+# actually dropped rather than carried forward: grepped `renderer.py`,
+# `preview.js`, `preview.css` and the highlight.js bundle build script for a
+# consumer and found none anywhere in xedown -- genuinely dead code here.
 _FENCED_BLOCK_RE = re.compile(
     r"""
     ^(?P<indent>[ ]{0,3})(?P<fence>~{3,}|`{3,})[ ]*  # opening fence
-    (?P<info>[^\n]*)\n                                # info string, to end of line
+    ((\{(?P<attrs>[^\n]*)\})|(?P<info>[^\n]*))        # {attrs}, or an info string
+    \n                                                # newline (end of opening fence)
     (?P<code>.*?)(?<=\n)                              # the code block
     [ ]{0,3}(?P=fence)[ ]*$                           # closing fence
     """,
     re.MULTILINE | re.DOTALL | re.VERBOSE,
 )
+
+
+def _handle_fence_attrs(attrs):
+    """Pull an id and a class list out of a `{...}` attribute list.
+
+    A narrowed `FencedBlockPreprocessor.handle_attrs` (fenced_code.py:165):
+    `hl_lines`/pygments/bool-option keys are dropped along with the rest of
+    that dead branch (see `_FENCED_BLOCK_RE` above) rather than carried
+    forward. Any other key/value pair (`{data-x=1}`) is silently ignored,
+    the same as the vendored preprocessor does whenever `attr_list` itself
+    is not loaded to render it as a key/value pair on the tag.
+    """
+    id_value = None
+    classes = []
+    for key, value in attrs:
+        if key == "id":
+            id_value = value
+        elif key == ".":
+            classes.append(value)
+    return id_value, classes
 
 
 def make_extensions(markdown_module):
@@ -157,6 +209,13 @@ def make_extensions(markdown_module):
     SaneOListProcessor = importlib.import_module(
         f"{markdown_module.__name__}.extensions.sane_lists"
     ).SaneOListProcessor
+    # Same reasoning as `SaneOListProcessor` above: `attr_list` is one of
+    # `vendoring.MARKDOWN_EXTENSIONS`, but not yet imported as a submodule
+    # at this point, since that only happens once `Markdown()` itself loads
+    # it -- after `make_extensions` has already returned.
+    get_attrs_and_remainder = importlib.import_module(
+        f"{markdown_module.__name__}.extensions.attr_list"
+    ).get_attrs_and_remainder
 
     class TaskListTreeprocessor(Treeprocessor):
         def run(self, root):
@@ -309,10 +368,14 @@ def make_extensions(markdown_module):
         narrows or wraps `FencedBlockPreprocessor` the way `sane_lists`
         narrows `OListProcessor` -- `md.preprocessors` holds it under this
         name and no other, `CodeHiliteExtension` is never loaded (not in
-        `vendoring.MARKDOWN_EXTENSIONS`), and `AttrListExtension`, though
-        loaded, only ever flips a boolean the vendored `run` reads back on
-        itself. There is nothing installed on the vendored class for a
-        subclass to lose by not inheriting from it.
+        `vendoring.MARKDOWN_EXTENSIONS`), and `AttrListExtension` registers
+        only its own treeprocessor (priority 8, for `{: #id .class}` after
+        headings and the like) -- it never touches the preprocessor this
+        replaces. There is nothing installed on the vendored class for a
+        subclass to lose by not inheriting from it; `get_attrs_and_remainder`
+        below is `attr_list`'s own parser for `{...}` text, reused directly
+        rather than reimplemented, which is a different thing from
+        inheriting the class.
         """
 
         def run(self, lines):
@@ -322,13 +385,29 @@ def make_extensions(markdown_module):
                 m = _FENCED_BLOCK_RE.search(text, index)
                 if m is None:
                     break
-                lang = fence_lang(m.group("info"))
+                if m.group("attrs") is not None:
+                    attrs, remainder = get_attrs_and_remainder(m.group("attrs"))
+                    if remainder:
+                        # Malformed `{...}` syntax -- explicitly skip over
+                        # it, the same way the vendored preprocessor does,
+                        # so the next search doesn't just find the same
+                        # broken match again.
+                        index = m.end("attrs")
+                        continue
+                    id_value, classes = _handle_fence_attrs(attrs)
+                    lang = classes[0] if classes else None
+                    if lang is not None and not _plausible_lang(lang):
+                        lang = None
+                else:
+                    id_value = None
+                    lang = fence_lang(m.group("info"))
                 code = _dedent_fence_body(m.group("code"), len(m.group("indent")))
                 code = code_escape(code)
+                id_attr = f' id="{escape_attrib_html(id_value)}"' if id_value else ""
                 class_attr = (
                     f' class="language-{escape_attrib_html(lang)}"' if lang else ""
                 )
-                html = f"<pre><code{class_attr}>{code}</code></pre>"
+                html = f"<pre{id_attr}><code{class_attr}>{code}</code></pre>"
                 placeholder = self.md.htmlStash.store(html)
                 text = f"{text[:m.start()]}\n{placeholder}\n{text[m.end():]}"
                 # Continue from after the replaced text, same as the
