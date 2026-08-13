@@ -221,3 +221,9 @@ CLAUDE.md
 docs/superpowers
 # Subagent-driven development scratch workspace
 .superpowers/
+
+# Third-party README corpus for the compatibility audit: fetched, never
+# vendored. These are other people's documents under their own licences,
+# and the audit is one-time. scripts/fetch-corpus.sh reproduces it from
+# MANIFEST.json's pinned commit SHAs.
+tests/compat/corpus/
