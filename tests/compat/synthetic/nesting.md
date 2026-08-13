@@ -27,6 +27,9 @@
 1. All ones
 1. Still ordered
 
+A paragraph between two ordered lists, so the second one is genuinely a new
+list rather than a continuation of the first.
+
 7. Starting at seven
 8. Eight
 

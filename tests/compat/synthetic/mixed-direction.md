@@ -24,4 +24,8 @@ def total(items):
     return sum(items)
 ```
 
-Trailing Arabic sentence ending in a URL https://example.com/path.
+تجد التفاصيل الكاملة على https://example.com/path.
+
+راجع الملف /etc/hosts:
+
+الإصدار الأخير موجود في https://example.com/v2 وهو الأحدث.
