@@ -115,7 +115,7 @@ explained inline below.
 | 14 | Click the relative link to `linked.md` in `tests/fixtures/showcase.md` | Opens in a new xed tab |
 | 15 | Click the anchor link in `tests/fixtures/showcase.md` | Scrolls within the preview |
 | 16 | In `tests/fixtures/edge-cases.md`, reference a missing image | Inline placeholder naming the path; no blank space |
-| 17 | In `tests/fixtures/edge-cases.md`, reference a remote image, with `remote_images` left at its default `never` | A placeholder names the address and says the image was not loaded. Nothing is fetched — blocked is the default until you click **Load** or turn `remote_images` on; see rows 124–130 for what fetching actually looks like |
+| 17 | In `tests/fixtures/edge-cases.md`, reference a remote image, with `remote_images` left at its default `never` | A placeholder names the address and says the image was not loaded. Nothing is fetched — blocked is the default until you click **Load** or turn `remote_images` on; see rows 124–129 for what fetching actually looks like |
 | 18 | Open several Markdown files in tabs and click between them | Each keeps its own mode and scroll position, with no visible redraw glitches |
 | 19 | Switch the desktop between light and dark | Preview follows without a restart |
 | 20 | Set `"preview_theme": "focused"` in `~/.config/xedown/settings.json`, restart xed, open `tests/fixtures/showcase.md` | Calm, low-contrast surfaces; no rules under headings; tables with horizontal rules only |
@@ -228,17 +228,20 @@ explained inline below.
 | 127 | Open `tests/fixtures/edge-cases.md` again and click its chip's **Load** | The generic "not loaded" wording on its remote image is replaced by the real reason xedown got back attempting `https://example.com/not-fetched.png` — a fetch is actually made this time, not merely refused |
 | 128 | Back in the document from row 124, disconnect from the network (turn off Wi-Fi, or unplug the cable) and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | A placeholder says you appear to be offline and to refresh once you are back online — immediately, not after a multi-second wait |
 | 129 | Reconnect to the network and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> again | The image loads normally now that the connection is back |
-| 130 | Add `![huge](data:image/png;base64,iVBORw0KGgoAAAAASUhEUgAAdTAAAHUw)` — a 24-byte PNG header declaring 30000×30000 pixels — to any document and view it in Preview | `Image is too large to display safely (30000×30000 pixels) — "huge"`: a placeholder, not an attempted decode. This applies to every image, inline or remote, and no setting turns it off |
-| 131 | Clean up: delete the scratch document(s) rows 124–130 used | Nothing from these rows is left behind |
+| 130 | Add `![huge](data:image/png;base64,iVBORw0KGgoAAAAASUhEUgAAdTAAAHUw)` — a 24-byte PNG header declaring 30000×30000 pixels — to any document and view it in Preview | `Image is too large to display safely (30000×30000 pixels) — "huge"`: a placeholder, not an attempted decode. This applies to every image xedown can measure, inline or remote, and no setting turns it off |
+| 131 | Add `![huge2](data:image/png,%89PNG%0D%0A%1A%0A%00%00%00%0DIHDR%00%00u0%00%00u0%08%00%00%00%00)` — the same header, percent-encoded instead of base64 — and refresh | The same placeholder, naming the same 30000×30000. The cap is on the image, not on the spelling: a percent-encoded `data:` URL is an ordinary form browsers render, and it used to slip past the measurement entirely |
+| 132 | Clean up: delete the scratch document(s) rows 124–131 used | Nothing from these rows is left behind |
 
 Rows 116–123 use a scratch document of your own rather than a fixture: rows 119
 and 120 deliberately break an image reference, and `tests/fixtures/` documents
 are either clean by contract or broken in specific documented ways (see
 `tests/fixtures/README.md`). Row 123 undoes everything they change.
 
-Rows 124–130 need a real network connection (and, for row 128, the ability to
+Rows 124–129 need a real network connection (and, for row 128, the ability to
 disconnect it) — the one part of this checklist that reaches past your own
-machine. `example.com` in row 126 does not need to resolve to anything real:
+machine. Rows 130 and 131 do not: an inline image is refused before anything
+would be fetched, and they are here because the cap they check covers inline
+images too. `example.com` in row 126 does not need to resolve to anything real:
 an insecure image is refused before xedown would ever connect to it. Row 127
 reuses `tests/fixtures/edge-cases.md`'s own remote reference rather than a
 scratch document — its address is expected to fail once actually fetched, so

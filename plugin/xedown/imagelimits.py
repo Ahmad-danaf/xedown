@@ -63,10 +63,17 @@ def claims_a_format(data):
 class PixelVerdict:
     """Whether an image may be decoded, and what it said its size was.
 
-    `known` is False when the format could not be measured. The verdict does
-    not decide what that should mean: the fetch path refuses an unmeasurable
-    image, and the `data:` path allows it, because refusing what already works
-    would be a worse regression than the bug being fixed.
+    `known` is False for a payload whose magic bytes match **no format this
+    module parses** -- not for one we merely failed to measure. A payload that
+    claims a format we parse and then yields no dimensions is corrupt or
+    evasive, and comes back `known=True, ok=False`: without that distinction
+    every gap in a parser would silently become an allow on the `data:` path,
+    which is exactly how a padded JPEG bomb once got through.
+
+    What `known=False` should mean is still the caller's decision: the fetch
+    path refuses an unmeasurable image, and the `data:` path allows it,
+    because refusing what already works would be a worse regression than the
+    bug being fixed. `pixel_verdict` below states the four outcomes in full.
     """
 
     def __init__(self, ok, width=0, height=0, known=True):

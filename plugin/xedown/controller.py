@@ -1590,6 +1590,14 @@ class TabController:
         loaded to reload -- the staleness below is what makes the switch
         back render with the new permission.
         """
+        # A debounce timer armed a moment before the click would otherwise
+        # fire into the page that is about to be replaced, swapping in a body
+        # full of `xedown-image:` sources that the *old* page's CSP refuses
+        # -- so the reader sees a raw private-scheme URL flash up in a
+        # placeholder immediately after pressing Load. The reload below
+        # renders the same text anyway; there is nothing to lose by dropping
+        # the pending refresh.
+        self._cancel_refresh()
         self._remote_unblocked = True
         # The offer has been accepted, so it stops being made now rather
         # than at the next render: with the permission granted there are no

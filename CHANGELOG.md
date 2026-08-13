@@ -51,18 +51,24 @@ turn on `remote_images` or click a document's own **Load**.
 
 ### Fixed
 
-- **Every image is now capped at 25 megapixels and 32768 pixels on a side
-  before xedown will decode it — inline (`data:`) images as well as the new
-  remote ones.** A document containing an enormous inline image rendered it
-  in full before this release, at a decode cost of up to hundreds of
-  megabytes of memory for a file only kilobytes long; it now shows a
-  placeholder saying the image is too large to display safely instead. No
-  setting raises or removes this cap.
+- **Every image xedown can measure is now capped at 25 megapixels and 32768
+  pixels on a side before xedown will decode it — inline (`data:`) images as
+  well as the new remote ones.** A document containing an enormous inline
+  image rendered it in full before this release, at a decode cost of up to
+  hundreds of megabytes of memory for a file only kilobytes long; it now
+  shows a placeholder saying the image is too large to display safely
+  instead. Inline payloads are measured in either spelling, base64 or
+  percent-encoded. An inline image in a format xedown cannot measure (AVIF,
+  SVG) is still shown as it always was. No setting raises or removes this
+  cap.
 
 ### Known issues
 
-- Closing xed can be delayed by up to 5 seconds by a remote image fetch
-  already in progress: a queued fetch is cancelled, a running one is not.
+- Closing xed can be delayed by up to 15 seconds by a remote image fetch
+  already in progress: a queued fetch is cancelled, a running one is not,
+  and 15 seconds is the wall-clock deadline on one whole fetch. (The
+  5-second timeout on the connection is a socket timeout — it bounds a
+  single read, not the transfer.)
 - AVIF images cannot be loaded remotely; inline `data:` AVIF is unaffected.
 - A DNS-rebinding race against the destination check is a known, accepted
   residual — blind, with no channel for a document to learn what it found.

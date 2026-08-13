@@ -455,30 +455,44 @@ to follow it. Failing that, use *File → Revert*, or switch to Markdown mode an
 accept xed's own **Reload** bar. Nothing is lost either way — this affects only
 whether a change is *noticed*, never the document's contents.
 
-## Closing xed can be delayed by up to 5 seconds by a remote image already loading
+## Closing xed can be delayed by up to 15 seconds by a remote image already loading
 
 **What you see:** you close xed, or disable the plugin, while a remote image
 is still being fetched. The window takes noticeably longer than usual to go
-away — up to 5 seconds, xedown's fetch timeout — rather than closing at
-once.
+away — up to 15 seconds in the worst case, and normally the fraction of a
+second the fetch had left — rather than closing at once.
 
 **Why:** `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)`
 cancels only work still *queued*; a fetch already *running* keeps running to
 completion regardless, and Python's own `atexit` hook joins the worker
 threads before the interpreter exits, whatever `shutdown()` was asked to do.
 So the honest statement is narrower than "closing cancels pending fetches":
-queued fetches are cancelled, but a running one is not, and the wait is
-bounded by the 5-second timeout on a single fetch — not by how many are
-running at once, since up to 4 run in parallel and the wait is for the
-slowest of them, not their sum.
+queued fetches are cancelled, but a running one is not.
+
+What bounds the wait is a **15-second deadline on one whole fetch**, wall
+clock, redirects included. It is not the same thing as the 5-second timeout
+xedown puts on the connection: that is a *socket* timeout, and a socket
+timeout bounds each individual read rather than the transfer. A server
+sending a few bytes every second satisfies it forever, so before the
+deadline existed a fetch could run — and a close could wait — indefinitely.
+The deadline is checked as each piece of the response arrives, so a fetch
+that stops making progress is abandoned rather than waited out.
+
+The wait is for the slowest fetch still running, not for their sum: up to 4
+run in parallel. The one thing the deadline does not cover is a server that
+dribbles its response *headers* before any of the image arrives; each read
+there still has to reach the 5-second socket timeout on its own. No ordinary
+server behaves that way, and nothing after the response line is affected.
 
 **What to do about it:** nothing needed — this is a bounded wait, not a
 hang, and closes correctly on its own. If it matters, wait until a page's
 images have finished loading (or failed) before closing.
 
-**Status:** by design, bounded. Widening the timeout would make ordinary
-slow connections worse; shortening it would fail real images on slow links
-more often. 5 seconds is the balance struck.
+**Status:** by design, bounded. Both numbers are a balance: a shorter socket
+timeout would fail real images on slow links, and a shorter total deadline
+would abandon large images on slow connections that were going to arrive.
+15 seconds is generous for any image inside the 8 MB cap and short enough to
+be an honest worst case to write down.
 
 ## A hostname can resolve differently for xedown's safety check than for the fetch that follows
 
@@ -522,11 +536,14 @@ will not fetch — measuring is the protection, and guessing would defeat it.
 PNG, JPEG, GIF, WebP and BMP are unaffected; those are the formats xedown
 can measure.
 
-An inline `data:` AVIF image is **not** affected by this: the equivalent
-gap already existed for `data:` images before this measurement was written,
-and closing it would take away something that has always worked rather than
-refusing something new — see [settings.md](settings.md#remote-images) on
-the pixel/side cap that inline images are still held to.
+An inline `data:` AVIF image is **not** affected by this, and is also the
+one thing the pixel cap does not cover: a `data:` payload xedown cannot
+measure is passed through as it always was, in either spelling (base64 or
+percent-encoded). The gap already existed for `data:` images before this
+measurement was written, and closing it would take away something that has
+always worked rather than refusing something new. Every inline payload
+xedown *can* measure — PNG, JPEG, GIF, WebP, BMP — is held to the cap; see
+[settings.md](settings.md#remote-images).
 
 **What to do about it:** link to the image with an ordinary Markdown link
 instead of embedding it, or convert it to one of the fetchable formats.

@@ -61,10 +61,22 @@ by a dedicated regression test in `tests/unit/`:
     (`imagelimits.py`) so the two paths cannot drift apart. This is what a
     byte cap on the download alone cannot prevent: a file a few kilobytes
     long can still declare dimensions that would cost hundreds of megabytes
-    to decode.
-11. **Nothing is written to disk.** The result cache — successes and
-    failures both — lives in memory only, and disappears when xed exits. A
-    disk cache would also be a durable record of which documents you opened.
+    to decode. An inline payload is measured in whichever form it is written
+    — base64 or percent-encoded — and a payload that *claims* one of the
+    measured formats and then cannot be read is refused rather than passed
+    on. **The residual:** an inline `data:` image in a format xedown cannot
+    measure at all (AVIF, SVG) is passed through unmeasured, deliberately —
+    refusing an inline image that has always rendered would be a worse
+    regression than the bug being fixed. A *remote* image in such a format
+    is refused instead, because refusing a fetch takes nothing away that
+    already worked. See
+    [docs/known-issues.md](docs/known-issues.md).
+11. **Nothing is written to disk by xedown.** The result cache — successes
+    and failures both — lives in memory only, and disappears when xed exits.
+    A disk cache would also be a durable record of which documents you
+    opened. What WebKit does internally with a response handed to it is
+    WebKit's own business; nothing here establishes that it keeps no copy of
+    its own.
 12. **A failed or hostile response can never break the preview.**
     `render_document` never raises; the worst any of this produces is a
     placeholder explaining what happened.
@@ -75,8 +87,10 @@ A few things are accepted deliberately rather than closed, each with its own
 reasoning: a blind DNS-rebinding race that yields at most a timing oracle,
 the reader's IP address being disclosed to whatever a permitted document
 references (the point of the feature, mitigated by asking first), a shutdown
-that can be delayed a few seconds by a fetch already in flight, and AVIF
-being unfetchable over the network. All of them are written up in
+that can be delayed by up to 15 seconds — one fetch's wall-clock deadline —
+by a fetch already in flight, an inline `data:` image in an unmeasurable
+format being passed through uncapped, and AVIF being unfetchable over the
+network. All of them are written up in
 [docs/known-issues.md](docs/known-issues.md), each with what was checked and
 why the residual is acceptable.
 

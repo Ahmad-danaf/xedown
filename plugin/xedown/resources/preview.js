@@ -194,15 +194,25 @@
      scheme entirely when it was not). What this handler cannot do is tell the
      reader WHY a fetch failed -- only Python knows that -- so the generic
      sentence here is replaced by setImageMessage once the host answers the
-     imageError we post below. The bare `https?://` check stays as a fallback
-     for the case a remote reference reaches the DOM some other way. */
-  function isRemoteSource(image, src) {
-    return (image && image.classList && image.classList.contains("xedown-remote")) ||
-      /^https?:\/\//i.test(src);
+     imageError we post below. */
+  function isFetchedRemoteImage(image) {
+    return !!(image && image.classList && image.classList.contains("xedown-remote"));
   }
 
   function brokenImageMessage(image, src) {
-    if (isRemoteSource(image, src)) { return "Remote image, not fetched: " + src; }
+    if (isFetchedRemoteImage(image)) {
+      /* This image WAS offered for fetching, so "not fetched" would be
+         wrong, and its `src` is xedown's own private scheme URI -- an
+         internal detail, not the address the document named, and nothing a
+         reader can act on. Kept deliberately short: the host replaces it
+         through setImageMessage with the real reason, and this is only what
+         shows in the moment before that answer arrives, or if it never
+         does. */
+      return "Remote image could not be loaded.";
+    }
+    /* A bare web address reaching the DOM some other way: here the src IS
+       the address the document named, and worth naming back. */
+    if (/^https?:\/\//i.test(src)) { return "Remote image, not fetched: " + src; }
     /* The renderer already replaced anything it could see was missing, so
        reaching here means the file was there at render time: it vanished
        since, or it is not a decodable image. Either way it could not be

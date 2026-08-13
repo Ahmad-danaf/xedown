@@ -183,12 +183,15 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   loaded, by anything, under any setting. Loading an image tells the site
   that hosts it your IP address, roughly where you are, and when you opened
   the document — see [SECURITY.md](SECURITY.md).
-- **Every image, inline or remote, is capped at 25 megapixels and 32768
-  pixels on a side before xedown will decode it.** A document with an image
-  larger than that showed it before this release; it now shows a placeholder
-  explaining why. There is no setting that raises or removes this cap — it
-  exists to stop a tiny file from claiming a decode that would exhaust
-  memory, not to be a preference. See [docs/settings.md](docs/settings.md).
+- **Every image xedown can measure, inline or remote, is capped at 25
+  megapixels and 32768 pixels on a side before xedown will decode it.** A
+  document with an image larger than that showed it before this release; it
+  now shows a placeholder explaining why. There is no setting that raises or
+  removes this cap — it exists to stop a tiny file from claiming a decode
+  that would exhaust memory, not to be a preference. An inline image in a
+  format whose size xedown cannot read (AVIF, SVG) is shown as before,
+  uncapped; the same format over the network is refused instead. See
+  [docs/settings.md](docs/settings.md).
 - **On a non-Latin keyboard layout** (Cyrillic, Greek, Arabic and others),
   <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>A</kbd> in the preview
   fall through to xed's own Copy and Select All, which act on the Markdown

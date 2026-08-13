@@ -135,14 +135,23 @@ fetched. `hidden` hides the message, not the reason for it.
 rewritten to the file. An explicit `image_fallback` already in the file
 always wins over it.
 
-**Every image is capped at 25 megapixels and 32768 pixels on a side before
-xedown will decode it, inline (`data:`) or remote alike, and no setting turns
-this off.** It is a stability guard, not a preference — a tiny file can claim
-dimensions that would exhaust memory on decode, and xedown reads the claimed
-size and refuses it before handing anything to WebKit. An oversized image
-shows a placeholder saying it is too large to display safely, in place of
-either a render that never finishes or one that pushes the WebProcess past
-a gigabyte of memory for a single picture.
+**Every image xedown can measure is capped at 25 megapixels and 32768 pixels
+on a side before it will decode it, inline (`data:`) or remote alike, and no
+setting turns this off.** It is a stability guard, not a preference — a tiny
+file can claim dimensions that would exhaust memory on decode, and xedown
+reads the claimed size and refuses it before handing anything to WebKit. An
+oversized image shows a placeholder saying it is too large to display safely,
+in place of either a render that never finishes or one that pushes the
+WebProcess past a gigabyte of memory for a single picture. Inline payloads
+are measured however they are written — base64 or percent-encoded.
+
+"Can measure" means PNG, JPEG, GIF, WebP and BMP, whose dimensions are
+readable from their header bytes. An inline image in a format xedown cannot
+read that way — AVIF, SVG — is shown as it always was, uncapped: refusing an
+inline image that has always rendered would be a worse regression than the
+bug the cap fixes. A *remote* image in such a format is refused instead,
+which takes away nothing that ever worked; see
+[known-issues.md](known-issues.md) on AVIF.
 
 `code_copy_buttons` shows a copy button in the corner of every code block.
 Set it to `false` to remove them.

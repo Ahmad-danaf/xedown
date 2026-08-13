@@ -99,7 +99,7 @@ ADDITIONS = {
     "mark.xedown-match-current",
     # v0.1 fetched nothing remote at all, so no v0.1 page ever contained the
     # `xedown-remote` class this combined selector requires -- fetching a
-    # `https://` image is new in v0.2. The keyframes and the reduced-motion
+    # `https://` image is new in v0.3. The keyframes and the reduced-motion
     # override belong to the same loading-skeleton feature.
     ".xedown-remote.xedown-loading",
     "@keyframes xedown-image-pulse 0%",

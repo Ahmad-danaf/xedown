@@ -70,8 +70,10 @@ def test_showcase_has_no_error_placeholder():
 
 def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
     # render_fragment does not pass fetch_remote, so it defaults to False:
-    # this is the reader-has-not-allowed-it wording, not "never fetched" --
-    # wiring the real per-document permission through is a later task's job.
+    # this is the reader-has-not-allowed-it wording, not "never fetched".
+    # The real per-document permission reaches the renderer through the
+    # controller, which this fixture-level test deliberately does not go
+    # through -- the default is what a document gets before anyone allows it.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
     assert "xedown-image-error" in body
     assert "Remote image, not loaded: https://example.com/not-fetched.png" in body
