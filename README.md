@@ -69,8 +69,16 @@ Markdown modes inside the same tab.
   whether or not it is marked executable.
 - Relative links and images resolve against the document's own directory,
   rather than guessing a path.
-- Remote images are never fetched. A visible placeholder is shown in their
-  place instead. Nothing xedown does ever reaches out to the network.
+- **Remote images, off by default.** A `https://` image behind a Markdown
+  reference is never fetched until you say so: blocked, it shows a visible
+  placeholder naming the address; the mode bar offers a **Load** button that
+  says how many a document has and fetches them for that tab only, or turn
+  fetching on for every document in *Preferences → Images and changes made
+  outside xed*. Fetching is the only thing xedown's code ever does over the
+  network, and it happens only for images, only over `https://`, and only
+  when you have allowed it — the preview page itself is never granted
+  network access of its own. See [SECURITY.md](SECURITY.md) and
+  [docs/settings.md](docs/settings.md).
 - Right-to-left documents: Arabic and Hebrew lay out as well as they read.
   Bullets, indentation, quote bars, table columns, footnote markers and the
   copy button all move to the correct side, while each paragraph, heading and
@@ -115,7 +123,7 @@ From a release archive — nothing else required:
 
 ```bash
 mkdir -p ~/.local/share/xed/plugins
-tar -xzf xedown-0.2.0.tar.gz -C ~/.local/share/xed/plugins
+tar -xzf xedown-0.3.0.tar.gz -C ~/.local/share/xed/plugins
 ```
 
 Or from a checkout:
@@ -165,10 +173,22 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   `"watch_external_changes": false`.
 - There is no scroll synchronisation between Preview and Markdown modes —
   each mode keeps its own independent scroll position.
-- **Remote images are never fetched.** A `https://` image shows a
-  placeholder naming the address. No setting changes this — the preview's
-  content security policy blocks the request whatever the settings say.
-  `remote_images` only chooses whether there is a placeholder, and how it looks.
+- **Remote images are blocked by default, and the preview page can never
+  fetch one itself.** A `https://` image shows a placeholder naming the
+  address until you load it — for that tab from the mode bar's chip, or for
+  every document from `remote_images` in Preferences. Whatever the settings
+  say, the preview's own content security policy never grants the page
+  `http:` or `https:`; only xedown's own fetch code reaches the network, and
+  only for images it has been allowed to load. `http://` images are never
+  loaded, by anything, under any setting. Loading an image tells the site
+  that hosts it your IP address, roughly where you are, and when you opened
+  the document — see [SECURITY.md](SECURITY.md).
+- **Every image, inline or remote, is capped at 25 megapixels and 32768
+  pixels on a side before xedown will decode it.** A document with an image
+  larger than that showed it before this release; it now shows a placeholder
+  explaining why. There is no setting that raises or removes this cap — it
+  exists to stop a tiny file from claiming a decode that would exhaust
+  memory, not to be a preference. See [docs/settings.md](docs/settings.md).
 - **On a non-Latin keyboard layout** (Cyrillic, Greek, Arabic and others),
   <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>A</kbd> in the preview
   fall through to xed's own Copy and Select All, which act on the Markdown

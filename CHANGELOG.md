@@ -6,6 +6,70 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.3.0] - 2026-08-13
+
+Remote images — blocked by default, offered per document, and available
+globally when you want them — plus a decode-size guard that closes a
+pre-existing hole in every inline image too.
+
+### Upgrading from 0.2.0
+
+Everything renders exactly as it did, with one exception: a document
+containing an enormous inline (`data:`) image — one whose declared size
+would cost hundreds of megabytes to decode — now shows a placeholder where
+it previously rendered. See *Fixed* below. Nothing else changes until you
+turn on `remote_images` or click a document's own **Load**.
+
+### Added
+
+- **Remote images, off by default.** A `https://` image in a document is
+  never fetched until you say so: blocked, it shows a placeholder naming the
+  address; the mode bar grows a chip — "N remote images **Load**" — that
+  says how many a document has and fetches them for that tab, for as long as
+  the tab stays open. Turn fetching on for every document instead with
+  `"remote_images": "https"` in *Preferences → Images and changes made
+  outside xed*, whose help text spells out what loading an image discloses:
+  your IP address, roughly where you are, and when you opened the document.
+  `http://` is never fetched, under any setting or button — there is no
+  escape hatch. See [README.md](README.md) and [SECURITY.md](SECURITY.md).
+- **xedown fetches, and nothing else does.** The preview page itself is
+  never granted `http:` or `https:` — its content security policy is
+  unchanged in that respect. Only xedown's own fetch code reaches the
+  network: only for images, only over https, only to destinations that
+  resolve to public addresses, and never with cookies, a `Referer`, or
+  credentials in the URL. Nothing fetched is ever written to disk.
+- Loading, broken, offline, refused and over-size states each get their own
+  wording, and an image shows a loading skeleton while its fetch is in
+  flight rather than an empty gap.
+- `remote_images` is renamed. It is now the fetch policy above —
+  `never`/`https`, defaulting to `never` — and the setting it used to be,
+  which decided how any image that could not be shown at all appeared
+  (`placeholder`/`alt`/`hidden`), is now `image_fallback`. A settings file
+  written before this rename still works: an old-style `remote_images`
+  value is read as `image_fallback` automatically, without rewriting the
+  file. See [docs/settings.md](docs/settings.md#remote-images).
+
+### Fixed
+
+- **Every image is now capped at 25 megapixels and 32768 pixels on a side
+  before xedown will decode it — inline (`data:`) images as well as the new
+  remote ones.** A document containing an enormous inline image rendered it
+  in full before this release, at a decode cost of up to hundreds of
+  megabytes of memory for a file only kilobytes long; it now shows a
+  placeholder saying the image is too large to display safely instead. No
+  setting raises or removes this cap.
+
+### Known issues
+
+- Closing xed can be delayed by up to 5 seconds by a remote image fetch
+  already in progress: a queued fetch is cancelled, a running one is not.
+- AVIF images cannot be loaded remotely; inline `data:` AVIF is unaffected.
+- A DNS-rebinding race against the destination check is a known, accepted
+  residual — blind, with no channel for a document to learn what it found.
+
+  See [docs/known-issues.md](docs/known-issues.md) for these and smaller
+  surprises, each with what to do about it.
+
 ## [0.2.0] - 2026-08-12
 
 Settings and a settings window, four preview themes, find in the preview, a

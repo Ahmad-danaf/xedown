@@ -454,3 +454,142 @@ file was written by its real name *or* through the link.
 to follow it. Failing that, use *File → Revert*, or switch to Markdown mode and
 accept xed's own **Reload** bar. Nothing is lost either way — this affects only
 whether a change is *noticed*, never the document's contents.
+
+## Closing xed can be delayed by up to 5 seconds by a remote image already loading
+
+**What you see:** you close xed, or disable the plugin, while a remote image
+is still being fetched. The window takes noticeably longer than usual to go
+away — up to 5 seconds, xedown's fetch timeout — rather than closing at
+once.
+
+**Why:** `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)`
+cancels only work still *queued*; a fetch already *running* keeps running to
+completion regardless, and Python's own `atexit` hook joins the worker
+threads before the interpreter exits, whatever `shutdown()` was asked to do.
+So the honest statement is narrower than "closing cancels pending fetches":
+queued fetches are cancelled, but a running one is not, and the wait is
+bounded by the 5-second timeout on a single fetch — not by how many are
+running at once, since up to 4 run in parallel and the wait is for the
+slowest of them, not their sum.
+
+**What to do about it:** nothing needed — this is a bounded wait, not a
+hang, and closes correctly on its own. If it matters, wait until a page's
+images have finished loading (or failed) before closing.
+
+**Status:** by design, bounded. Widening the timeout would make ordinary
+slow connections worse; shortening it would fail real images on slow links
+more often. 5 seconds is the balance struck.
+
+## A hostname can resolve differently for xedown's safety check than for the fetch that follows
+
+**What you see:** nothing directly — this is a residual in the destination
+check, not a bug that produces a wrong image or a visible failure.
+
+**Why:** xedown checks that an image's hostname resolves only to public
+addresses before fetching it — done on the *resolved* addresses, not the
+hostname text, which closes the obvious `127.0.0.1`-spelled-as-a-decimal
+tricks. But the check and the connection that follows are two separate DNS
+lookups. A hostname under an attacker's control can be made to answer the
+first lookup with a public address and the second, moments later, with a
+private one — a "DNS rebinding" race.
+
+The attack this opens is narrow and blind. Nothing about it reports the
+fetched bytes back to the document's author: the preview page cannot read
+the image data, cannot post it anywhere, and the content security policy
+(`default-src 'none'`) leaves no channel for it to try. The only thing a
+document could learn by exploiting this is whether *something* answered on
+a local address it guessed — a timing oracle for "is a local service
+running here", nothing more.
+
+**What to do about it:** nothing needed for ordinary use. Closing this
+fully would mean pinning the address validated by the check through the TLS
+connection itself, overriding `Host`/SNI — real work, for a residual whose
+worst case is a timing signal with no way to exfiltrate anything.
+
+**Status:** accepted residual, documented rather than closed.
+
+## AVIF images cannot be loaded remotely
+
+**What you see:** a document referencing a remote `.avif` image never loads
+it, even with remote images allowed globally or for that tab — it shows the
+same "could not be loaded" placeholder as any other failure.
+
+**Why:** before fetching an image, xedown reads its declared dimensions out
+of the file's own header bytes and refuses anything that would be too large
+to decode safely. AVIF's dimensions live inside an ISOBMFF `ispe` box that
+xedown does not parse, and an image whose size cannot be measured is one it
+will not fetch — measuring is the protection, and guessing would defeat it.
+PNG, JPEG, GIF, WebP and BMP are unaffected; those are the formats xedown
+can measure.
+
+An inline `data:` AVIF image is **not** affected by this: the equivalent
+gap already existed for `data:` images before this measurement was written,
+and closing it would take away something that has always worked rather than
+refusing something new — see [settings.md](settings.md#remote-images) on
+the pixel/side cap that inline images are still held to.
+
+**What to do about it:** link to the image with an ordinary Markdown link
+instead of embedding it, or convert it to one of the fetchable formats.
+
+**Status:** by design. Revisit only if a cheap, safe way to read AVIF
+dimensions from the header bytes alone becomes available.
+
+## `xed --standalone` fetches and caches remote images separately from your main xed session
+
+**What you see:** a second `xed --standalone` process behaves like its own
+independent xedown: it fetches an image again even if your main xed session
+already has it cached, and a fetch failure in one is not remembered by the
+other.
+
+**Why:** the image scheme handler and its fetch cache are registered once
+per process, against that process's own `WebKit2.WebContext`. `xed
+--standalone` starts a second process with its own `WebContext`, so it gets
+its own registration and its own in-memory cache — the same reason it
+already has its own settings store; see
+[settings.md](settings.md#limitations).
+
+**What to do about it:** nothing needed. Neither process's cache is written
+to disk, so there is nothing to reconcile, and closing either one loses only
+that process's own cache.
+
+**Status:** by design.
+
+## A per-tab Load grant outlives the global setting being turned back off
+
+**What you see:** you click **Load** on a tab, allowing that document's
+remote images. Later you set `remote_images` back to `never` in
+Preferences — and that tab keeps loading its images anyway. Preferences can
+correctly read `never` while a tab right in front of you is actively
+fetching.
+
+**Why:** this is intended, not a bug. The mode bar's **Load** button grants
+permission to one tab, for as long as that tab stays open — it does not
+touch the `remote_images` setting at all, in either direction. Turning the
+global setting off stops it applying to documents that have not been
+granted their own permission; it was never meant to revoke a permission a
+reader already gave to one specific tab.
+
+**What to do about it:** close and reopen the tab (or reload from disk) to
+drop its own grant. There is no button that revokes a single tab's Load
+without closing it.
+
+**Status:** by design.
+
+## The remote-images chip and Load button stay visible in Markdown mode
+
+**What you see:** a document with blocked remote images shows the "N remote
+images [Load]" chip in the mode bar even while you are looking at the
+Markdown source, not only in Preview. Clicking **Load** there does not make
+images appear immediately — nothing is rendered in Markdown mode until you
+switch back.
+
+**Why:** the mode bar is shared by both modes, and the chip's own visibility
+does not depend on which one is showing. Clicking **Load** while in Markdown
+mode still grants the tab's permission and marks the preview stale; the
+render that actually fetches the images happens on the next switch to
+Preview, the same as any other change made while Markdown is showing.
+
+**What to do about it:** nothing needed — switch to Preview to see the
+result, exactly as you would for any other pending edit.
+
+**Status:** by design.

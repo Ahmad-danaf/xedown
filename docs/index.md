@@ -9,6 +9,9 @@
   scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
   says, in an isolated display)
 - Known issues — [known-issues.md](known-issues.md)
+- Security — [../SECURITY.md](../SECURITY.md), the network boundary around
+  remote images and the properties that are enforced and tested, not merely
+  intended
 - Screen-reader evidence — [orca-verification/](orca-verification/), the raw
   measurements behind every claim in the README's *Accessibility* section
 - Test fixtures — [../tests/fixtures/README.md](../tests/fixtures/README.md), the

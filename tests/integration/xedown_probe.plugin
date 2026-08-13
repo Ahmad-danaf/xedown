@@ -6,4 +6,4 @@ Name=XedownProbe
 Description=Integration test driver for xedown. Not for general use.
 Authors=xedown
 Copyright=xedown
-Version=0.2.0
+Version=0.3.0

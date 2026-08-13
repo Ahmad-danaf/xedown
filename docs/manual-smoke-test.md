@@ -115,7 +115,7 @@ explained inline below.
 | 14 | Click the relative link to `linked.md` in `tests/fixtures/showcase.md` | Opens in a new xed tab |
 | 15 | Click the anchor link in `tests/fixtures/showcase.md` | Scrolls within the preview |
 | 16 | In `tests/fixtures/edge-cases.md`, reference a missing image | Inline placeholder naming the path; no blank space |
-| 17 | In `tests/fixtures/edge-cases.md`, reference a remote image | Placeholder; nothing is fetched from the network (check with a network monitor if in doubt) |
+| 17 | In `tests/fixtures/edge-cases.md`, reference a remote image, with `remote_images` left at its default `never` | A placeholder names the address and says the image was not loaded. Nothing is fetched — blocked is the default until you click **Load** or turn `remote_images` on; see rows 124–130 for what fetching actually looks like |
 | 18 | Open several Markdown files in tabs and click between them | Each keeps its own mode and scroll position, with no visible redraw glitches |
 | 19 | Switch the desktop between light and dark | Preview follows without a restart |
 | 20 | Set `"preview_theme": "focused"` in `~/.config/xedown/settings.json`, restart xed, open `tests/fixtures/showcase.md` | Calm, low-contrast surfaces; no rules under headings; tables with horizontal rules only |
@@ -143,8 +143,8 @@ explained inline below.
 | 42 | Open `tests/fixtures/showcase.md` and look at the task list, in each theme, light and dark | Checked and unchecked boxes are obviously different and obviously part of the theme. Clicking one does nothing and does not look broken |
 | 43 | Scroll the wide table in `tests/fixtures/showcase.md` sideways | A shadow marks the side with more content and swaps as you reach each end |
 | 44 | Look at the tall and small images in `tests/fixtures/showcase.md` | The tall one fits the window without distortion; the small one is its own size, not stretched |
-| 45 | Set `"remote_images": "alt"`, then `"hidden"`, with `tests/fixtures/edge-cases.md` open | Alt text alone, then nothing at all. Both apply immediately. A network monitor shows no request in any mode |
-| 46 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem`, `text_size_px`, `remote_images` and `code_copy_buttons` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
+| 45 | Set `"image_fallback": "alt"`, then `"hidden"`, with `tests/fixtures/edge-cases.md` open | Alt text alone, then nothing at all, for every image that cannot be shown — missing, remote-and-blocked, or otherwise. Both apply immediately. This is presentation only: it changes what you see, not whether anything is fetched — `remote_images` (still `never` here) is what decides that |
+| 46 | Clean up: remove `preview_theme`, `custom_stylesheet`, `content_width_rem`, `text_size_px`, `image_fallback` and `code_copy_buttons` from `~/.config/xedown/settings.json` (or set them back to their defaults), and delete `~/.config/xedown/mine.css` if it is still there | Your normal settings are restored — `"nonsense"` from row 24 is not left in the file for your next real xed session |
 | 47 | Open `tests/fixtures/rtl.md`, in each of the four themes, light and dark | Bullets, numbers and their indentation on the right; the nested list indented from the right; the quote bar on the right; the table's first column on the right; the footnote marker and its back-reference on the right, with the arrow pointing right |
 | 48 | In the same file, hover a code block | The copy button is at the **top-left** of the block, and the code inside it still reads left to right with every line starting at the left edge |
 | 49 | Scroll the wide table in `tests/fixtures/rtl.md` sideways | A shadow marks the side with more content, starting on the **left** edge — the table's first column is on the right — and swaps to the right edge as you reach it |
@@ -220,13 +220,30 @@ explained inline below.
 | 119 | Copy an image beside a Markdown document of your own, reference it, then `chmod 000` the image and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | A placeholder says the image could not be read, naming it, with your alt text alongside — not "not found", and not a blank space |
 | 120 | Add `![diagram](http://[::1/a.png)` — a malformed address — to that document and refresh | A placeholder says the reference could not be resolved. Nothing is fetched, and the rest of the document renders normally |
 | 121 | In the same document, write a paragraph and start a `-` list on the very next line, with no blank line between them | It renders as a list under the paragraph, the way GitHub renders it — not as one run-on paragraph |
-| 122 | *Preferences → Plugins*, select **Xedown** | The version reads **0.2.0** |
+| 122 | *Preferences → Plugins*, select **Xedown** | The version reads **0.3.0** |
 | 123 | Clean up: **Restore defaults…** in the settings window, `chmod 644` the image from row 119, and delete the scratch document and image rows 119–121 used | Your settings are back to defaults and nothing from these rows is left behind |
+| 124 | Create a new Markdown document referencing a real `https://` image you can reach (any image URL from a GitHub README works), save it, and open it in Preview, with `remote_images` left at its default `never` | A placeholder names the address and says the image was not loaded, and the mode bar shows a chip reading `1 remote image` next to a **Load** button |
+| 125 | Click **Load** | The placeholder is replaced by a loading skeleton, then by the real image once it arrives; the chip and **Load** button disappear once nothing is left blocked |
+| 126 | Add `![insecure](http://example.com/x.png)` to the same document and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | A placeholder says the address is not encrypted (`http://`) and names it. It is never loaded, whether or not you have already clicked **Load**, and it does not add to the chip's count |
+| 127 | Open `tests/fixtures/edge-cases.md` again and click its chip's **Load** | The generic "not loaded" wording on its remote image is replaced by the real reason xedown got back attempting `https://example.com/not-fetched.png` — a fetch is actually made this time, not merely refused |
+| 128 | Back in the document from row 124, disconnect from the network (turn off Wi-Fi, or unplug the cable) and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> | A placeholder says you appear to be offline and to refresh once you are back online — immediately, not after a multi-second wait |
+| 129 | Reconnect to the network and press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> again | The image loads normally now that the connection is back |
+| 130 | Add `![huge](data:image/png;base64,iVBORw0KGgoAAAAASUhEUgAAdTAAAHUw)` — a 24-byte PNG header declaring 30000×30000 pixels — to any document and view it in Preview | `Image is too large to display safely (30000×30000 pixels) — "huge"`: a placeholder, not an attempted decode. This applies to every image, inline or remote, and no setting turns it off |
+| 131 | Clean up: delete the scratch document(s) rows 124–130 used | Nothing from these rows is left behind |
 
 Rows 116–123 use a scratch document of your own rather than a fixture: rows 119
 and 120 deliberately break an image reference, and `tests/fixtures/` documents
 are either clean by contract or broken in specific documented ways (see
 `tests/fixtures/README.md`). Row 123 undoes everything they change.
+
+Rows 124–130 need a real network connection (and, for row 128, the ability to
+disconnect it) — the one part of this checklist that reaches past your own
+machine. `example.com` in row 126 does not need to resolve to anything real:
+an insecure image is refused before xedown would ever connect to it. Row 127
+reuses `tests/fixtures/edge-cases.md`'s own remote reference rather than a
+scratch document — its address is expected to fail once actually fetched, so
+what row 127 checks is that the placeholder's wording changes to say why,
+not that the image appears.
 
 Row 107 is the one claim no automated check covers: the probe walks the ATK
 tree without a bridge, and the plugin-manager button in row 102 is the hop the

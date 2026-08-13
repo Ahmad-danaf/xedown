@@ -4,11 +4,14 @@ xedown stores its settings as JSON in `~/.config/xedown/settings.json`
 (or `$XDG_CONFIG_HOME/xedown/settings.json` when that is set).
 
 Every value here is read as of v0.2: `preview_theme`, `custom_stylesheet`,
-`content_width_rem`, `text_size_px`, `remote_images`, `code_copy_buttons` and
-`text_direction` — see [themes.md](themes.md); `default_mode`,
-`remember_mode_per_file`, `auto_refresh` and `refresh_delay_ms` — see
+`content_width_rem`, `text_size_px`, `code_copy_buttons` and `text_direction`
+— see [themes.md](themes.md); `default_mode`, `remember_mode_per_file`,
+`auto_refresh` and `refresh_delay_ms` — see
 [Modes and refreshing](#modes-and-refreshing) below; `watch_external_changes` —
-see [Changes made outside xed](#changes-made-outside-xed).
+see [Changes made outside xed](#changes-made-outside-xed). As of v0.3,
+`remote_images` is the fetch policy for images from the web, and
+`image_fallback` is the display setting `remote_images` used to be — see
+[Remote images](#remote-images) below.
 
 The file holds only the settings you have actually changed, so a fresh install
 has no file at all. Anything absent uses its default.
@@ -36,7 +39,8 @@ watches it while xed is running.
 | `text_size_px` | 11 to 28 | `16` |
 | `auto_refresh` | `true`, `false` | `true` |
 | `refresh_delay_ms` | 50 to 2000 | `250` |
-| `remote_images` | `placeholder`, `alt`, `hidden` | `placeholder` |
+| `remote_images` | `never`, `https` | `never` |
+| `image_fallback` | `placeholder`, `alt`, `hidden` | `placeholder` |
 | `code_copy_buttons` | `true`, `false` | `true` |
 | `text_direction` | `auto`, `ltr`, `rtl` | `auto` |
 | `watch_external_changes` | `true`, `false` | `true` |
@@ -52,9 +56,11 @@ change it; a number or the stylesheet path applies a moment after you stop
 typing, or straight away if you press Enter, move to another field, or pick a
 file. Nothing is written just by opening the window.
 
-**Restore defaults** puts all twelve settings back, after asking. That is
-exactly xedown 0.1.0's behaviour. Your custom stylesheet is forgotten — the
-file itself is not touched.
+**Restore defaults** puts all thirteen settings back, after asking. That
+returns everything to xedown 0.1.0's behaviour except `remote_images`, whose
+fetch-policy meaning is new in v0.3 and has no earlier behaviour to return
+to — it goes back to `never`, already its default. Your custom stylesheet is
+forgotten — the file itself is not touched.
 
 The window also tells you about two things you would otherwise only find on
 standard error: a settings file that could not be saved, and one that was
@@ -82,8 +88,36 @@ Both are read as of v0.2 — see [Modes and refreshing](#modes-and-refreshing)
 and [Changes made outside xed](#changes-made-outside-xed) below. Set either of
 them to `false` here to opt out.
 
-`remote_images` decides how **any** image that cannot be displayed appears —
-not only a remote one. Its name is older than its job:
+### Remote images
+
+`remote_images` decides whether xedown's own code may fetch a `https://`
+image over the network at all: `never` (the default) or `https`. This is the
+one setting that reaches outside your machine, so its help text in the
+settings window says plainly what that means — loading an image tells the
+site that hosts it your IP address, roughly where you are, and when you
+opened the document. `http://` is never fetched, under this setting or
+anything else; there is no value that permits it.
+
+Turning this on applies to every document you open. The mode bar's own
+**Load** button grants the same permission to one tab at a time without
+touching this setting, for as long as that tab stays open — including after
+you turn this setting back to `never`, and independently of whatever other
+tabs are doing. See the *Remote images* row in
+[the README's feature list](../README.md#features) for what the mode bar
+shows.
+
+**Whatever this is set to, the preview page itself is never granted network
+access of its own.** `img-src` never lists `http:` or `https:`; only
+xedown's own fetch code reaches the network, and only for an image this
+setting or the mode bar's Load button has actually permitted — the content
+security policy enforces that rather than trusting either one. See
+[../SECURITY.md](../SECURITY.md).
+
+`image_fallback` decides how **any** image that cannot be shown appears — a
+missing file and an unreadable one look exactly the same as a blocked or
+failed remote one. Its name is older than its job: it used to be called
+`remote_images`, from before a remote image could be the only thing that
+needed a fallback.
 
 | Value | What you see |
 | --- | --- |
@@ -91,10 +125,24 @@ not only a remote one. Its name is older than its job:
 | `alt` | your alt text alone, when there is any |
 | `hidden` | nothing at all |
 
-All three are about presentation. **None of them fetches anything**, and
-there is no value that would: xedown does not reach the network, and the
-preview's content security policy enforces that rather than trusting the
-setting. `hidden` hides the message, not the reason for it.
+All three are purely about presentation, decided after xedown has already
+worked out whether an image loads; none of them changes whether one is
+fetched. `hidden` hides the message, not the reason for it.
+
+**A settings file written before this rename still works.** An old-style
+`remote_images` — `"placeholder"`, `"alt"` or `"hidden"` — is read as
+`image_fallback` instead, in memory, the moment xedown starts; it is never
+rewritten to the file. An explicit `image_fallback` already in the file
+always wins over it.
+
+**Every image is capped at 25 megapixels and 32768 pixels on a side before
+xedown will decode it, inline (`data:`) or remote alike, and no setting turns
+this off.** It is a stability guard, not a preference — a tiny file can claim
+dimensions that would exhaust memory on decode, and xedown reads the claimed
+size and refuses it before handing anything to WebKit. An oversized image
+shows a placeholder saying it is too large to display safely, in place of
+either a render that never finishes or one that pushes the WebProcess past
+a gigabyte of memory for a single picture.
 
 `code_copy_buttons` shows a copy button in the corner of every code block.
 Set it to `false` to remove them.
