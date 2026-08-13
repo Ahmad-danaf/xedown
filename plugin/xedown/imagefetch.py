@@ -184,9 +184,15 @@ def fetch_once(url, opener, resolver=None, proxies=None):
         except Exception as exc:  # noqa: BLE001 - a malformed response must not raise
             return _refuse(NETWORK, str(exc))
         finally:
+            # A `finally` that raises replaces whatever the `try`/`except` was
+            # about to return -- so closing must never be allowed to override
+            # the outcome, on a success path or a failure path alike.
             closer = getattr(response, "close", None)
             if closer is not None:
-                closer()
+                try:
+                    closer()
+                except Exception:  # noqa: BLE001, S110 - must not override the outcome
+                    pass
 
     return _refuse(REDIRECT_REFUSED, "it redirected too many times")
 

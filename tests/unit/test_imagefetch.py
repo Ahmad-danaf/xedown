@@ -106,6 +106,18 @@ class StubOpener:
         return answer
 
 
+class RaisingCloseResponse(StubResponse):
+    """A response whose `close()` misbehaves, like a socket in a bad state.
+
+    `http.client.HTTPResponse.close()` can raise `OSError`/`ConnectionResetError`
+    /`ssl.SSLError` on a connection that is already broken -- this stands in for
+    that, on top of otherwise-ordinary status/body behaviour.
+    """
+
+    def close(self):
+        raise RuntimeError("close boom")
+
+
 PNG_1X1 = (
     b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
     b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00"
@@ -285,3 +297,30 @@ def test_the_timeout_passed_to_the_opener_is_the_configured_one():
     opener = StubOpener(StubResponse(body=PNG_1X1))
     fetch("https://e.com/a.png", opener)
     assert opener.calls[0]["timeout"] == remoteimages.TIMEOUT_S
+
+
+# A `finally` that raises replaces whatever the `try`/`except` was about to
+# return, so a misbehaving `close()` must never be allowed to escape
+# `fetch_once` -- on a success path, a clean-error path, or a malformed-
+# response path alike. Each assertion below is "the right result still came
+# back", not merely "nothing raised".
+
+
+def test_a_close_that_raises_does_not_lose_a_successful_result():
+    opener = StubOpener(RaisingCloseResponse(body=PNG_1X1))
+    result = fetch("https://e.com/a.png", opener)
+    assert result.ok and result.mime == "image/png"
+
+
+def test_a_close_that_raises_does_not_lose_an_http_error():
+    opener = StubOpener(RaisingCloseResponse(status=404))
+    result = fetch("https://e.com/a.png", opener)
+    assert result.error == imagefetch.HTTP_ERROR
+    assert "404" in result.detail
+
+
+def test_a_close_that_raises_does_not_lose_a_malformed_response_error():
+    opener = StubOpener(RaisingCloseResponse(status="not-an-int"))
+    result = fetch("https://e.com/a.png", opener)
+    assert result.error == imagefetch.NETWORK
+    assert result.data is None
