@@ -92,7 +92,14 @@ _ALLOWED_ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
 # nothing said not to. Ten digits comfortably covers any real list (it
 # exceeds a signed 32-bit int) while excluding runs no document could
 # have a legitimate reason to write.
-_START_RE = re.compile(r"-?\d+")
+#
+# `[0-9]` rather than `\d`: Python's `\d` is Unicode-aware and matches any
+# Unicode decimal digit -- Arabic-Indic (٧), fullwidth (１), and others --
+# not just ASCII 0-9. This project's own test corpus includes Arabic and
+# Hebrew READMEs, so that is not a hypothetical input here. An explicit
+# ASCII range says what it means at the point of use, unlike a
+# module-level `re.ASCII` flag that a later edit could lose.
+_START_RE = re.compile(r"-?[0-9]+")
 _MAX_START_DIGITS = 10
 
 ALLOWED_ATTRIBUTES = {

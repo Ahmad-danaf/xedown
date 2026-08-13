@@ -400,6 +400,17 @@ def test_ol_start_is_not_allowed_on_a_ul():
     assert "start" not in sanitizer.sanitize('<ul start="7"><li>x</li></ul>')
 
 
+def test_ol_start_rejects_non_ascii_digits():
+    # Python's `\d` is Unicode-aware; `[0-9]` is not. An Arabic-Indic,
+    # fullwidth, or mixed-script digit run must not reach the page just
+    # because it satisfies `\d` -- this project's own test corpus has
+    # Arabic and Hebrew READMEs, so this is not a hypothetical input.
+    for value in ("٧", "１７", "1٧"):
+        assert "start" not in sanitizer.sanitize(f'<ol start="{value}"><li>x</li></ol>')
+    assert 'start="7"' in sanitizer.sanitize('<ol start="7"><li>x</li></ol>')
+    assert 'start="-5"' in sanitizer.sanitize('<ol start="-5"><li>x</li></ol>')
+
+
 def test_bdi_survives_and_keeps_its_text():
     result = sanitize("<p>افتح <bdi>/usr/local/share</bdi> ثم تابع.</p>")
     assert "<bdi>" in result and "</bdi>" in result
