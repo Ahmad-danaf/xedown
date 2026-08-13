@@ -25,7 +25,8 @@ never fetched under any setting or button; there is no escape hatch.
 
 ## What the image fetcher guarantees
 
-Each of these is enforced in code and pinned by a test, not merely intended:
+Each of these is enforced in code, not merely intended, and most are pinned
+by a dedicated regression test in `tests/unit/`:
 
 1. **The page cannot reach the network.** `default-src 'none'` is unchanged
    and `img-src` never lists `http:` or `https:`.
@@ -48,9 +49,9 @@ Each of these is enforced in code and pinned by a test, not merely intended:
    that hides a private address.
 7. **No credentials are ever sent.** A URL carrying `user:pass@` is refused
    outright, on the original URL and on every redirect hop.
-8. **No cookies and no `Referer` ever leave this machine.** The only headers
-   xedown sends are the ones it sets itself, including a fixed `User-Agent`
-   naming xedown and its version.
+8. **No cookies, no `Referer` and no `Authorization` ever leave this
+   machine.** The only header xedown adds is a fixed `User-Agent` naming the
+   project and where to find it.
 9. **No SVG and no format xedown cannot measure is ever fetched.** A format
    whose dimensions cannot be read cheaply and safely is refused rather than
    guessed at — this is also why AVIF cannot be fetched remotely; see

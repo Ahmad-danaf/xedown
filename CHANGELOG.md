@@ -24,7 +24,7 @@ turn on `remote_images` or click a document's own **Load**.
 
 - **Remote images, off by default.** A `https://` image in a document is
   never fetched until you say so: blocked, it shows a placeholder naming the
-  address; the mode bar grows a chip — "N remote images **Load**" — that
+  address; the mode bar grows a chip — "N remote images [Load]" — that
   says how many a document has and fetches them for that tab, for as long as
   the tab stays open. Turn fetching on for every document instead with
   `"remote_images": "https"` in *Preferences → Images and changes made
