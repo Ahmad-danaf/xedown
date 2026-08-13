@@ -2,7 +2,7 @@ import pathlib
 
 import pytest
 from xedown import vendoring
-from xedown.mdext import find_list_interrupt, make_extensions
+from xedown.mdext import fence_lang, find_list_interrupt, make_extensions
 
 
 @pytest.fixture
@@ -72,6 +72,119 @@ def test_tables_and_fenced_code_still_work_alongside(convert):
     html = convert("| a |\n|---|\n| 1 |\n\n```python\nx=1\n```")
     assert "<table>" in html
     assert 'class="language-python"' in html
+
+
+# --- Fenced code: info string and indentation (task 13 / F2, F3) ---
+#
+# The vendored `FENCED_BLOCK_RE` (fenced_code.py:56-67) is `^`-anchored,
+# with no leading-whitespace tolerance, and its info-string branch is a
+# single *bare word* (`[\w#.+-]*`). A comma, a space or a brace anywhere in
+# the info string makes the whole opening-fence match fail -- the fence
+# never opens, the text becomes an ordinary paragraph, and the *closing*
+# fence is left unmatched to open one of its own for whatever follows it
+# (F2). An indented fence (1-3 spaces) is invisible to the same anchor,
+# for an unrelated reason (F3). Both are widened from `mdext.py`, not the
+# vendored copy.
+
+
+def test_a_comma_in_the_info_string_still_opens_a_fence(convert):
+    html = convert("```rust,no_run\nfn main() {}\n```\n")
+    assert '<pre><code class="language-rust">' in html
+    assert "no_run" not in html
+
+
+def test_a_quoted_attribute_in_the_info_string_still_opens_a_fence(convert):
+    html = convert('```js title="x"\ncode\n```\n')
+    assert '<pre><code class="language-js">' in html
+    assert "title" not in html
+
+
+def test_a_plus_sign_in_the_lang_still_works(convert):
+    # Already a bare word under the vendored regex -- pinned so the
+    # widened one does not regress it.
+    html = convert("```c++\nint main(){}\n```\n")
+    assert 'class="language-c++"' in html
+
+
+def test_a_hyphenated_lang_still_works(convert):
+    html = convert("```shell-session\n$ ls\n```\n")
+    assert 'class="language-shell-session"' in html
+
+
+def test_a_bare_fence_with_no_info_string_has_no_language_class(convert):
+    html = convert("```\nplain text\n```\n")
+    assert "<pre><code>plain text" in html
+    assert "language-" not in html
+
+
+def test_a_tilde_fence_still_works(convert):
+    html = convert("~~~python\nx = 1\n~~~\n")
+    assert '<pre><code class="language-python">x = 1' in html
+
+
+@pytest.mark.parametrize("spaces", [1, 2, 3])
+def test_a_fence_indented_one_to_three_spaces_is_recognised(convert, spaces):
+    html = convert(f"{' ' * spaces}```sh\necho hi\n```\n")
+    assert '<pre><code class="language-sh">echo hi' in html
+    # The indentation shared with the fence marker does not leak into the
+    # code content.
+    assert "  echo hi" not in html
+
+
+def test_a_fence_indented_two_spaces_inside_a_list_item_is_recognised(convert):
+    # Whether this nests inside the <li> is F5's concern (a separate,
+    # later task on list-continuation indentation) -- this only pins that
+    # the fence itself is no longer degraded to inline `<code>` with its
+    # language marker left as visible text, which is what F3 is about.
+    html = convert("- item\n\n  ```sh\n  echo hi\n  ```\n")
+    assert '<pre><code class="language-sh">echo hi' in html
+    assert "<li>item</li>" in html
+
+
+def test_a_fence_indented_four_spaces_stays_indented_code(convert):
+    # Four spaces is indented code, not a fence -- CommonMark's own cutoff,
+    # and the one the vendored list processors already use. The fence
+    # markers must stay literal text, not become `<pre><code
+    # class="language-sh">`.
+    html = convert("    ```sh\n    echo hi\n    ```\n")
+    assert 'class="language-sh"' not in html
+    assert "```sh" in html
+
+
+def test_the_desynchronisation_regression_from_f2(convert):
+    # The exact input from the findings report's F2. Before this fix, the
+    # unmatched closing fence acted as an *opening* fence for the rest of
+    # the document -- in tokio.md this put 6224 of 9950 rendered body
+    # characters inside <pre>, against cmark's 1252. This is the test that
+    # would catch that 62% catastrophe returning.
+    html = convert("```rust,no_run\nfn main() {}\n```\n\nAfter.\n")
+    assert "<p>After.</p>" in html
+    pre_end = html.index("</pre>")
+    after_index = html.index("After.")
+    assert (
+        after_index > pre_end
+    ), "the paragraph after the fence must not be inside <pre>"
+
+
+# --- `fence_lang` itself (task 13 / F2) ---
+
+
+def test_fence_lang_takes_the_first_comma_delimited_token():
+    assert fence_lang("rust,no_run") == "rust"
+
+
+def test_fence_lang_takes_the_first_space_delimited_token():
+    assert fence_lang('js title="x"') == "js"
+
+
+def test_fence_lang_returns_the_whole_bare_word():
+    assert fence_lang("shell-session") == "shell-session"
+
+
+def test_fence_lang_returns_none_for_an_empty_info_string():
+    assert fence_lang("") is None
+    assert fence_lang(None) is None
+    assert fence_lang("   ") is None
 
 
 # --- Heading hash edge cases (task 12 / F9, F10) ---

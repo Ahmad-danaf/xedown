@@ -1,7 +1,8 @@
 """xedown's own Markdown extensions: task lists, strikethrough, lists that
-interrupt a paragraph, and a couple of CommonMark-conformance overrides
+interrupt a paragraph, and a handful of CommonMark-conformance overrides
 (heading hashes need a following space; ordered-list markers may end in
-`)` as well as `.`).
+`)` as well as `.`; fenced code accepts an indented fence and a real info
+string instead of only a bare word).
 
 Built by a factory rather than at import time, because these subclass types from
 the vendored Markdown module, which only exists on sys.path once `vendoring` has
@@ -57,16 +58,92 @@ def find_list_interrupt(block):
     return None
 
 
+# The language class for a fenced code block is the first whitespace- or
+# comma-delimited token of its info string (task 13 / F2). "```rust,no_run"
+# and "```js title=\"x\"" are ordinary doc-tool info strings -- GFM defines
+# only the first word as the language name, and the vendored
+# `FENCED_BLOCK_RE` (fenced_code.py:58) narrows that further, to a single
+# *bare* word: a comma, a space or a brace anywhere in the info string makes
+# the *whole opening-fence match* fail, so the fence never opens at all. The
+# closing fence is then left unmatched, and goes on to open one of its own
+# for whatever follows -- the desynchronisation this task exists to stop.
+_FENCE_LANG_TOKEN = re.compile(r"[^\s,]+")
+
+
+def fence_lang(info):
+    """The language class for a fence's info string, or None.
+
+    The remainder of the info string (`no_run`, `title="x"`) is free text a
+    doc tool reads for its own purposes; xedown does not understand it and
+    discards it rather than emitting it.
+    """
+    if not info:
+        return None
+    match = _FENCE_LANG_TOKEN.match(info.strip())
+    return match.group(0) if match else None
+
+
+def _dedent_fence_body(code, width):
+    """Strip up to `width` leading spaces from each line of a fence body.
+
+    CommonMark strips the opening fence's own indentation (0-3 spaces, task
+    13 / F3) from every content line, capped per line at however much
+    leading whitespace that particular line actually has -- a shorter line
+    never goes negative.
+    """
+    if not width:
+        return code
+    stripped = []
+    for line in code.split("\n"):
+        cut = 0
+        while cut < width and cut < len(line) and line[cut] == " ":
+            cut += 1
+        stripped.append(line[cut:])
+    return "\n".join(stripped)
+
+
+# Same shape as the vendored `FencedBlockPreprocessor.FENCED_BLOCK_RE`
+# (fenced_code.py:56-67), widened in exactly two ways:
+#
+#  - `(?P<indent>[ ]{0,3})` in front of the fence -- CommonMark tolerates up
+#    to three leading spaces on both the opening and the closing fence, the
+#    same tolerance the vendored list processors already use elsewhere in
+#    this file (task 13 / F3). Four or more stays indented code: at four
+#    spaces, `[ ]{0,3}` can consume at most three, which always leaves at
+#    least one space directly in front of the fence characters, so the
+#    match fails there regardless of how the group backtracks.
+#  - `(?P<info>[^\n]*)` in place of `(\.?(?P<lang>[\w#.+-]*)[ ]*)?` -- any
+#    text is now a valid info string, not just a bare word. `fence_lang`
+#    above pulls the language out of it afterwards.
+#
+# The vendored `{attrs}` and bare `hl_lines="..."` branches are dropped
+# rather than carried forward: nothing in the fixtures or the audit corpus
+# uses either, and the info-string rule above already says what happens to
+# text after the language -- it is read, not re-parsed.
+_FENCED_BLOCK_RE = re.compile(
+    r"""
+    ^(?P<indent>[ ]{0,3})(?P<fence>~{3,}|`{3,})[ ]*  # opening fence
+    (?P<info>[^\n]*)\n                                # info string, to end of line
+    (?P<code>.*?)(?<=\n)                              # the code block
+    [ ]{0,3}(?P=fence)[ ]*$                           # closing fence
+    """,
+    re.MULTILINE | re.DOTALL | re.VERBOSE,
+)
+
+
 def make_extensions(markdown_module):
     """Return xedown's extension instances, bound to `markdown_module`."""
     Extension = markdown_module.extensions.Extension
     Treeprocessor = markdown_module.treeprocessors.Treeprocessor
     BlockProcessor = markdown_module.blockprocessors.BlockProcessor
+    Preprocessor = markdown_module.preprocessors.Preprocessor
     SimpleTagInlineProcessor = markdown_module.inlinepatterns.SimpleTagInlineProcessor
     SubstituteTagInlineProcessor = (
         markdown_module.inlinepatterns.SubstituteTagInlineProcessor
     )
     HashHeaderProcessor = markdown_module.blockprocessors.HashHeaderProcessor
+    code_escape = markdown_module.util.code_escape
+    escape_attrib_html = markdown_module.serializers._escape_attrib_html
     # `markdown_module.extensions.sane_lists` is not yet an attribute of the
     # `extensions` package at this point -- nothing has imported that
     # submodule yet, since `make_extensions` runs *before* the `Markdown()`
@@ -219,6 +296,55 @@ def make_extensions(markdown_module):
                 ParenOListProcessor(md.parser), "olist", 40
             )
 
+    class FencedCodePreprocessor(Preprocessor):
+        """Recognise the fences `_FENCED_BLOCK_RE` widens the vendored
+        preprocessor to accept (task 13 / F2, F3).
+
+        Registered under the same name and priority as the vendored
+        `FencedBlockPreprocessor` ("fenced_code_block", 25), so
+        `Registry.register` swaps it in place rather than adding a second
+        preprocessor. This is a fresh `Preprocessor`, not a subclass of the
+        vendored one: introspecting the assembled `Markdown()` pipeline
+        (`md.preprocessors` and `md.registeredExtensions`) shows nothing
+        narrows or wraps `FencedBlockPreprocessor` the way `sane_lists`
+        narrows `OListProcessor` -- `md.preprocessors` holds it under this
+        name and no other, `CodeHiliteExtension` is never loaded (not in
+        `vendoring.MARKDOWN_EXTENSIONS`), and `AttrListExtension`, though
+        loaded, only ever flips a boolean the vendored `run` reads back on
+        itself. There is nothing installed on the vendored class for a
+        subclass to lose by not inheriting from it.
+        """
+
+        def run(self, lines):
+            text = "\n".join(lines)
+            index = 0
+            while True:
+                m = _FENCED_BLOCK_RE.search(text, index)
+                if m is None:
+                    break
+                lang = fence_lang(m.group("info"))
+                code = _dedent_fence_body(m.group("code"), len(m.group("indent")))
+                code = code_escape(code)
+                class_attr = (
+                    f' class="language-{escape_attrib_html(lang)}"' if lang else ""
+                )
+                html = f"<pre><code{class_attr}>{code}</code></pre>"
+                placeholder = self.md.htmlStash.store(html)
+                text = f"{text[:m.start()]}\n{placeholder}\n{text[m.end():]}"
+                # Continue from after the replaced text, same as the
+                # vendored preprocessor -- an index inside the old match
+                # would loop.
+                index = m.start() + 1 + len(placeholder)
+            return text.split("\n")
+
+    class FencedCodeOverrideExtension(Extension):
+        def extendMarkdown(self, md):
+            # Same name and priority as the vendored `fenced_code_block` it
+            # replaces.
+            md.preprocessors.register(
+                FencedCodePreprocessor(md), "fenced_code_block", 25
+            )
+
     class ListInterruptProcessor(BlockProcessor):
         """Split a paragraph block where a list starts inside it.
 
@@ -258,5 +384,6 @@ def make_extensions(markdown_module):
         BackslashBreakExtension(),
         HashHeaderOverrideExtension(),
         ParenOListExtension(),
+        FencedCodeOverrideExtension(),
         ListInterruptExtension(),
     ]
