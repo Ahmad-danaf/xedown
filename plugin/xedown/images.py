@@ -121,10 +121,10 @@ def reason_text(decision):
 def placeholder_for(decision, alt, display):
     """What to emit in place of an image. `None` means emit nothing.
 
-    Every failing status is treated alike. The setting is named
-    `remote_images`, but a reader who asked for no broken-image noise did
-    not mean only the remote kind — and none of the three values touches
-    what is fetched, which is nothing.
+    Every failing status is treated alike: a reader who asked for no
+    broken-image noise did not mean only the remote kind. `display` is
+    `image_fallback`, not the `remote_images` fetch policy — none of its
+    three values touches what is fetched, which is nothing.
     """
     if display == DISPLAY_HIDDEN:
         return None
@@ -141,5 +141,5 @@ def coerce_display(value):
     tests, not only through the settings store. `themes.resolve` set the
     precedent: a bad argument produces a sane page, not a broken one.
     """
-    coerced, _ = settings.by_name(settings.REMOTE_IMAGES).coerce(value)
+    coerced, _ = settings.by_name(settings.IMAGE_FALLBACK).coerce(value)
     return coerced

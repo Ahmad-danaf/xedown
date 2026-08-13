@@ -19,7 +19,8 @@ def test_every_setting_has_the_documented_default():
         "text_size_px": 16.0,
         "auto_refresh": True,
         "refresh_delay_ms": 250,
-        "remote_images": "placeholder",
+        "remote_images": "never",
+        "image_fallback": "placeholder",
         "code_copy_buttons": True,
         "text_direction": "auto",
         "watch_external_changes": True,
@@ -73,7 +74,7 @@ def test_the_controller_reads_the_refresh_delay_from_settings():
         ("preview_theme", "  minimal  ", "minimal"),
         ("default_mode", "MARKDOWN", "markdown"),
         ("text_direction", "RTL", "rtl"),
-        ("remote_images", "Hidden", "hidden"),
+        ("image_fallback", "Hidden", "hidden"),
     ],
 )
 def test_choices_are_matched_ignoring_case_and_space(name, given, expected):
@@ -778,3 +779,62 @@ def test_reset_leaves_no_explicit_defaults_in_the_file(tmp_path):
     store.set(settings.PREVIEW_THEME, "document")
     store.reset()
     assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+
+from xedown import settings as settings_module
+
+
+def store(tmp_path, payload):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return settings_module.Settings(path)
+
+
+def test_the_fetch_policy_defaults_to_never(tmp_path):
+    loaded = store(tmp_path, {})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+
+
+def test_the_fallback_setting_keeps_the_old_three_values(tmp_path):
+    loaded = store(tmp_path, {"image_fallback": "hidden"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "hidden"
+
+
+def test_an_old_remote_images_value_migrates_to_image_fallback(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "alt"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "alt"
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+
+
+def test_a_new_remote_images_value_is_not_treated_as_a_migration(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "https"})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "https"
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "placeholder"
+
+
+def test_an_explicit_image_fallback_wins_over_a_legacy_value(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "alt", "image_fallback": "hidden"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "hidden"
+
+
+def test_a_nonsense_remote_images_value_falls_back_to_the_default(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "yes please"})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "placeholder"
+
+
+def test_migration_does_not_rewrite_the_users_file(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    settings_module.Settings(path)
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_migration_is_idempotent_across_loads(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+    for _ in range(3):
+        assert (
+            settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == "alt"
+        )

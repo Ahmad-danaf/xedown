@@ -25,6 +25,7 @@ TEXT_SIZE_PX = "text_size_px"
 AUTO_REFRESH = "auto_refresh"
 REFRESH_DELAY_MS = "refresh_delay_ms"
 REMOTE_IMAGES = "remote_images"
+IMAGE_FALLBACK = "image_fallback"
 CODE_COPY_BUTTONS = "code_copy_buttons"
 TEXT_DIRECTION = "text_direction"
 WATCH_EXTERNAL_CHANGES = "watch_external_changes"
@@ -132,11 +133,38 @@ SETTINGS = (
     NumberSetting(TEXT_SIZE_PX, 16.0, 11.0, 28.0),
     BoolSetting(AUTO_REFRESH, True),
     NumberSetting(REFRESH_DELAY_MS, 250, 50, 2000, integer=True),
-    ChoiceSetting(REMOTE_IMAGES, ("placeholder", "alt", "hidden"), "placeholder"),
+    ChoiceSetting(REMOTE_IMAGES, ("never", "https"), "never"),
+    ChoiceSetting(IMAGE_FALLBACK, ("placeholder", "alt", "hidden"), "placeholder"),
     BoolSetting(CODE_COPY_BUTTONS, True),
     ChoiceSetting(TEXT_DIRECTION, ("auto", "ltr", "rtl"), "auto"),
     BoolSetting(WATCH_EXTERNAL_CHANGES, True),
 )
+
+# The values `remote_images` held before it became a fetch policy. Disjoint
+# from ("never", "https"), which is what makes the migration unambiguous:
+# a stored "alt" can only be the old meaning. It is also what makes it
+# self-terminating, so no version stamp is needed in the file.
+_LEGACY_REMOTE_IMAGES = frozenset({"placeholder", "alt", "hidden"})
+
+
+def _migrate_legacy_remote_images(stored):
+    """`stored` with a pre-1.0 `remote_images` re-read as `image_fallback`.
+
+    In memory only. The file is not rewritten: it belongs to the user, a
+    second xed process may be reading it, and nothing here is worth a write
+    the user did not ask for. Running again on the same file is harmless.
+    """
+    legacy = stored.get(REMOTE_IMAGES)
+    if not isinstance(legacy, str):
+        return stored
+    if legacy.strip().lower() not in _LEGACY_REMOTE_IMAGES:
+        return stored
+    migrated = dict(stored)
+    # An explicit new-style value always wins: the user set it deliberately.
+    migrated.setdefault(IMAGE_FALLBACK, legacy)
+    migrated.pop(REMOTE_IMAGES, None)
+    return migrated
+
 
 _BY_NAME = {setting.name: setting for setting in SETTINGS}
 
@@ -219,6 +247,8 @@ class Settings:
         if not isinstance(stored, dict):
             self._quarantine("does not contain a JSON object")
             return
+
+        stored = _migrate_legacy_remote_images(stored)
 
         for name, value in stored.items():
             setting = _BY_NAME.get(name)
