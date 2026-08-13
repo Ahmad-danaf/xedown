@@ -410,6 +410,71 @@ def _scenario_settings_window(probe):
     return [(2500, cycle), (600, leave_one_open)]
 
 
+def _scenario_close_with_fetches_in_flight(probe):
+    """Several remote images, permitted, pointed at a real hung fetch.
+
+    `imagescheme.shutdown()` (added Task 15, wired to the last controller
+    tearing down) cancels only work still QUEUED --
+    `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)`'s own
+    contract. Anything already RUNNING keeps running regardless, and the
+    interpreter's own `atexit` hook joins those threads either way, so a
+    close request that lands mid-fetch can delay the process exiting by up
+    to `remoteimages.TIMEOUT_S` (5s). This scenario exists to confirm that
+    close still completes CLEANLY within that bound -- not that it completes
+    instantly, which it does not and is not supposed to.
+
+    `httpbingo.org` -- a public mirror of the well-known httpbin.org test
+    service -- is used deliberately, for the same reason the live probe's
+    remote-image steps use it: a plain local server is refused by design
+    (`remoteimages.check_destination` only accepts a public destination), so
+    a real public HTTPS server is the only way to exercise a real,
+    genuinely outstanding fetch rather than a stub. Its `/delay/10` endpoint
+    guarantees the fetch is still running, not merely queued, when the
+    close request arrives -- `verify_outstanding` below checks that
+    directly, so this scenario cannot pass vacuously by racing a fetch that
+    happened to already settle.
+    """
+
+    def open_and_permit():
+        if CONTROL:
+            _state["tab"] = _open_tab(
+                probe.window,
+                "fetches-in-flight.md",
+                "# Fetches in flight\n\nBody.\n",
+            )
+            return
+        # Four separate URLs -- MAX_CONCURRENT is 4 -- so this is four
+        # genuinely outstanding fetches, not one.
+        body = "# Fetches in flight\n\n" + "\n\n".join(
+            f"![never resolves {i}]"
+            f"(https://httpbingo.org/delay/10?probe=shutdown-{i})"
+            for i in range(4)
+        )
+        _state["tab"] = _open_tab(probe.window, "fetches-in-flight.md", body)
+        controller = _controller(_state["tab"])
+        if controller is not None:
+            controller._on_load_images_requested(controller.modebar)
+
+    def verify_outstanding():
+        _check_live_preview("fetches-in-flight", [_state["tab"]])
+        if CONTROL:
+            return
+        from xedown import imagescheme
+
+        fetcher = imagescheme.get_fetcher()
+        outstanding = [u for u in fetcher._waiting if "probe=shutdown-" in u]
+        _record(
+            "fetches-in-flight-actually-outstanding",
+            len(outstanding) > 0,
+            f"waiting: {sorted(fetcher._waiting)!r}",
+        )
+
+    # The runner closes the window as soon as this scenario reports READY,
+    # which is immediately after verify_outstanding -- so the close request
+    # arrives well inside the 5s window the fetches above were started in.
+    return [(2500, open_and_permit), (3000, verify_outstanding)]
+
+
 def _scenario_settings_configurable(probe):
     """The plugin manager's route, five times, then closed as-is.
 
@@ -456,6 +521,7 @@ SCENARIOS = {
     "preview-active": _scenario_preview_active,
     "settings-window": _scenario_settings_window,
     "settings-configurable": _scenario_settings_configurable,
+    "close-with-fetches-in-flight": _scenario_close_with_fetches_in_flight,
 }
 
 

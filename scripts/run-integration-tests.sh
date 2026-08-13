@@ -30,10 +30,16 @@ XED_PID=""
 # more full-page reloads, an error-page-and-back cycle) all add up: on a
 # representative dev machine a clean run takes on the order of ninety
 # seconds end to end, not the well-under-a-minute this budget once assumed.
-# 150 keeps a comfortable margin over that rather than trimming it close.
+# Task 17 (remote images) added roughly another twenty seconds of scripted
+# delay on top of that, plus several genuinely-real HTTPS round trips
+# (destination checks, a redirect hop, an actual fetch) whose latency this
+# script has no control over -- 150 was measured to run out mid-sequence on
+# a live run of that suite, racing the graceful-close request below against
+# steps the probe had not reached yet. 240 keeps a comfortable margin over
+# the new total rather than trimming it close again.
 # How long to then wait for a *graceful* shutdown, once requested, before
 # escalating to SIGTERM/SIGKILL.
-SEQUENCE_TIMEOUT_SECONDS=150
+SEQUENCE_TIMEOUT_SECONDS=240
 SHUTDOWN_GRACE_SECONDS=10
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then

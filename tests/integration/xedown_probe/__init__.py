@@ -60,7 +60,10 @@ TabController = None
 Mode = None
 ModeBar = None
 xedown_a11y = None
+xedown_errors = None
+xedown_imagescheme = None
 xedown_prefs = None
+xedown_remoteimages = None
 xedown_settings = None
 xedown_shortcuts = None
 xedown_stylewatcher = None
@@ -70,9 +73,13 @@ XedownWindowActivatable = None
 def _lazy_imports():
     global TabController, Mode, ModeBar, xedown_a11y, xedown_prefs, xedown_settings
     global xedown_shortcuts, xedown_stylewatcher, XedownWindowActivatable
+    global xedown_errors, xedown_imagescheme, xedown_remoteimages
     from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import a11y as _a11y
+    from xedown import errors as _errors
+    from xedown import imagescheme as _imagescheme
     from xedown import prefs as _prefs
+    from xedown import remoteimages as _remoteimages
     from xedown import settings as _settings
     from xedown import shortcuts as _shortcuts
     from xedown import stylewatcher as _stylewatcher
@@ -82,7 +89,10 @@ def _lazy_imports():
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_a11y = _a11y
+    xedown_errors = _errors
+    xedown_imagescheme = _imagescheme
     xedown_prefs = _prefs
+    xedown_remoteimages = _remoteimages
     xedown_settings = _settings
     xedown_shortcuts = _shortcuts
     xedown_stylewatcher = _stylewatcher
@@ -128,6 +138,92 @@ _COPY_MD = (
     + "| a | b | c | d | e | f | g | h | i | j |\n"
     + "| - | - | - | - | - | - | - | - | - | - |\n"
     + "| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |\n"
+)
+
+# --- remote images: fetched by xedown's own code, over the real internet ---
+#
+# `httpbingo.org` -- a public mirror of the well-known httpbin.org test
+# service, on a different host because httpbin.org itself was returning 503
+# when this suite was written -- is a real HTTPS server this probe does not
+# control, with a certificate a real client actually verifies. It is used
+# deliberately rather than a local stand-in: Task 15 found that redirect
+# following was completely broken in the field because only a REAL urllib
+# opener ever exercises `fetch_once`'s hand-rolled redirect follower
+# (`_urllib_opener` removes urllib's own redirect handling on purpose, so a
+# stub opener's *returned-response* shape is what kept the unit tests green
+# regardless of whether the real thing worked). A plain local server cannot
+# substitute for this either way: `remoteimages.check_destination` refuses
+# any destination that does not resolve to a public address, by design, so
+# the destination and TLS checks can only be exercised for real against a
+# real public server.
+_REMOTE_IMAGE_URL = "https://httpbingo.org/image/png"
+_REMOTE_INSECURE_URL = "http://example.com/insecure.png"
+# Deliberately no "offline" substring anywhere in this URL: it ends up
+# inside the placeholder text regardless of which message wins (see
+# step_remote_offline_check), and a URL containing the very word being
+# checked for would let a false positive hide behind it.
+_REMOTE_OFFLINE_URL = "https://httpbingo.org/image/png?probe=net-check"
+_REMOTE_HANGING_URL = "https://httpbingo.org/delay/10"
+_REMOTE_HANGING_URL_2 = "https://httpbingo.org/delay/10?probe=close-pending"
+# A real 302, over the real internet, through the REAL opener -- the exact
+# case Task 15's fix is for. Never a local server (see above); never a
+# certificate-trust escape hatch either, which the spec explicitly rejected.
+_REMOTE_REDIRECT_URL = (
+    "https://httpbingo.org/redirect-to?url="
+    "https%3A%2F%2Fhttpbingo.org%2Fimage%2Fpng%3Fprobe%3Dredirect&status_code=302"
+)
+_REMOTE_BLOCKED_MD = f"# Remote Images\n\n![a badge]({_REMOTE_IMAGE_URL})\n"
+_REMOTE_INSECURE_MD = (
+    f"# Insecure Remote Image\n\n![insecure]({_REMOTE_INSECURE_URL})\n"
+)
+_REMOTE_OFFLINE_MD = (
+    f"# Offline Remote Image\n\n![offline test]({_REMOTE_OFFLINE_URL})\n"
+)
+# Tall, like `_long_markdown()`, so the reload below has a real scroll range
+# to restore into -- and the image sits at the very end, so the rest of the
+# page paints regardless of whether it has resolved.
+_REMOTE_HANGING_MD = (
+    "# Hanging Remote Image\n\n"
+    + ("A paragraph of filler prose to build page height. " * 8 + "\n\n") * 60
+    + f"![never resolves in time]({_REMOTE_HANGING_URL})\n"
+)
+_REMOTE_REDIRECT_MD = (
+    f"# Redirected Remote Image\n\n![redirect test]({_REMOTE_REDIRECT_URL})\n"
+)
+_REMOTE_CLOSE_PENDING_MD = (
+    f"# Close With Fetch Pending\n\n![never resolves]({_REMOTE_HANGING_URL_2})\n"
+)
+_CSP_JS = (
+    "(function () {"
+    "  var m = document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]');"
+    "  return m ? m.getAttribute('content') : '';"
+    "})()"
+)
+_IMG_COMPLETE_JS = (
+    "(function () {"
+    "  var i = document.querySelector('img.xedown-remote');"
+    "  return i ? String(i.complete) : 'no-image';"
+    "})()"
+)
+_IMG_LOADED_JS = (
+    "(function () {"
+    "  var i = document.querySelector('img.xedown-remote');"
+    "  return i ? String(i.complete && i.naturalWidth > 0) : 'no-image';"
+    "})()"
+)
+# Scoped to the rendered article rather than `document.body.textContent`
+# (what `_preview_text` above uses): the body also contains the inlined
+# highlight.js bundle inside a <script> tag, which textContent walks right
+# through -- confirmed live at ~166KB per read. That is not merely slow; it
+# was large enough to be a real contributor to the remote-images steps
+# overrunning run-integration-tests.sh's own SEQUENCE_TIMEOUT_SECONDS on the
+# first live run of this suite. `_preview_text` itself is left alone: it is
+# established, shared infrastructure this task did not touch.
+_ARTICLE_TEXT_JS = (
+    "(function () {"
+    "  var a = document.getElementById('xedown-content');"
+    "  return a ? a.textContent : '';"
+    "})()"
 )
 
 
@@ -623,6 +719,34 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         preview.widget.run_javascript(
             "document.body.textContent", None, on_result, None
         )
+
+    def _read_js(self, controller, expr, callback):
+        """Evaluate `expr` in `controller`'s preview; `callback(text_or_None)`.
+
+        Generalises `_preview_text` for the remote-images steps below, which
+        need the raw string back (a CSP, an `img.complete` flag) rather than
+        a substring comparison, and which drive tabs other than the main
+        one -- so the controller is passed in rather than resolved from
+        `self._main_controller()`. Schedules nothing itself; every caller is
+        already inside a step and schedules its own next step explicitly,
+        which is what lets two of these be chained back to back (read the
+        body, then read the CSP) without an extra round trip through the
+        main loop for each.
+        """
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            callback(None)
+            return
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                text = value.get_js_value().to_string()
+            except Exception:  # noqa: BLE001 - a probe never crashes xed
+                text = None
+            callback(text)
+
+        preview.widget.run_javascript(expr, None, on_result, None)
 
     def _reconcile_without_saving(self):
         """Leave the buffer clean and the file matching it, byte for byte.
@@ -3495,9 +3619,397 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 "the-focus-watch-let-go-of-the-window-the-tab-left",
                 old_id is not None and not self.window.handler_is_connected(old_id),
             )
-            self._schedule(400, self.step_settings_open)
+            self._schedule(400, self.step_remote_images_setup)
 
         self._marks(check, controller)
+        return False
+
+    # --- remote images: fetched by xedown's own code, never by the page ----
+    #
+    # Every module this exercises (`imagescheme.py`, the WebKit scheme
+    # handler; `controller.py`'s image-handling methods; the mode bar's
+    # chip) imports `gi` and is completely unreachable by the unit suite.
+    # Each sub-test below opens its OWN tab, so a per-tab permission grant
+    # or a forced-offline fetcher never leaks into a test that runs after
+    # it, and so `tab-close-with-fetches-pending` has a tab of its own to
+    # close without disturbing any of the others still open behind it.
+
+    def step_remote_images_setup(self):
+        path = os.path.join(self._tmpdir, "remote-blocked.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_BLOCKED_MD)
+        self._remote_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._remote_view = self._remote_tab.get_view()
+        self._schedule(1200, self.step_remote_blocked_check)
+        return False
+
+    def step_remote_blocked_check(self):
+        controller = self._remote_controller = self._controller_for(self._remote_view)
+        if controller is None:
+            record("remote-images-blocked-by-default", False, "no controller")
+            self._schedule(300, self.step_remote_chip_check)
+            return False
+
+        def on_csp(csp):
+            placeholder_ok = self._remote_blocked_placeholder_ok
+            csp_ok = csp is not None and (xedown_remoteimages.SCHEME + ":") not in csp
+            record(
+                "remote-images-blocked-by-default",
+                placeholder_ok and csp_ok,
+                f"placeholder present: {placeholder_ok}, csp: {csp!r}",
+            )
+            self._schedule(300, self.step_remote_chip_check)
+
+        def on_body(text):
+            self._remote_blocked_placeholder_ok = (
+                text is not None
+                and xedown_errors.remote_image_blocked_text(_REMOTE_IMAGE_URL) in text
+            )
+            self._read_js(controller, _CSP_JS, on_csp)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    def step_remote_chip_check(self):
+        controller = self._remote_controller
+        if controller is None:
+            record("remote-images-chip-counts", False, "no controller")
+            self._schedule(300, self.step_remote_permit)
+            return False
+        modebar = controller.modebar
+        record(
+            "remote-images-chip-counts",
+            modebar._remote_button.get_visible()
+            and modebar._remote_label.get_text() == "1 remote image",
+            f"visible={modebar._remote_button.get_visible()!r} "
+            f"label={modebar._remote_label.get_text()!r}",
+        )
+        # Addition 3 (an observation for task-17-report.md, not a
+        # requirement either way): `set_refresh_visible` hides the Refresh
+        # button in Markdown mode on the stated principle "visible only
+        # where clicking it would do something". This chip does not hide --
+        # defensible, since Load still does something (it marks the
+        # preview stale), but an unstated exception to the bar's own rule.
+        # Recorded as an unconditional PASS: it exists to put the observed
+        # fact in the report, not to gate the run on which way it goes.
+        controller.set_mode(Mode.SOURCE)
+        record(
+            "remote-images-chip-in-markdown-mode-observation",
+            True,
+            f"chip visible in Markdown mode: {modebar._remote_button.get_visible()!r}",
+        )
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(300, self.step_remote_permit)
+        return False
+
+    def step_remote_permit(self):
+        controller = self._remote_controller
+        if controller is None:
+            record("remote-images-permitted-csp", False, "no controller")
+            self._schedule(300, self.step_remote_insecure_setup)
+            return False
+        # A real click on the real button, not the internal method directly:
+        # `Gtk.Button.clicked()` emits "clicked" exactly as a pointer click
+        # would, which is what reaches `_on_load_images_requested` through
+        # the bar's own signal rather than around it.
+        controller.modebar._remote_button.clicked()
+        self._schedule(1500, self.step_remote_permit_check)
+        return False
+
+    def step_remote_permit_check(self):
+        controller = self._remote_controller
+
+        def on_csp(csp):
+            record(
+                "remote-images-permitted-csp",
+                csp is not None
+                and (xedown_remoteimages.SCHEME + ":") in csp
+                and "https:" not in csp,
+                f"csp: {csp!r}",
+            )
+            self._schedule(300, self.step_remote_insecure_setup)
+
+        self._read_js(controller, _CSP_JS, on_csp)
+        return False
+
+    # --- an http:// image is never fetched, permitted or not ---------------
+
+    def step_remote_insecure_setup(self):
+        path = os.path.join(self._tmpdir, "remote-insecure.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_INSECURE_MD)
+        self._insecure_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._insecure_view = self._insecure_tab.get_view()
+        self._schedule(1200, self.step_remote_insecure_check_blocked)
+        return False
+
+    def step_remote_insecure_check_blocked(self):
+        controller = self._insecure_controller = self._controller_for(
+            self._insecure_view
+        )
+        if controller is None:
+            record("remote-images-insecure-refused", False, "no controller")
+            self._schedule(300, self.step_remote_offline_setup)
+            return False
+
+        def on_body(text):
+            self._remote_insecure_blocked_ok = (
+                text is not None
+                and xedown_errors.insecure_image_text(_REMOTE_INSECURE_URL) in text
+            )
+            record(
+                "remote-images-insecure-refused-blocked-state",
+                self._remote_insecure_blocked_ok,
+                f"body: {text!r}",
+            )
+            # Granted directly through the production entry point Load
+            # itself calls -- there is no chip to click here, since an
+            # all-insecure document has nothing FETCHABLE to offer
+            # (`_note_remote_images` counts only `REMOTE_BLOCKED`, never
+            # `REMOTE_INSECURE`).
+            controller._on_load_images_requested(controller.modebar)
+            self._schedule(1200, self.step_remote_insecure_check_permitted)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    def step_remote_insecure_check_permitted(self):
+        controller = self._insecure_controller
+
+        def on_body(text):
+            permitted_ok = (
+                text is not None
+                and xedown_errors.insecure_image_text(_REMOTE_INSECURE_URL) in text
+            )
+            record(
+                "remote-images-insecure-refused-permitted-state",
+                permitted_ok,
+                f"body: {text!r}",
+            )
+            record(
+                "remote-images-insecure-refused",
+                self._remote_insecure_blocked_ok and permitted_ok,
+                "an http:// image must show the same refusal whether or not "
+                "remote images are permitted",
+            )
+            self._schedule(300, self.step_remote_offline_setup)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    # --- offline is reported by name, not as a generic failure -------------
+
+    def step_remote_offline_setup(self):
+        path = os.path.join(self._tmpdir, "remote-offline.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_OFFLINE_MD)
+        self._offline_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._offline_view = self._offline_tab.get_view()
+        self._schedule(1200, self.step_remote_offline_permit)
+        return False
+
+    def step_remote_offline_permit(self):
+        controller = self._offline_controller = self._controller_for(self._offline_view)
+        if controller is None:
+            record("remote-images-offline-message", False, "no controller")
+            self._schedule(300, self.step_remote_scroll_setup)
+            return False
+        # Forced on the one process-wide fetcher, ahead of granting this
+        # tab's own permission below: `Fetcher.request()` reads this
+        # callable at request time, not at construction, so setting it here
+        # governs the fetch the permit below is about to trigger.
+        fetcher = xedown_imagescheme.get_fetcher()
+        self._offline_previous_network_available = fetcher._network_available
+        fetcher._network_available = lambda: False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(1500, self.step_remote_offline_check)
+        return False
+
+    def step_remote_offline_check(self):
+        controller = self._offline_controller
+        # Restored before the assertion below, not after: a probe crash
+        # mid-assertion must not leave the one process-wide fetcher stuck
+        # offline for every remote-image step that follows.
+        xedown_imagescheme.get_fetcher()._network_available = (
+            self._offline_previous_network_available
+        )
+
+        def on_body(text):
+            # The precise sentence `errors.remote_image_failure_text`
+            # produces for this failure kind -- not a bare substring check
+            # for the word "offline", which the URL above deliberately
+            # cannot satisfy by accident (see its own comment).
+            expected = xedown_errors.remote_image_failure_text(
+                "offline", "you appear to be offline"
+            )
+            record(
+                "remote-images-offline-message",
+                text is not None and expected in text,
+                f"expected {expected!r} in body: {text!r}",
+            )
+            self._schedule(300, self.step_remote_scroll_setup)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    # --- the scroll restore does not wait for a still-loading image --------
+    #
+    # The regression `pageready.py`'s "ready" message exists to prevent: the
+    # page's own DOMContentLoaded message does not wait for a subresource
+    # still in flight, while `LoadEvent.FINISHED` does -- so if the scroll
+    # restore were driven off FINISHED alone, a slow remote image would hold
+    # it back for as long as the fetch takes to settle.
+
+    def step_remote_scroll_setup(self):
+        path = os.path.join(self._tmpdir, "remote-hanging.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_HANGING_MD)
+        self._hanging_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._hanging_view = self._hanging_tab.get_view()
+        self._schedule(900, self.step_remote_scroll_permit)
+        return False
+
+    def step_remote_scroll_permit(self):
+        controller = self._hanging_controller = self._controller_for(self._hanging_view)
+        if controller is None:
+            record("scroll-restored-without-waiting-for-images", False, "no controller")
+            self._schedule(300, self.step_remote_redirect_setup)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(1200, self.step_remote_scroll_set)
+        return False
+
+    def step_remote_scroll_set(self):
+        self._hanging_controller.preview.set_scroll(0.5)
+        self._schedule(700, self.step_remote_scroll_reload)
+        return False
+
+    def step_remote_scroll_reload(self):
+        controller = self._hanging_controller
+        # A reload with the live scroll fraction preserved -- the same path
+        # `_on_settings_changed`/`_on_user_stylesheet_changed` take for a
+        # theme change, and the only path `restore_scroll` is ever fed
+        # through outside of it. The image's fetch (delay/10, TIMEOUT_S=5)
+        # is nowhere near settled 900ms later, so this reload's own "ready"
+        # message has to race a genuinely still-pending fetch to prove the
+        # regression is fixed, not merely absent because nothing was
+        # actually pending.
+        controller._reload_preview(restore_scroll=controller._current_preview_scroll())
+        self._schedule(900, self.step_remote_scroll_check)
+        return False
+
+    def step_remote_scroll_check(self):
+        controller = self._hanging_controller
+
+        def on_complete(value):
+            still_pending = value == "false"
+            record(
+                "scroll-restored-without-waiting-for-images",
+                still_pending and controller.preview.last_scroll > 0.3,
+                f"image.complete after reload: {value!r}, "
+                f"last_scroll={controller.preview.last_scroll!r}",
+            )
+            self._schedule(300, self.step_remote_redirect_setup)
+
+        self._read_js(controller, _IMG_COMPLETE_JS, on_complete)
+        return False
+
+    # --- Addition 1: a live redirect, through the real opener --------------
+
+    def step_remote_redirect_setup(self):
+        path = os.path.join(self._tmpdir, "remote-redirect.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_REDIRECT_MD)
+        self._redirect_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._redirect_view = self._redirect_tab.get_view()
+        self._schedule(1200, self.step_remote_redirect_permit)
+        return False
+
+    def step_remote_redirect_permit(self):
+        controller = self._redirect_controller = self._controller_for(
+            self._redirect_view
+        )
+        if controller is None:
+            record("remote-images-redirect-followed", False, "no controller")
+            self._schedule(300, self.step_remote_close_pending_setup)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(3000, self.step_remote_redirect_check)
+        return False
+
+    def step_remote_redirect_check(self):
+        controller = self._redirect_controller
+
+        def on_loaded(value):
+            record(
+                "remote-images-redirect-followed",
+                value == "true",
+                "image.complete && naturalWidth>0 after a real 302 through the "
+                f"real opener: {value!r}",
+            )
+            self._schedule(300, self.step_remote_close_pending_setup)
+
+        self._read_js(controller, _IMG_LOADED_JS, on_loaded)
+        return False
+
+    # --- a tab can close while one of its own fetches is still outstanding -
+
+    def step_remote_close_pending_setup(self):
+        path = os.path.join(self._tmpdir, "remote-close-pending.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_CLOSE_PENDING_MD)
+        self._close_pending_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._close_pending_view = self._close_pending_tab.get_view()
+        self._schedule(900, self.step_remote_close_pending_permit)
+        return False
+
+    def step_remote_close_pending_permit(self):
+        controller = self._controller_for(self._close_pending_view)
+        if controller is None:
+            record("tab-close-with-fetches-pending", False, "no controller")
+            self._schedule(300, self.step_remote_images_done)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(700, self.step_remote_close_pending_verify)
+        return False
+
+    def step_remote_close_pending_verify(self):
+        # The guard against a vacuous pass: without this, a fetch that
+        # happened to already have settled by the time the tab closes would
+        # let the teardown check below pass for proving nothing at all.
+        fetcher = xedown_imagescheme.get_fetcher()
+        record(
+            "tab-close-with-fetches-pending-actually-pending",
+            _REMOTE_HANGING_URL_2 in fetcher._waiting,
+            f"waiting: {sorted(fetcher._waiting)!r}",
+        )
+        self.window.close_tab(self._close_pending_tab)
+        self._schedule(600, self.step_remote_close_pending_check)
+        return False
+
+    def step_remote_close_pending_check(self):
+        record(
+            "tab-close-with-fetches-pending",
+            not hasattr(self._close_pending_view, "_xedown_controller"),
+            "teardown must complete cleanly even with a fetch still outstanding",
+        )
+        self._schedule(300, self.step_remote_images_done)
+        return False
+
+    def step_remote_images_done(self):
+        self._schedule(300, self.step_settings_open)
         return False
 
     # --- the settings window, both ways in ---------------------------------
