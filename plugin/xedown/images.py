@@ -165,12 +165,17 @@ def _data_uri_verdict(reference):
     head, separator, payload = reference.partition(",")
     if not separator or "base64" not in head.lower():
         return None
-    # Only the leading bytes are needed. Base64 encodes 3 bytes per 4
-    # characters, so the slice is trimmed to a whole quantum before decoding.
+    # The whole payload is decoded -- no fixed prefix budget. A JPEG's frame
+    # header sits after any APP1/EXIF segment, and phone and camera JPEGs
+    # routinely carry a 10-60 KB embedded thumbnail there, so a fixed cutoff
+    # is either restrictive (an ordinary photo's header falls past it and
+    # gets refused as unmeasurable) or unsafe (an attacker pads the segment
+    # to push a bomb's declared size past whatever cutoff was chosen). Base64
+    # encodes 3 bytes per 4 characters, so the payload is trimmed to a whole
+    # quantum before decoding.
     try:
-        prefix = payload[:8192]
-        prefix = prefix[: len(prefix) - (len(prefix) % 4)]
-        return imagelimits.pixel_verdict(base64.b64decode(prefix))
+        trimmed = payload[: len(payload) - (len(payload) % 4)]
+        return imagelimits.pixel_verdict(base64.b64decode(trimmed))
     except Exception:  # noqa: BLE001 - unmeasurable is not a failure
         return None
 

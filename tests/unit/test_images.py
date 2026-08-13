@@ -362,3 +362,43 @@ def test_the_damaged_outcome_honours_the_fallback_setting():
     signature_only = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
     decision = images.classify_image(f"data:image/png;base64,{signature_only}", None)
     assert images.placeholder_for(decision, "alt", images.DISPLAY_HIDDEN) is None
+
+
+def _jpeg_with_exif(width, height, exif_size):
+    """A JPEG whose SOF sits after an APP1/EXIF segment `exif_size` bytes
+    long -- the way a real phone or camera photo is laid out, and unlike
+    `data_uri`'s PNGs, where the header is always the first few bytes.
+    """
+
+    def segment(marker, payload):
+        return b"\xff" + bytes([marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+    app1 = segment(0xE1, b"Exif\x00\x00" + b"\x00" * exif_size)
+    sof = segment(0xC0, struct.pack(">BHHB", 8, height, width, 3))
+    return b"\xff\xd8" + app1 + sof + b"\xff\xd9"
+
+
+def jpeg_data_uri(width, height, exif_size=0):
+    encoded = base64.b64encode(_jpeg_with_exif(width, height, exif_size)).decode(
+        "ascii"
+    )
+    return f"data:image/jpeg;base64,{encoded}"
+
+
+@pytest.mark.parametrize("exif_size", [0, 3000, 10000, 40000])
+def test_a_jpeg_with_a_large_exif_header_still_renders(exif_size):
+    # A real photo's frame header can sit tens of kilobytes into the file,
+    # behind an embedded EXIF thumbnail. There is no fixed prefix budget any
+    # more -- see _data_uri_verdict -- so this must still measure correctly
+    # rather than being refused as unmeasurable.
+    decision = images.classify_image(jpeg_data_uri(6000, 4000, exif_size), None)
+    assert decision.status == images.OK, f"exif_size={exif_size} must still render"
+
+
+def test_a_jpeg_bomb_behind_a_large_exif_header_is_still_refused():
+    # Proves removing the prefix budget did not reopen the hole it closed:
+    # an oversized SOF pushed far into the payload by a padded EXIF segment
+    # must still be found and refused, not waved through as unmeasurable.
+    decision = images.classify_image(jpeg_data_uri(20000, 20000, 40000), None)
+    assert decision.status == images.TOO_LARGE_TO_DECODE
+    assert "20000" in images.reason_text(decision)
