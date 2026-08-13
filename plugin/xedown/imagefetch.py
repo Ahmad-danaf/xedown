@@ -12,6 +12,7 @@ attempts a second for as long as the reader keeps typing.
 
 import collections
 import ssl
+import sys
 import urllib.error
 import urllib.parse
 
@@ -230,3 +231,135 @@ def _read_body(response):
         return _refuse(NOT_AN_IMAGE, "that image is damaged or could not be read")
 
     return FetchResult(data=body, mime=f"image/{subtype}")
+
+
+class Fetcher:
+    """One fetch per URL at a time, however many times it is asked for.
+
+    Everything here runs on the GTK main thread except the work handed to the
+    executor, so the registry needs no locking: `request` and the delivery
+    that follows it are both main-thread, and the worker touches nothing but
+    its own local `result` -- it hands that back through `_schedule`/`dispatch`
+    rather than writing it anywhere shared.
+    """
+
+    def __init__(
+        self,
+        opener=None,
+        resolver=None,
+        network_available=None,
+        proxies_for=None,
+        executor=None,
+        dispatch=None,
+    ):
+        self._opener = opener if opener is not None else _urllib_opener
+        self._resolver = resolver
+        self._network_available = network_available
+        self._proxies_for = proxies_for
+        self._executor = executor
+        self._dispatch = dispatch
+        self.cache = ResultCache()
+        self._waiting = {}  # url -> [callbacks]
+
+    def cached(self, url):
+        return self.cache.get(url)
+
+    def invalidate_failures(self):
+        self.cache.invalidate_failures()
+
+    def request(self, url, on_done):
+        """Deliver `url`'s result to `on_done`, fetching at most once."""
+        cached = self.cache.get(url)
+        if cached is not None:
+            self._deliver_one(on_done, cached)
+            return
+
+        waiters = self._waiting.get(url)
+        if waiters is not None:
+            # Already in flight. This is what stops a re-render every 250ms
+            # from starting a second, third and twentieth fetch of one image.
+            waiters.append(on_done)
+            return
+
+        if self._network_available is not None and not self._network_available():
+            self._deliver_one(
+                on_done,
+                _refuse(OFFLINE, "you appear to be offline"),
+            )
+            return
+
+        if len(self._waiting) >= remoteimages.MAX_PENDING_URLS:
+            self._deliver_one(
+                on_done,
+                _refuse(TOO_MANY, "too many images are already loading"),
+            )
+            return
+
+        self._waiting[url] = [on_done]
+        self._start(url)
+
+    def shutdown(self):
+        """Stop taking new work. Running fetches are not interrupted.
+
+        `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)` cancels
+        only work still *queued*; anything already *running* runs to
+        completion regardless, and the interpreter's own `atexit` hook joins
+        the worker threads either way, so this method does not bound how long
+        the process can take to exit -- `TIMEOUT_S` does, by bounding how long
+        a single running fetch can take.
+        """
+        self._waiting.clear()
+        executor = self._executor
+        if executor is not None and hasattr(executor, "shutdown"):
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _start(self, url):
+        def work():
+            proxies = self._proxies_for(url) if self._proxies_for is not None else None
+            result = fetch_once(
+                url,
+                opener=self._opener,
+                resolver=self._resolver,
+                proxies=proxies,
+            )
+            self._schedule(lambda: self._settle(url, result))
+
+        if self._executor is None:
+            work()
+        else:
+            self._executor.submit(work)
+
+    def _schedule(self, thunk):
+        if self._dispatch is None:
+            thunk()
+        else:
+            self._dispatch(thunk)
+
+    def _settle(self, url, result):
+        self.cache.put(url, result)
+        for callback in self._waiting.pop(url, []):
+            self._deliver_one(callback, result)
+
+    @staticmethod
+    def _deliver_one(callback, result):
+        try:
+            callback(result)
+        except Exception as exc:  # noqa: BLE001 - one waiter must not stop the rest
+            sys.stderr.write(f"xedown: an image callback failed: {exc}\n")
+
+
+def _urllib_opener(url, headers, timeout, proxies):
+    """The real opener. Redirects are handled by `fetch_once`, not here."""
+    import urllib.request
+
+    class _NoRedirects(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args, **_kwargs):
+            # urllib's own handler permits an https -> http downgrade, so it
+            # is removed outright and `fetch_once` follows hops itself.
+            return None
+
+    opener = urllib.request.build_opener(
+        _NoRedirects(), urllib.request.ProxyHandler(proxies or {})
+    )
+    request = urllib.request.Request(url, headers=headers)
+    return opener.open(request, timeout=timeout)

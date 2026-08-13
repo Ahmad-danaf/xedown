@@ -324,3 +324,167 @@ def test_a_close_that_raises_does_not_lose_a_malformed_response_error():
     result = fetch("https://e.com/a.png", opener)
     assert result.error == imagefetch.NETWORK
     assert result.data is None
+
+
+class ManualExecutor:
+    """Runs nothing until told, so a fetch can be observed mid-flight."""
+
+    def __init__(self):
+        self.jobs = []
+
+    def submit(self, function):
+        self.jobs.append(function)
+
+    def run_all(self):
+        jobs, self.jobs = self.jobs, []
+        for job in jobs:
+            job()
+
+
+def make_fetcher(opener, executor=None, **kwargs):
+    return imagefetch.Fetcher(
+        opener=opener,
+        resolver=public,
+        network_available=kwargs.pop("network_available", lambda: True),
+        executor=executor,
+        **kwargs,
+    )
+
+
+def test_many_requests_while_one_fetch_is_in_flight_make_one_network_call():
+    # The core of the coalescing requirement: 20 re-renders during a single
+    # slow fetch must not produce 20 fetches.
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor)
+
+    seen = []
+    for _ in range(20):
+        fetcher.request("https://e.com/a.png", seen.append)
+
+    assert len(executor.jobs) == 1, "only the first request starts a fetch"
+    executor.run_all()
+
+    assert len(opener.calls) == 1
+    assert len(seen) == 20
+    assert all(result.ok for result in seen)
+
+
+def test_a_second_url_still_gets_its_own_fetch():
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1), StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor)
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    fetcher.request("https://e.com/b.png", lambda r: None)
+    assert len(executor.jobs) == 2
+
+
+def test_a_completed_fetch_is_served_from_cache_without_the_executor():
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor)
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    assert executor.jobs == []
+    assert len(opener.calls) == 1
+    assert seen[0].ok
+
+
+def test_a_failure_is_served_from_cache_too():
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(status=404))
+    fetcher = make_fetcher(opener, executor)
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    assert executor.jobs == [], "a cached failure must not re-fetch"
+    assert seen[0].error == imagefetch.HTTP_ERROR
+
+
+def test_a_failed_image_refetches_after_an_explicit_retry():
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(status=404), StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor)
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+
+    fetcher.invalidate_failures()  # what Refresh and [Load] do
+
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    executor.run_all()
+    assert len(opener.calls) == 2
+    assert seen[0].ok
+
+
+def test_an_evicted_success_is_fetched_again():
+    # The cache is bounded, so "one request per URL per session" is not a
+    # guarantee the implementation makes.
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1), StubResponse(body=PNG_1X1))
+    fetcher = make_fetcher(opener, executor)
+    fetcher.cache.max_bytes = 1  # nothing real can stay
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+    assert len(opener.calls) == 2
+
+
+def test_pending_work_is_bounded():
+    executor = ManualExecutor()
+    fetcher = make_fetcher(StubOpener(*[StubResponse(body=PNG_1X1)] * 200), executor)
+    seen = []
+    for index in range(remoteimages.MAX_PENDING_URLS + 5):
+        fetcher.request(f"https://e.com/{index}.png", seen.append)
+    assert len(executor.jobs) == remoteimages.MAX_PENDING_URLS
+    refused = [r for r in seen if r.error == imagefetch.TOO_MANY]
+    assert len(refused) == 5
+
+
+def test_being_offline_fails_immediately_without_dialling():
+    opener = StubOpener()
+    fetcher = make_fetcher(opener, ManualExecutor(), network_available=lambda: False)
+    seen = []
+    fetcher.request("https://e.com/a.png", seen.append)
+    assert seen[0].error == imagefetch.OFFLINE
+    assert opener.calls == []
+
+
+def test_a_raising_callback_does_not_stop_the_other_waiters():
+    executor = ManualExecutor()
+    fetcher = make_fetcher(StubOpener(StubResponse(body=PNG_1X1)), executor)
+    seen = []
+
+    def explode(_result):
+        raise RuntimeError("callback trouble")
+
+    fetcher.request("https://e.com/a.png", explode)
+    fetcher.request("https://e.com/a.png", seen.append)
+    executor.run_all()
+    assert len(seen) == 1
+
+
+def test_proxies_for_is_consulted_with_the_url_and_reaches_the_opener():
+    # The brief's own `proxies` dict was rejected in favour of a callable so
+    # that a later task never has to reach into `fetcher._proxies` to change
+    # what one request needs -- it asks `proxies_for(url)` instead.
+    executor = ManualExecutor()
+    opener = StubOpener(StubResponse(body=PNG_1X1))
+    seen_urls = []
+
+    def proxies_for(url):
+        seen_urls.append(url)
+        return {"https": "http://chosen:8080"}
+
+    fetcher = make_fetcher(opener, executor, proxies_for=proxies_for)
+    fetcher.request("https://e.com/a.png", lambda r: None)
+    executor.run_all()
+
+    assert seen_urls == ["https://e.com/a.png"]
+    assert opener.calls[0]["proxies"] == {"https": "http://chosen:8080"}
