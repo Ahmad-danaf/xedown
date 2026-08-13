@@ -2,7 +2,9 @@
 interrupt a paragraph, and a handful of CommonMark-conformance overrides
 (heading hashes need a following space; ordered-list markers may end in
 `)` as well as `.`; fenced code accepts an indented fence and a real info
-string instead of only a bare word).
+string instead of only a bare word; list content is re-indented from
+CommonMark's continuation column onto the fixed four-space nesting the
+vendored list processors insist on).
 
 Built by a factory rather than at import time, because these subclass types from
 the vendored Markdown module, which only exists on sys.path once `vendoring` has
@@ -56,6 +58,164 @@ def find_list_interrupt(block):
         if _INTERRUPTING_MARKER.match(line):
             return index
     return None
+
+
+# A list item exactly as the vendored list processors define one: a marker,
+# then at least one space, then real content. Deliberately *not* wider than
+# they are -- a content-less marker (`-` alone on a line) is a list item in
+# CommonMark but not to `OListProcessor.RE`, and treating it as one here
+# would open a level of nesting the parser downstream refuses to enter, and
+# swallow the sub-items into a paragraph (task 15 / F5).
+_LIST_ITEM = re.compile(
+    r"^(?P<indent>[ ]*)(?P<marker>[*+-]|\d{1,9}[.)])(?P<gap>[ ]+)(?=\S)"
+)
+
+# A thematic break, which outranks a list item in CommonMark and is claimed
+# at priority 50 by `HRProcessor` here -- the same shape as its own
+# `SEARCH_RE`, anchored to one line because that is all this pass has. The
+# v0.2 design could say "we never have to tell `---` from `- - -`, because
+# we are never shown any of them"; that holds at priority 12 and not in a
+# preprocessor. `- - -` is a marker, a space and content to the regex above,
+# and treating it as an item would indent a rule into a literal `- -` list.
+_THEMATIC_BREAK = re.compile(
+    r"^[ ]{0,3}(?=(?P<run>(-+[ ]{0,2}){3,}|(_+[ ]{0,2}){3,}|(\*+[ ]{0,2}){3,}))"
+    r"(?P=run)[ ]*$"
+)
+
+# The markers GFM lets a list use to interrupt a paragraph -- the same rule
+# `_INTERRUPTING_MARKER` above encodes, needed again here as a set because
+# this pass has already matched the marker and only has to classify it. A
+# marker that cannot interrupt is prose that happens to look like a marker
+# ("...was\n1985. What a year."), and must not open an item.
+_INTERRUPTING_MARKERS = frozenset({"-", "*", "+", "1.", "1)"})
+
+
+def normalize_list_indentation(lines, tab_length=4):
+    """Re-indent list content onto `tab_length`-per-level nesting.
+
+    CommonMark nests by *continuation column*: content indented to where the
+    parent item's own content starts belongs to that item, so `- Flask` /
+    `  - apiflask` is a sublist. The vendored parser nests by a fixed
+    `tab_length` instead -- `ListIndentProcessor` tests
+    `block.startswith(' ' * tab_length)` and `OListProcessor.CHILD_RE`
+    accepts a marker at 0-3 spaces as a *sibling* -- so a two-space sublist
+    is flattened into its parent (task 15 / F5) and content indented past
+    the continuation column, but under the four spaces the parser wants, is
+    left as literal text (F6). `tab_length=2` is not the fix: it would read
+    one four-space indent as two levels.
+
+    This pass is the translation between the two models, and it rewrites
+    nothing but leading whitespace. An item's marker line moves to
+    `tab_length * (depth - 1)`; a block of its own inside that item moves to
+    `tab_length * depth`, carrying any offset of four or more columns past
+    the continuation column, since that offset is a code block's indent and
+    is content. Every other line stays exactly where it was written, bar the
+    one exception the hazards below name. A document that already indents
+    `tab_length` per level comes through byte-identical.
+
+    It runs as a preprocessor rather than a block processor because the
+    decision needs the whole document's line-by-line list nesting, which no
+    single block carries. That is the position the v0.2 design
+    (`docs/superpowers/specs/2026-08-10-xedown-v0.2-gfm-lists-design.md`,
+    section 4) names as the trap, and the trap is closed here by *where in
+    the preprocessor chain this sits* rather than by re-deriving structure:
+    at priority 18 both stashing preprocessors have already run, so a fenced
+    code block (`fenced_code_block`, 25) and a raw HTML block (`html_block`,
+    20) have been lifted out into the HTML stash and replaced by
+    placeholders before this sees a single line. Indentation that is content
+    is not text this pass declines to touch; by the time it runs, it is not
+    text.
+
+    Two hazards remain that indentation alone can spring, and both are
+    closed by narrowness rather than by inspection:
+
+    - A line that is *not* a marker keeps its own indentation, except for a
+      blockquote marker (F6's case) and except in a block of its own. A
+      tight item's continuation lines are handed to the parser raw --
+      `OListProcessor.get_items` appends them without dedenting -- so moving
+      one changes which block processor claims the *whole* block. Dedenting
+      `  ---` under `- a` would turn a list and a rule into an `<h2>` whose
+      text is `- a`; dedenting `  # x` would lift the heading out of the
+      item. A `>` line can be claimed by nothing above `quote` (20) that it
+      could not be claimed by already, which is what makes it the one safe
+      exception -- and the useful one, since `BlockQuoteProcessor.RE`
+      tolerates exactly three spaces.
+    - An over-indented line stays over-indented. Four or more spaces past
+      the continuation column is indented code in CommonMark, and code
+      cannot interrupt a paragraph, so such a line is prose that must not be
+      pulled down into `OListProcessor.INDENT_RE`'s four-to-seven-space
+      window and turned into a nested item.
+    """
+    out = []
+    # The source content column of every open list item, outermost first.
+    open_items = []
+    after_blank = True  # the start of the document behaves like a blank line
+    after_marker = False
+    own_block = False  # this block began after a blank line, not on a marker
+    for line in lines:
+        if not line.strip():
+            out.append(line)
+            after_blank = True
+            after_marker = False
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        # The items this line is still inside, by indentation alone.
+        depth = len(open_items)
+        while depth and indent < open_items[depth - 1]:
+            depth -= 1
+        column = open_items[depth - 1] if depth else 0
+        match = _LIST_ITEM.match(line)
+        is_item = (
+            match is not None
+            # At four spaces past the continuation column the line is
+            # indented code, and code never opens a list item.
+            and indent < column + tab_length
+            and _THEMATIC_BREAK.match(line) is None
+            and (
+                after_blank
+                or after_marker
+                or match.group("marker") in _INTERRUPTING_MARKERS
+            )
+        )
+        if not is_item and not after_blank and depth < len(open_items):
+            # Lazy continuation: too far left for the item it continues, but
+            # a paragraph is open, so the item does not close and the line
+            # keeps the indentation the parser already handles correctly.
+            out.append(line)
+            after_marker = False
+            after_blank = False
+            continue
+        del open_items[depth:]
+        if is_item:
+            open_items.append(
+                indent + len(match.group("marker")) + len(match.group("gap"))
+            )
+            out.append(" " * (tab_length * depth) + line[indent:])
+            own_block = False
+        else:
+            if after_blank:
+                own_block = True
+            offset = indent - column
+            if not depth:
+                out.append(line)
+            elif own_block:
+                # A block of its own inside the item: `ListIndentProcessor`
+                # will dedent it by `tab_length * depth`, so put it there.
+                # An offset of one to three columns past the continuation
+                # column is insignificant to every block construct, and
+                # dropping it is what keeps a document that already indents
+                # `tab_length` per level byte-identical through this pass.
+                # Four or more is the indent of a code block and is content,
+                # so it is carried through.
+                carried = offset if offset >= tab_length else 0
+                out.append(" " * (tab_length * depth + carried) + line[indent:])
+            elif offset < tab_length and line[indent] == ">":
+                out.append(" " * (tab_length * (depth - 1) + offset) + line[indent:])
+            else:
+                out.append(line)
+        after_marker = is_item
+        after_blank = False
+    return out
 
 
 # The language class for a fenced code block is the first whitespace- or
@@ -424,6 +584,32 @@ def make_extensions(markdown_module):
                 FencedCodePreprocessor(md), "fenced_code_block", 25
             )
 
+    class ListIndentationPreprocessor(Preprocessor):
+        """Run `normalize_list_indentation` over the document's lines.
+
+        A fresh `Preprocessor` under a name of xedown's own, registered at
+        18. Introspecting the assembled `Markdown()` pipeline shows
+        `md.preprocessors` holding exactly three entries --
+        `normalize_whitespace` (30), xedown's own `fenced_code_block` (25)
+        and `html_block` (20) -- so 18 is below every one of them and this
+        pass is the last thing to touch the raw lines. That order is the
+        design, not a free choice: `normalize_whitespace` has already
+        expanded tabs (so a column count is a space count), and the two
+        stashing preprocessors have already removed the text whose
+        indentation is content. `tab_length` is read off the `Markdown`
+        instance rather than assumed, since it is what every vendored list
+        processor builds its own regexes from.
+        """
+
+        def run(self, lines):
+            return normalize_list_indentation(lines, self.md.tab_length)
+
+    class ListIndentationExtension(Extension):
+        def extendMarkdown(self, md):
+            md.preprocessors.register(
+                ListIndentationPreprocessor(md), "xedown_list_indent", 18
+            )
+
     class ListInterruptProcessor(BlockProcessor):
         """Split a paragraph block where a list starts inside it.
 
@@ -464,5 +650,6 @@ def make_extensions(markdown_module):
         HashHeaderOverrideExtension(),
         ParenOListExtension(),
         FencedCodeOverrideExtension(),
+        ListIndentationExtension(),
         ListInterruptExtension(),
     ]

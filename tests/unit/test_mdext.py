@@ -2,7 +2,12 @@ import pathlib
 
 import pytest
 from xedown import vendoring
-from xedown.mdext import fence_lang, find_list_interrupt, make_extensions
+from xedown.mdext import (
+    fence_lang,
+    find_list_interrupt,
+    make_extensions,
+    normalize_list_indentation,
+)
 
 
 @pytest.fixture
@@ -578,6 +583,223 @@ def test_a_task_list_interrupting_a_paragraph_still_gets_checkboxes(convert):
     assert html.count("<input") == 2
 
 
+# --- List indentation: the rule itself (task 15 / F5, F6) ---
+
+
+def _normalized(text):
+    return "\n".join(normalize_list_indentation(text.split("\n")))
+
+
+def test_a_document_already_indented_four_spaces_is_untouched():
+    # The invariant the whole pass rests on: it translates CommonMark's
+    # continuation column onto the vendored parser's fixed four, and a
+    # document that already speaks four says the same thing afterwards.
+    for text in (
+        "- a\n    - b\n        - c",
+        "1. one\n    1. inner",
+        "- a\n\n    para two\n\n- b",
+        "Just a paragraph.\n\nAnd another.",
+    ):
+        assert _normalized(text) == text, text
+
+
+def test_a_two_space_sublist_moves_to_four():
+    assert _normalized("- Flask\n  - apiflask") == "- Flask\n    - apiflask"
+
+
+def test_each_level_gets_one_tab_length_whatever_the_source_used():
+    assert _normalized("* a\n  * b\n    * c") == "* a\n    * b\n        * c"
+
+
+def test_an_ordered_marker_sets_a_three_column_continuation():
+    # `1. ` is three columns wide, so a sublist indented three belongs to it.
+    assert _normalized("1. one\n   1. inner") == "1. one\n    1. inner"
+
+
+def test_a_sibling_dedents_back_to_its_own_level():
+    assert _normalized("- a\n  - b\n- c") == "- a\n    - b\n- c"
+
+
+def test_indented_code_at_the_top_level_is_left_alone():
+    assert _normalized("text\n\n    - not a list") == "text\n\n    - not a list"
+
+
+def test_a_marker_four_past_the_continuation_column_is_not_an_item():
+    # Four spaces past the column is indented code, and code cannot
+    # interrupt a paragraph, so this is prose. Pulling it down into
+    # `OListProcessor.INDENT_RE`'s four-to-seven window would invent a
+    # sublist that neither CommonMark nor the parser before this change saw.
+    assert _normalized("- a\n        - b") == "- a\n        - b"
+
+
+def test_prose_that_looks_like_an_ordered_marker_stays_prose():
+    # GFM's rule, and the reason it exists: only `1.` may interrupt. Were
+    # `1985.` taken for a marker it would open a level and become
+    # `<ol start="1985">`, since `sane_lists` sets `LAZY_OL = False`.
+    text = "- a\n  Text was\n  1985. What a year."
+    assert _normalized(text) == text
+
+
+def test_a_non_interrupting_marker_after_a_marker_line_still_opens_an_item():
+    # `2.` cannot interrupt a *paragraph*, but the line above it is a marker,
+    # not prose, so the sublist's second item is an item.
+    assert _normalized("1. a\n   1. b\n   2. c") == "1. a\n    1. b\n    2. c"
+
+
+def test_a_lazy_continuation_keeps_its_own_indentation():
+    assert _normalized("- a\ncontinued") == "- a\ncontinued"
+
+
+def test_a_content_less_marker_does_not_open_a_level():
+    # The vendored `RE` needs a space and content, so a bare `-` is not an
+    # item to the parser downstream. Opening a level here would indent the
+    # sub-items into a level nothing can enter, and lose them in a paragraph.
+    assert _normalized("-\n  - b") == "-\n- b"
+
+
+def test_a_blockquote_marker_past_the_column_is_pulled_back_within_three():
+    # F6. `BlockQuoteProcessor.RE` tolerates three spaces and no more, and a
+    # tight item's continuation lines reach it undedented.
+    assert _normalized("- item\n    > quote") == "- item\n  > quote"
+
+
+def test_a_rule_or_heading_line_inside_a_tight_item_is_never_moved():
+    # The trap. Dedenting `  ---` would make `- a` a setext heading's text
+    # and destroy the list; dedenting `  # x` would lift the heading out of
+    # the item. Only `>` is safe to move, so only `>` moves.
+    for line in ("  ---", "  ===", "  # heading", "  | a | b |"):
+        assert _normalized(f"- a\n{line}") == f"- a\n{line}", line
+
+
+def test_a_thematic_break_is_never_read_as_a_list_item():
+    # `- - -` is a marker, a space and content to the item regex, and a rule
+    # to CommonMark and to `HRProcessor` alike. Indenting it as an item would
+    # put a literal `- -` where the rule was.
+    for line in ("  - - -", "  * * *", "  -  -  -  -"):
+        assert _normalized(f"- a\n{line}") == f"- a\n{line}", line
+
+
+def test_a_blank_line_does_not_close_an_open_item():
+    assert _normalized("- a\n\n  - b") == "- a\n\n    - b"
+
+
+def test_a_block_of_its_own_inside_an_item_lands_where_indent_can_dedent_it():
+    # A separate block goes to `ListIndentProcessor`, which dedents by
+    # `tab_length * depth`, so the offset past the column survives as the
+    # code indentation it is.
+    assert _normalized("- a\n\n  para") == "- a\n\n    para"
+    assert _normalized("- a\n\n      code") == "- a\n\n        code"
+
+
+def test_the_tab_length_is_a_parameter_not_a_constant():
+    assert normalize_list_indentation(["- a", "  - b"], tab_length=6) == [
+        "- a",
+        "      - b",
+    ]
+
+
+# --- List indentation: the fix (task 15 / F5, F6) ---
+
+
+def test_a_two_space_sublist_nests_instead_of_flattening(convert):
+    # F5, the minimal input from the audit.
+    html = convert("- Flask\n  - apiflask")
+    assert html.count("<ul>") == 2
+    assert html.count("<li>") == 2
+    assert "<li>Flask<ul>" in html
+
+
+def test_three_two_space_levels_nest_three_deep(convert):
+    html = convert("* a\n  * b\n    * c")
+    assert html.count("<ul>") == 3
+    assert html.count("<li>") == 3
+
+
+def test_a_two_space_sublist_after_a_blank_line_nests(convert):
+    html = convert("- item\n\n  - nested")
+    assert html.count("<ul>") == 2
+
+
+def test_an_ordered_sublist_keeps_both_of_its_items(convert):
+    html = convert("1. a\n   1. b\n   2. c")
+    assert html.count("<ol>") == 2
+    assert html.count("<li>") == 3
+
+
+def test_a_sibling_after_a_sublist_returns_to_the_outer_list(convert):
+    html = convert("* [A](#a)\n  * [B](#b)\n* [C](#c)")
+    assert html.count("<ul>") == 2
+    assert html.count("<li>") == 3
+
+
+def test_four_space_nesting_still_nests_exactly_one_level(convert):
+    # The failure mode `tab_length=2` would have introduced, pinned from the
+    # other side: four spaces is one level, not two, and not literal text.
+    html = convert("- a\n    - b")
+    assert html.count("<ul>") == 2
+    assert html.count("<li>") == 2
+
+
+def test_an_over_indented_blockquote_is_a_blockquote(convert):
+    # F6, the minimal input from the audit. The damage it repairs is an
+    # escaped `>` shown to the reader in place of the quotation.
+    html = convert("- item\n    > quote")
+    assert "<blockquote>" in html
+    assert "&gt;" not in html
+
+
+def test_a_blockquote_inside_a_two_space_sublist_survives_the_move(convert):
+    html = convert("- a\n  - b\n    > q")
+    assert html.count("<ul>") == 2
+    assert "<blockquote>" in html
+
+
+def test_a_two_space_task_sublist_nests_and_keeps_its_checkboxes(convert):
+    html = convert("- [ ] a\n  - [x] b")
+    # `<ul` rather than `<ul>`: both lists carry the task-list class.
+    assert html.count("<ul") == 2
+    assert html.count("<input") == 2
+    assert "checked" in html
+
+
+def test_a_list_interrupting_a_paragraph_still_nests_below_it(convert):
+    # The two passes meet: this one re-indents, `xedown_list_interrupt`
+    # splits the paragraph off the block that results.
+    html = convert("Text.\n- a\n  - b")
+    assert "<p>Text.</p>" in html
+    assert html.count("<ul>") == 2
+
+
+def test_a_rule_under_a_two_space_item_is_still_a_list_and_a_rule(convert):
+    # The trap, end to end. If the `---` were dedented this would collapse
+    # into a single `<h2>` whose text is `- a`.
+    html = convert("- a\n  ---")
+    assert "<ul>" in html
+    assert "<hr />" in html
+    assert "<h2" not in html
+
+
+def test_a_fenced_body_inside_a_list_keeps_its_own_indentation(convert):
+    # The reason priority 18 is the design and not a free choice: by the
+    # time this pass runs, `fenced_code_block` (25) has already lifted the
+    # fence into the HTML stash, so indentation that is code is not text
+    # this pass declines to move -- it is not text.
+    html = convert("- a\n\n  ```sh\n  one\n      two\n  ```")
+    assert "<code" in html
+    assert "one\n    two" in html
+
+
+def test_a_nested_list_inside_a_blockquote_is_still_flattened(convert):
+    # Recorded, not endorsed. This pass reads absolute indentation, and a
+    # `>` prefix moves the continuation column somewhere it does not look.
+    # Nothing regresses -- this rendered flat before the change too -- and
+    # teaching it to strip quote prefixes is a second parser's worth of
+    # state for a shape the corpus does not show.
+    html = convert("> - a\n>   - b")
+    assert html.count("<ul>") == 1
+    assert html.count("<li>") == 2
+
+
 # --- Reach, residual, and fixture parity (brief 16) ---
 #
 # Blockquotes, list items and footnote definitions each re-parse their own
@@ -675,3 +897,27 @@ def test_the_edge_cases_fixture_is_the_one_document_that_changes(convert):
     markdown_module = vendoring.import_markdown()
     text = (FIXTURES_DIR / "edge-cases.md").read_text(encoding="utf-8")
     assert convert(text) != _convert_without_list_interrupt(markdown_module, text)
+
+
+def _convert_without_list_indentation(markdown_module, text):
+    """Convert with every xedown extension except task 15's."""
+    extensions = make_extensions(markdown_module)
+    kept = [e for e in extensions if type(e).__name__ != "ListIndentationExtension"]
+    assert len(kept) == len(extensions) - 1, "ListIndentationExtension was not found"
+    md = markdown_module.Markdown(extensions=list(vendoring.MARKDOWN_EXTENSIONS) + kept)
+    return md.convert(text)
+
+
+def test_every_fixture_renders_identically_without_the_indentation_pass(convert):
+    # Every shipped fixture, `edge-cases.md` included: all of them already
+    # indent four spaces per level, and on such a document this pass is a
+    # no-op by construction. Stated as a test rather than assumed, because
+    # "a four-space document comes through unchanged" is the property the
+    # whole translation rests on, and a fixture is a real document rather
+    # than a hand-built line.
+    markdown_module = vendoring.import_markdown()
+    for name in CLEAN_FIXTURES + ("edge-cases.md",):
+        text = (FIXTURES_DIR / name).read_text(encoding="utf-8")
+        assert convert(text) == _convert_without_list_indentation(
+            markdown_module, text
+        ), name
