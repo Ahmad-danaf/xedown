@@ -82,6 +82,63 @@ _THEMATIC_BREAK = re.compile(
     r"(?P=run)[ ]*$"
 )
 
+# A setext underline. One or two hyphens, not three: at three
+# `HRProcessor` (50) claims the line as a rule before `setextheader` (60)
+# ever sees it, and the two behave differently enough that the distinction
+# matters -- see `_ends_list_tracking`. Matched against a line's content
+# with its own indentation stripped, because the column that decides the
+# outcome is the one the line lands on after the parser has dedented it,
+# not the one it was written at.
+_SETEXT_UNDERLINE = re.compile(r"^(?:=+|-{1,2})[ ]*$")
+
+# An ATX heading as `SpacedHashHeaderProcessor` (70) defines one: at most
+# six hashes, and a space or end of line after them.
+_ATX_HEADING = re.compile(r"^#{1,6}(?:[ ]|$)")
+
+
+REWIND = "rewind"
+STOP = "stop"
+
+
+def _ends_list_tracking(content, indent, depth, tab_length):
+    """How a tight line inside a list ends this pass's tracking of one.
+
+    `REWIND`, `STOP` or None. Three processors *split* the block they are
+    given and re-queue the halves: `hr` (50), `setextheader` (60) and
+    `hashheader` (70). Each is claimed near the left margin and not at
+    `tab_length` columns in, which is what makes them the hazard for a pass
+    that moves marker lines to the right: `ListIndentProcessor` dedents
+    every tight line under a nested marker by `tab_length`, and one of these
+    three arriving at the margin can take the list with it. Telling the
+    three cases apart is what keeps the guard from eating the fix.
+
+    - **A setext underline** absorbs the line *above* it into the heading,
+      so a marker line this pass has moved becomes the heading's text: `- b`
+      renders as an `<h1>` reading "- b" rather than as an item. Indentation
+      cannot save it, so it always `REWIND`s.
+    - **A rule or an ATX heading inside an item** separates a sub-item from
+      the parent it was just nested under, leaving the sub-item four columns
+      in with no list around it -- indented code. `REWIND`. Four or more
+      columns past the nesting it is claimed by nothing above `ulist`, so
+      the fix can stay and this returns None.
+    - **A rule or an ATX heading at the margin**, left of every open item,
+      cuts the block at its own line: the half above is a whole list and
+      keeps the nesting, so there is nothing to undo. But the list is over
+      as far as the parser is concerned, so tracking has to `STOP` --
+      otherwise a later line is still measured against an item that no
+      longer exists. `### Heading` directly under a list line is a shape
+      real READMEs contain, and rewinding it would cost real sublists.
+    """
+    if _SETEXT_UNDERLINE.match(content) is not None:
+        return REWIND
+    if _THEMATIC_BREAK.match(content) is None and _ATX_HEADING.match(content) is None:
+        return None
+    if not depth:
+        return STOP
+    # Where the line lands once the nesting above it is dedented away.
+    return REWIND if indent - tab_length * (depth - 1) < tab_length else None
+
+
 # The markers GFM lets a list use to interrupt a paragraph -- the same rule
 # `_INTERRUPTING_MARKER` above encodes, needed again here as a set because
 # this pass has already matched the marker and only has to classify it. A
@@ -124,9 +181,26 @@ def normalize_list_indentation(lines, tab_length=4):
     20) have been lifted out into the HTML stash and replaced by
     placeholders before this sees a single line. Indentation that is content
     is not text this pass declines to touch; by the time it runs, it is not
-    text.
+    text. That argument reaches exactly as far as the stashing
+    preprocessors do and no further: `_FENCED_BLOCK_RE` tolerates three
+    spaces of indent, so a fence indented four or more inside a list item is
+    never stashed, and this pass can and does move its body. That shape
+    diverges from cmark-gfm both before and after this change -- the fence
+    is not recognised as a fence at all -- so nothing regresses, but the
+    guarantee above is about fences the stashing preprocessor matched, not
+    about every line that looks like one.
 
-    Two hazards remain that indentation alone can spring, and both are
+    It is deliberately **not** idempotent, and nothing calls it twice: a
+    preprocessor runs once per conversion. The continuation columns it reads
+    are the *source* document's, while the indentation it writes is the
+    parser's fixed `tab_length` model, so its output is in the other
+    coordinate system and feeding that back in translates a second time (a
+    code block inside a two-column item drifts 6 -> 8 -> 10). Making it a
+    fixed point would mean emitting an item whose content column is
+    `tab_length * depth`, which is not what a marker line's content column
+    is.
+
+    Three hazards remain that indentation alone can spring, and each is
     closed by narrowness rather than by inspection:
 
     - A line that is *not* a marker keeps its own indentation, except for a
@@ -145,6 +219,16 @@ def normalize_list_indentation(lines, tab_length=4):
       cannot interrupt a paragraph, so such a line is prose that must not be
       pulled down into `OListProcessor.INDENT_RE`'s four-to-seven-space
       window and turned into a nested item.
+    - A rule, a setext underline or an ATX heading tight inside a list ends
+      the tracking, and sometimes undoes it. Declining to *move* the rule is
+      not enough: `HRProcessor` (50) splits the block at the rule and
+      re-queues both halves, so whatever follows re-enters the chain with no
+      list context, and `tab_length` spaces there mean indented code (80)
+      rather than a sub-item -- `- a` / `  ---` / `  - b` would put the
+      bullet in a code box. `_ends_list_tracking` says which of the two is
+      needed and why. With a blank line around it the rule is its own block,
+      `ListIndentProcessor` still carries the item across, and the list
+      survives -- which is why the guard asks whether a blank line preceded.
     """
     out = []
     # The source content column of every open list item, outermost first.
@@ -152,11 +236,23 @@ def normalize_list_indentation(lines, tab_length=4):
     after_blank = True  # the start of the document behaves like a blank line
     after_marker = False
     own_block = False  # this block began after a blank line, not on a marker
+    # This pass emits exactly one line for every line it reads, so a block's
+    # output can be put back the way it was written by index alone.
+    block_start = 0
+    block_source = []
+    verbatim = False
     for line in lines:
         if not line.strip():
             out.append(line)
+            block_start = len(out)
+            block_source = []
+            verbatim = False
             after_blank = True
             after_marker = False
+            continue
+        block_source.append(line)
+        if verbatim:
+            out.append(line)
             continue
         indent = len(line) - len(line.lstrip(" "))
         # The items this line is still inside, by indentation alone.
@@ -164,6 +260,30 @@ def normalize_list_indentation(lines, tab_length=4):
         while depth and indent < open_items[depth - 1]:
             depth -= 1
         column = open_items[depth - 1] if depth else 0
+        ending = (
+            _ends_list_tracking(line[indent:], indent, depth, tab_length)
+            if open_items and not after_blank
+            else None
+        )
+        if ending is not None:
+            # A block splitter tight inside a list -- see the third hazard
+            # above. Either way the list is over for this pass; `REWIND`
+            # additionally puts back the lines already emitted for this
+            # block and hands the rest over untouched, so the block renders
+            # exactly as it did before this pass existed. Rewinding rather
+            # than merely stopping is what the deeper forms need: by the
+            # time the splitter is reached the marker lines above it have
+            # already been moved, and leaving them moved is what turns
+            # `- b` / `    ---` into an `<h2>` reading `- b` with the next
+            # sub-item in a code box.
+            if ending is REWIND:
+                out[block_start:] = block_source
+                verbatim = True
+            else:
+                out.append(line)
+            open_items.clear()
+            after_marker = False
+            continue
         match = _LIST_ITEM.match(line)
         is_item = (
             match is not None
@@ -190,7 +310,14 @@ def normalize_list_indentation(lines, tab_length=4):
             open_items.append(
                 indent + len(match.group("marker")) + len(match.group("gap"))
             )
-            out.append(" " * (tab_length * depth) + line[indent:])
+            # An outermost item is left exactly where it was written. Its
+            # marker is already inside the nought-to-three columns every
+            # vendored list processor tolerates, so moving it buys nothing,
+            # and moving it *left* can walk a marker out from under an
+            # indented code block that was holding it.
+            out.append(
+                line if not depth else " " * (tab_length * depth) + line[indent:]
+            )
             own_block = False
         else:
             if after_blank:
@@ -366,9 +493,11 @@ def make_extensions(markdown_module):
     # without a bare top-level `import markdown...` in this file -- which
     # would risk resolving to a non-vendored copy if this module happened to
     # be imported before the vendoring guard runs.
-    SaneOListProcessor = importlib.import_module(
+    _sane_lists = importlib.import_module(
         f"{markdown_module.__name__}.extensions.sane_lists"
-    ).SaneOListProcessor
+    )
+    SaneOListProcessor = _sane_lists.SaneOListProcessor
+    SaneUListProcessor = _sane_lists.SaneUListProcessor
     # Same reasoning as `SaneOListProcessor` above: `attr_list` is one of
     # `vendoring.MARKDOWN_EXTENSIONS`, but not yet imported as a submodule
     # at this point, since that only happens once `Markdown()` itself loads
@@ -508,11 +637,42 @@ def make_extensions(markdown_module):
                 r"((\d+[.)])|[*+-])[ ]+.*"
             )
 
+    class ParenUListProcessor(SaneUListProcessor):
+        """The other half of task 14 / F20, which task 15 surfaced.
+
+        `INDENT_RE` is how a list processor spots a *nested* item of either
+        type, so `ulist` carries its own copy of the ordered-marker shape --
+        and `sane_lists` leaves it at `OListProcessor.__init__`'s `\\d+\\.`,
+        which does not know `)`. Widening `olist` alone therefore left
+        `- a` / `  1) b` with no nested `<ol>`: the `1)` line went to
+        `get_items`' fallback and stayed literal text.
+
+        It stayed hidden while a two-space sublist was flattened anyway --
+        the line landed at three columns, `xedown_list_interrupt` (12)
+        recognised the marker there and split the item, and the nesting came
+        out right by a route that had nothing to do with `INDENT_RE`. Once
+        `xedown_list_indent` moves that line to four columns the fallback is
+        the only route left, so the gap became visible. `RE` and `CHILD_RE`
+        are untouched: an unordered list's own item is `[*+-]`, never a
+        number, and `sane_lists` narrows `CHILD_RE` for a reason.
+        """
+
+        def __init__(self, parser):
+            super().__init__(parser)
+            self.INDENT_RE = re.compile(
+                rf"^[ ]{{{self.tab_length},{self.tab_length * 2 - 1}}}"
+                r"((\d+[.)])|[*+-])[ ]+.*"
+            )
+
     class ParenOListExtension(Extension):
         def extendMarkdown(self, md):
-            # Same name and priority as the vendored `olist` it replaces.
+            # Same names and priorities as the vendored `olist` and `ulist`
+            # they replace.
             md.parser.blockprocessors.register(
                 ParenOListProcessor(md.parser), "olist", 40
+            )
+            md.parser.blockprocessors.register(
+                ParenUListProcessor(md.parser), "ulist", 30
             )
 
     class FencedCodePreprocessor(Preprocessor):

@@ -653,8 +653,18 @@ def test_a_lazy_continuation_keeps_its_own_indentation():
 def test_a_content_less_marker_does_not_open_a_level():
     # The vendored `RE` needs a space and content, so a bare `-` is not an
     # item to the parser downstream. Opening a level here would indent the
-    # sub-items into a level nothing can enter, and lose them in a paragraph.
-    assert _normalized("-\n  - b") == "-\n- b"
+    # sub-item into a level nothing can enter, and lose it in a paragraph:
+    # `  - b` stays an outermost item, and an outermost item is never moved.
+    assert _normalized("-\n  - b") == "-\n  - b"
+
+
+def test_an_outermost_marker_keeps_its_own_indentation():
+    # Nought to three columns is what every vendored list processor
+    # tolerates on an outermost marker, so moving one buys nothing -- and
+    # moving it left can walk it out from under an indented code block that
+    # was holding it.
+    assert _normalized("  - a\n    - b") == "  - a\n    - b"
+    assert _normalized("   - a\n     - b") == "   - a\n    - b"
 
 
 def test_a_blockquote_marker_past_the_column_is_pulled_back_within_three():
@@ -677,6 +687,95 @@ def test_a_thematic_break_is_never_read_as_a_list_item():
     # put a literal `- -` where the rule was.
     for line in ("  - - -", "  * * *", "  -  -  -  -"):
         assert _normalized(f"- a\n{line}") == f"- a\n{line}", line
+
+
+# --- List indentation: block splitters end the tracking (task 15, review) ---
+#
+# Declining to *move* a rule is not enough. `hr` (50), `setextheader` (60)
+# and `hashheader` (70) split the block they are in and re-queue the halves,
+# so whatever follows re-enters the chain with no list context -- where
+# `tab_length` spaces mean indented code, not a sub-item. The whole block
+# goes back the way it was written.
+
+RULES = ("---", "***", "___", "- - -", "* * *")
+
+
+def test_a_rule_tight_inside_an_item_puts_the_whole_block_back():
+    for rule in RULES:
+        assert _normalized(f"- a\n  {rule}\n  - b") == f"- a\n  {rule}\n  - b", rule
+
+
+def test_a_rule_deeper_in_puts_the_whole_block_back_including_the_move():
+    # The form the guard exists for. Rewinding matters here and not in the
+    # shallow form: `  - b` has already been moved to four columns by the
+    # time the rule is reached, and leaving it there is what makes
+    # `setextheader` read `- b` as an `<h2>`'s text.
+    for rule in RULES + ("===", "# x", "### x"):
+        source = f"- a\n  - b\n    {rule}\n    - c"
+        assert _normalized(source) == source, rule
+
+
+def test_a_rule_in_a_block_of_its_own_leaves_the_list_alone(convert):
+    # With a blank line either side the rule is its own block,
+    # `ListIndentProcessor` carries the item across it, and the list
+    # survives -- so the guard must not fire and the fix stays.
+    assert _normalized("- a\n\n  ---\n\n  - b") == "- a\n\n    ---\n\n    - b"
+    html = convert("- a\n\n  ---\n\n  - b")
+    assert html.count("<ul>") == 2
+    assert "<hr />" in html
+
+
+def test_a_heading_at_the_margin_under_a_list_is_not_this_hazard():
+    # An ATX heading cuts the block at its own line, so the half above it is
+    # a whole list and keeps its nesting. This shape is in awesome-python;
+    # treating it as the hazard would cost real sublists.
+    assert _normalized("- a\n  - b\n### Geolocation") == (
+        "- a\n    - b\n### Geolocation"
+    )
+
+
+def test_a_splitter_at_the_margin_still_ends_the_tracking():
+    # Nothing above it is undone, but the list is over for the parser, so a
+    # later line must not be measured against an item that no longer exists.
+    # Left tracking, `   1. one` here would be read as a sub-item of `* b`
+    # and moved to four columns, which is where the indented code block
+    # above it would swallow it.
+    source = "* b\n# head\n    <div>x</div>\n   1. one\n - a"
+    assert _normalized(source) == source
+
+
+def test_a_deeply_indented_splitter_is_claimed_by_nothing_and_is_left_alone():
+    # Four or more columns past the nesting, a rule is not a rule to any
+    # processor, so there is no hazard and the fix stays.
+    assert _normalized("- a\n      ---\n  - b") == "- a\n      ---\n    - b"
+
+
+def test_a_setext_underline_fires_wherever_it_is():
+    # Unlike a rule or an ATX heading, a setext underline absorbs the line
+    # *above* it, so a marker line this pass has moved becomes the heading's
+    # text however far left the underline sits.
+    for underline in ("===", "-", "--"):
+        source = f"- a\n  - b\n{underline}"
+        assert _normalized(source) == source, underline
+
+
+def test_a_rule_tight_inside_an_item_renders_as_it_did_before(convert):
+    # The reader-facing half of the same claim, and the outcome the guard
+    # exists to prevent: `- b` in a code box.
+    html = convert("- a\n  ---\n  - b")
+    assert "<hr />" in html
+    assert "<pre>" not in html
+    assert html.count("<li>") == 2
+
+
+def test_a_nested_ordered_paren_item_under_a_bullet_still_nests(convert):
+    # `ulist` carries its own `INDENT_RE` for spotting a nested item of
+    # either type, and `sane_lists` leaves the ordered half of it at
+    # `\\d+\\.`. Widening `olist` alone (task 14 / F20) missed it, and this
+    # pass moving the line to four columns is what made it visible.
+    html = convert("- a\n  1) b")
+    assert "<ol>" in html
+    assert "1)" not in html
 
 
 def test_a_blank_line_does_not_close_an_open_item():
