@@ -1,5 +1,9 @@
 """Fetching a remote image: the cache, the limits, and the coalescing."""
 
+import email.message
+import io
+import urllib.error
+
 from xedown import imagefetch, remoteimages
 
 
@@ -229,6 +233,59 @@ def test_an_http_error_status_is_reported_with_its_code():
     result = fetch("https://e.com/a.png", StubOpener(StubResponse(status=404)))
     assert result.error == imagefetch.HTTP_ERROR
     assert "404" in result.detail
+
+
+def http_error(status, message, headers=None, body=b""):
+    """A non-2xx in the shape urllib really produces: raised, not returned.
+
+    `urllib.error.HTTPError` is both an exception and a response, and the
+    opener *raises* it -- there is no returned object with a `.status` on it
+    to inspect. The stub above models the other shape; both occur, and only
+    this one occurs in the field.
+    """
+    headers_message = email.message.Message()
+    for name, value in (headers or {}).items():
+        headers_message[name] = value
+    return urllib.error.HTTPError(
+        "https://e.com/a.png", status, message, headers_message, io.BytesIO(body)
+    )
+
+
+def test_a_raised_http_error_is_reported_with_its_code():
+    # `HTTPError` is a subclass of `URLError`, so the `except URLError`
+    # branch used to swallow it first and every 404 in the field was
+    # reported as "it could not be reached (Not Found)" -- a transport
+    # failure, which it is not. Confirmed against a real server before the
+    # fix and after it.
+    result = fetch("https://e.com/a.png", StubOpener(http_error(404, "Not Found")))
+    assert result.error == imagefetch.HTTP_ERROR
+    assert "404" in result.detail
+
+
+def test_a_redirect_raised_as_an_http_error_is_still_followed():
+    # The same trap, and the worse half of it: `_urllib_opener` removes
+    # urllib's redirect handler on purpose (it permits an https -> http
+    # downgrade), which means a 3xx is *raised* as an HTTPError too. Read as
+    # an error, it silently ended the hop-by-hop following this module
+    # implements by hand -- so no redirect worked at all outside the tests.
+    opener = StubOpener(
+        http_error(302, "Found", headers={"Location": "https://cdn.e.com/b.png"}),
+        StubResponse(body=PNG_1X1),
+    )
+    result = fetch("https://e.com/a.png", opener)
+    assert result.ok and result.mime == "image/png"
+    assert [call["url"] for call in opener.calls] == [
+        "https://e.com/a.png",
+        "https://cdn.e.com/b.png",
+    ]
+
+
+def test_a_redirect_raised_as_an_http_error_cannot_downgrade_to_http():
+    opener = StubOpener(
+        http_error(302, "Found", headers={"Location": "http://cdn.e.com/b.png"})
+    )
+    result = fetch("https://e.com/a.png", opener)
+    assert result.error == imagefetch.REDIRECT_REFUSED
 
 
 def test_a_redirect_to_https_is_followed():

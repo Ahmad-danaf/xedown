@@ -154,6 +154,26 @@ def fetch_once(url, opener, resolver=None, proxies=None):
 
         try:
             response = opener(current, dict(_HEADERS), remoteimages.TIMEOUT_S, proxies)
+        except urllib.error.HTTPError as exc:
+            # Ahead of `URLError`, which is its base class -- and taken as
+            # the *response* it also is (`.status`, `.headers`, `.read()`,
+            # `.close()` are all there) rather than as a transport failure,
+            # so the status handling below is reached with exactly the
+            # object it would have got from an opener that returned instead
+            # of raising.
+            #
+            # urllib raises whatever its own handlers did not settle, which
+            # here is every non-2xx: `_urllib_opener` removes the redirect
+            # handler on purpose, so a 3xx reaches `HTTPDefaultErrorHandler`
+            # and is raised too. Reading this as an error would therefore
+            # have made the `status != 200` branch below unreachable with a
+            # real opener *and* killed the hop-by-hop redirect following
+            # this loop exists for. Both were confirmed against real
+            # servers: a 404 came back as `network`/"Not Found", and a 302
+            # as `network`/"Found" instead of being followed. Only the stub
+            # opener in the tests returns a non-200 rather than raising,
+            # which is why neither was caught.
+            response = exc
         except TimeoutError:
             return _refuse(TIMEOUT, "the server did not respond")
         except ssl.SSLError as exc:
