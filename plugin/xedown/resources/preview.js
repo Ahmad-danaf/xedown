@@ -208,7 +208,7 @@
          through setImageMessage with the real reason, and this is only what
          shows in the moment before that answer arrives, or if it never
          does. */
-      return "Remote image could not be loaded.";
+      return "Remote image could not be loaded";
     }
     /* A bare web address reaching the DOM some other way: here the src IS
        the address the document named, and worth naming back. */
