@@ -110,6 +110,50 @@ def remote_image_text(uri):
     return f"Remote image, not fetched: {uri}"
 
 
+def remote_image_blocked_text(uri):
+    """Placeholder text for a remote image the reader has not allowed."""
+    return f"Remote image, not loaded: {uri}"
+
+
+def insecure_image_text(uri):
+    """Placeholder text for an http:// image, which is never fetched.
+
+    Its own sentence rather than the blocked one: no setting and no button
+    will load this, so telling the reader they can allow it would be a lie.
+    """
+    return f"Not loaded: this address is not encrypted (http://) — {uri}"
+
+
+_FAILURE_SENTENCES = {
+    "offline": "you appear to be offline. Refresh once you are back online",
+    "timeout": "the server did not respond",
+    "too_large": "it is larger than 8 MB",
+    "too_many_pixels": "it is too large to display safely",
+    "not_an_image": "that address is not an image xedown can measure",
+    "http_error": "the server refused it",
+    "redirect_refused": "it redirected somewhere xedown will not follow",
+    "blocked_destination": "that address is not on the public internet",
+    "credentials": "that address contains a username and password",
+    "too_many": "too many images are already loading",
+    "tls_error": "its security certificate could not be verified",
+    "network": "it could not be reached",
+}
+
+
+def remote_image_failure_text(kind, detail=""):
+    """Why a fetch that was attempted did not produce an image.
+
+    The detail carries what only the attempt knows -- a status code, the
+    pixel count -- and is appended rather than substituted, so the reader
+    gets both the category and the particular.
+    """
+    sentence = _FAILURE_SENTENCES.get(kind, "it could not be loaded")
+    words = (detail or "").strip()
+    if words and words not in sentence:
+        sentence = f"{sentence} ({words})"
+    return f"Remote image could not be loaded: {sentence}"
+
+
 def local_image_missing_text(path):
     """Placeholder text for a reference that resolved to nothing on disk."""
     return f"Image not found: {path}"

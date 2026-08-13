@@ -3,7 +3,7 @@
 import os
 
 import pytest
-from xedown import images
+from xedown import images, remoteimages
 from xedown.sanitizer import ImagePlaceholder
 
 # Root bypasses the read permission bit, so an unreadable-file assertion
@@ -36,9 +36,9 @@ def test_a_data_uri_is_shown_without_touching_the_filesystem():
     assert decision.uri == reference
 
 
-def test_a_remote_reference_is_never_fetched(tmp_path):
+def test_a_remote_https_reference_is_blocked_unless_permitted(tmp_path):
     decision = images.classify_image("https://example.com/a.png", str(tmp_path))
-    assert decision.status == images.REMOTE
+    assert decision.status == images.REMOTE_BLOCKED
 
 
 def test_a_relative_reference_with_no_base_directory_is_unresolved():
@@ -143,3 +143,70 @@ def test_every_failure_obeys_the_display_setting(tmp_path, status_reference):
 )
 def test_an_unusable_display_value_falls_back_to_the_default(given, expected):
     assert images.coerce_display(given) == expected
+
+
+def test_an_https_image_is_fetchable_when_permitted():
+    decision = images.classify_image(
+        "https://example.com/a.png", None, fetch_remote=True
+    )
+    assert decision.status == images.FETCH
+    assert decision.uri == remoteimages.scheme_uri("https://example.com/a.png")
+
+
+def test_an_https_image_is_blocked_by_default():
+    decision = images.classify_image("https://example.com/a.png", None)
+    assert decision.status == images.REMOTE_BLOCKED
+    assert decision.uri is None
+
+
+def test_an_http_image_is_refused_even_when_fetching_is_permitted():
+    decision = images.classify_image(
+        "http://example.com/a.png", None, fetch_remote=True
+    )
+    assert decision.status == images.REMOTE_INSECURE
+
+
+def test_a_credential_bearing_url_is_never_fetchable():
+    decision = images.classify_image(
+        "https://u:p@example.com/a.png", None, fetch_remote=True
+    )
+    assert decision.status != images.FETCH
+
+
+def test_a_mailto_image_keeps_the_old_remote_wording():
+    decision = images.classify_image("mailto:a@b.c", None, fetch_remote=True)
+    assert decision.status == images.REMOTE
+
+
+def test_each_refusal_says_something_different():
+    texts = {
+        images.reason_text(images.classify_image("https://e.com/a.png", None)),
+        images.reason_text(
+            images.classify_image("http://e.com/a.png", None, fetch_remote=True)
+        ),
+    }
+    assert len(texts) == 2
+    assert any("not encrypted" in text for text in texts)
+
+
+def test_the_insecure_placeholder_still_honours_the_fallback_setting():
+    decision = images.classify_image("http://e.com/a.png", None)
+    assert images.placeholder_for(decision, "alt words", images.DISPLAY_HIDDEN) is None
+
+
+def test_render_stats_count_each_kind():
+    stats = images.RenderStats()
+    stats.record(images.classify_image("https://e.com/a.png", None))
+    stats.record(images.classify_image("https://e.com/b.png", None))
+    stats.record(images.classify_image("http://e.com/c.png", None))
+    assert stats.blocked_remote == 2
+    assert stats.insecure == 1
+    assert stats.remote == 0
+
+
+def test_a_failure_kind_becomes_a_sentence():
+    from xedown import errors, imagefetch
+
+    text = errors.remote_image_failure_text(imagefetch.TOO_MANY_PIXELS, "10000×10000")
+    assert "10000×10000" in text
+    assert errors.remote_image_failure_text(imagefetch.OFFLINE, "").strip()

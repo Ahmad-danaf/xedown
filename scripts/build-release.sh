@@ -110,6 +110,7 @@ REQUIRED=(
   "xedown/prefs.py"
   "xedown/prefswindow.py"
   "xedown/preview.py"
+  "xedown/remoteimages.py"
   "xedown/renderer.py"
   "xedown/sanitizer.py"
   "xedown/search.py"

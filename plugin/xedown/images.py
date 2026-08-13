@@ -12,11 +12,14 @@ import os
 import stat
 import urllib.parse
 
-from . import errors, links, settings
+from . import errors, links, remoteimages, settings
 from .sanitizer import ImagePlaceholder
 
 OK = "ok"
 REMOTE = "remote"
+FETCH = "fetch"
+REMOTE_BLOCKED = "remote_blocked"
+REMOTE_INSECURE = "remote_insecure"
 UNRESOLVED = "unresolved"
 MISSING = "missing"
 UNREADABLE = "unreadable"
@@ -37,8 +40,13 @@ class ImageDecision:
         self.detail = detail
 
 
-def classify_image(reference, base_dir):
-    """What can be done with `reference`. Never raises, never fetches."""
+def classify_image(reference, base_dir, fetch_remote=False):
+    """What can be done with `reference`. Never raises, never fetches itself.
+
+    `fetch_remote` is the *document's* permission -- already resolved by the
+    caller from the global setting and any per-document override -- not a
+    policy this function consults on its own.
+    """
     # No caller in this codebase can reach this today: the sanitizer never
     # hands `on_image` a reference at all unless `_is_safe_uri` already
     # accepted it, which requires a non-empty string. But the guarantee is
@@ -62,6 +70,19 @@ def classify_image(reference, base_dir):
     if scheme == "data":
         return ImageDecision(OK, uri=reference, reference=reference)
     if scheme in links.REMOTE_SCHEMES:
+        remote = remoteimages.classify_remote(reference)
+        if remote.status == remoteimages.INSECURE:
+            return ImageDecision(REMOTE_INSECURE, reference=reference)
+        if remote.status == remoteimages.FETCHABLE:
+            if not fetch_remote:
+                return ImageDecision(REMOTE_BLOCKED, reference=reference)
+            return ImageDecision(
+                FETCH, uri=remoteimages.scheme_uri(remote.url), reference=reference
+            )
+        # mailto:, credentials, or something unparseable. None of these is a
+        # thing the reader can choose to load, so they keep the older,
+        # deliberately vaguer wording rather than gaining a control they
+        # cannot act on.
         return ImageDecision(REMOTE, reference=reference)
 
     path = links.resolve_to_path(reference, base_dir)
@@ -109,6 +130,10 @@ def reason_text(decision):
     """Why this image is not being shown, as one sentence."""
     if decision.status == REMOTE:
         return errors.remote_image_text(decision.reference)
+    if decision.status == REMOTE_BLOCKED:
+        return errors.remote_image_blocked_text(decision.reference)
+    if decision.status == REMOTE_INSECURE:
+        return errors.insecure_image_text(decision.reference)
     if decision.status == MISSING:
         return errors.local_image_missing_text(decision.path or decision.reference)
     if decision.status == UNREADABLE:
@@ -124,7 +149,7 @@ def placeholder_for(decision, alt, display):
     Every failing status is treated alike: a reader who asked for no
     broken-image noise did not mean only the remote kind. `display` is
     `image_fallback`, not the `remote_images` fetch policy — none of its
-    three values touches what is fetched, which is nothing.
+    three values touches whether anything is fetched.
     """
     if display == DISPLAY_HIDDEN:
         return None
@@ -143,3 +168,24 @@ def coerce_display(value):
     """
     coerced, _ = settings.by_name(settings.IMAGE_FALLBACK).coerce(value)
     return coerced
+
+
+class RenderStats:
+    """What one render did about the images in it.
+
+    Filled in by the renderer and read by the controller, which needs
+    `blocked_remote` to decide whether the mode bar offers to load them.
+    """
+
+    def __init__(self):
+        self.blocked_remote = 0
+        self.remote = 0
+        self.insecure = 0
+
+    def record(self, decision):
+        if decision.status == REMOTE_BLOCKED:
+            self.blocked_remote += 1
+        elif decision.status == FETCH:
+            self.remote += 1
+        elif decision.status == REMOTE_INSECURE:
+            self.insecure += 1
