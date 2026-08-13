@@ -58,9 +58,8 @@ turn on `remote_images` or click a document's own **Load**.
   hundreds of megabytes of memory for a file only kilobytes long; it now
   shows a placeholder saying the image is too large to display safely
   instead. Inline payloads are measured in either spelling, base64 or
-  percent-encoded. An inline image in a format xedown cannot measure (AVIF,
-  SVG) is still shown as it always was. No setting raises or removes this
-  cap.
+  percent-encoded. An inline image in a format xedown cannot measure (AVIF)
+  is still shown as it always was. No setting raises or removes this cap.
 
 ### Known issues
 

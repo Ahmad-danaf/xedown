@@ -147,11 +147,14 @@ are measured however they are written — base64 or percent-encoded.
 
 "Can measure" means PNG, JPEG, GIF, WebP and BMP, whose dimensions are
 readable from their header bytes. An inline image in a format xedown cannot
-read that way — AVIF, SVG — is shown as it always was, uncapped: refusing an
-inline image that has always rendered would be a worse regression than the
-bug the cap fixes. A *remote* image in such a format is refused instead,
-which takes away nothing that ever worked; see
-[known-issues.md](known-issues.md) on AVIF.
+read that way — AVIF is the case that exists — is shown as it always was,
+uncapped: refusing an inline image that has always rendered would be a
+worse regression than the bug the cap fixes. A *remote* image in such a
+format is refused instead, which takes away nothing that ever worked; see
+[known-issues.md](known-issues.md) on AVIF. Inline SVG is a separate case:
+the sanitizer's image-format allowlist refuses `data:image/svg+xml`
+outright, because SVG is a scriptable document format rather than because
+its size is unreadable, so no inline SVG image reaches this cap at all.
 
 `code_copy_buttons` shows a copy button in the corner of every code block.
 Set it to `false` to remove them.

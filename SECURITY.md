@@ -65,11 +65,15 @@ by a dedicated regression test in `tests/unit/`:
     — base64 or percent-encoded — and a payload that *claims* one of the
     measured formats and then cannot be read is refused rather than passed
     on. **The residual:** an inline `data:` image in a format xedown cannot
-    measure at all (AVIF, SVG) is passed through unmeasured, deliberately —
-    refusing an inline image that has always rendered would be a worse
-    regression than the bug being fixed. A *remote* image in such a format
-    is refused instead, because refusing a fetch takes nothing away that
-    already worked. See
+    measure at all (AVIF is the case that exists) is passed through
+    unmeasured, deliberately — refusing an inline image that has always
+    rendered would be a worse regression than the bug being fixed. A
+    *remote* image in such a format is refused instead, because refusing a
+    fetch takes nothing away that already worked. SVG is not part of this
+    residual: an inline `data:image/svg+xml` URI is refused outright by the
+    sanitizer's own image-format allowlist, for an unrelated reason — SVG is
+    itself a scriptable document format, not merely one xedown cannot
+    measure — so no inline SVG image is ever rendered, capped or not. See
     [docs/known-issues.md](docs/known-issues.md).
 11. **Nothing is written to disk by xedown.** The result cache — successes
     and failures both — lives in memory only, and disappears when xed exits.

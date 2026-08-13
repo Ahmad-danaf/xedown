@@ -189,8 +189,9 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   now shows a placeholder explaining why. There is no setting that raises or
   removes this cap — it exists to stop a tiny file from claiming a decode
   that would exhaust memory, not to be a preference. An inline image in a
-  format whose size xedown cannot read (AVIF, SVG) is shown as before,
-  uncapped; the same format over the network is refused instead. See
+  format whose size xedown cannot read (AVIF) is shown as before, uncapped;
+  the same format over the network is refused instead. Inline SVG is
+  refused outright, unrelated to this cap. See
   [docs/settings.md](docs/settings.md).
 - **On a non-Latin keyboard layout** (Cyrillic, Greek, Arabic and others),
   <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>A</kbd> in the preview
