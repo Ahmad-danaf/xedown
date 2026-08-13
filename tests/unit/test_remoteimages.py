@@ -1,5 +1,6 @@
 """Which remote references may be fetched, and the private scheme's codec."""
 
+import pytest
 from xedown import remoteimages
 
 
@@ -68,3 +69,70 @@ def test_parse_refuses_credentials_and_junk():
     )
     assert remoteimages.parse_scheme_uri("not-our-scheme:https%3A%2F%2Fe.com") is None
     assert remoteimages.parse_scheme_uri("xedown-image:") is None
+
+
+def resolver_returning(*addresses):
+    def resolve(_host):
+        return list(addresses)
+
+    return resolve
+
+
+def test_a_public_address_is_allowed():
+    verdict = remoteimages.check_destination(
+        "example.com", resolver=resolver_returning("93.184.216.34")
+    )
+    assert verdict.ok is True
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "127.0.0.1",  # loopback
+        "::1",  # loopback v6
+        "10.0.0.5",  # private
+        "192.168.1.1",  # private
+        "172.16.0.1",  # private
+        "169.254.169.254",  # link-local: the cloud metadata endpoint
+        "fe80::1",  # link-local v6
+        "fc00::1",  # unique local v6
+        "0.0.0.0",  # unspecified
+        "100.64.0.1",  # carrier NAT: neither global NOR private
+        "::ffff:127.0.0.1",  # loopback wearing a v6 mapping
+    ],
+)
+def test_non_public_addresses_are_refused(address):
+    verdict = remoteimages.check_destination(
+        "anything.example", resolver=resolver_returning(address)
+    )
+    assert verdict.ok is False
+
+
+def test_a_host_resolving_to_both_public_and_private_is_refused():
+    # Refusing needs only one bad address: a round-robin that sometimes
+    # answers privately would otherwise be allowed on a lucky ordering.
+    verdict = remoteimages.check_destination(
+        "split.example", resolver=resolver_returning("93.184.216.34", "10.0.0.5")
+    )
+    assert verdict.ok is False
+
+
+def test_a_host_that_resolves_to_nothing_is_refused():
+    verdict = remoteimages.check_destination(
+        "void.example", resolver=resolver_returning()
+    )
+    assert verdict.ok is False
+
+
+def test_a_resolver_failure_is_refused_rather_than_raised():
+    def explode(_host):
+        raise OSError("no such host")
+
+    assert remoteimages.check_destination("x.example", resolver=explode).ok is False
+
+
+def test_the_real_resolver_rejects_the_numeric_spellings_of_loopback():
+    # The whole reason the check is on resolved addresses and not on the
+    # hostname string. These are real DNS-free resolutions.
+    for spelling in ("2130706433", "0x7f000001", "0177.0.0.1", "localhost"):
+        assert remoteimages.check_destination(spelling).ok is False

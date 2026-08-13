@@ -10,6 +10,8 @@ address it only through a scheme that document content cannot mint --
 `sanitizer.ALLOWED_URI_SCHEMES` does not contain it, and must never gain it.
 """
 
+import ipaddress
+import socket
 import urllib.parse
 
 SCHEME = "xedown-image"
@@ -97,3 +99,60 @@ def parse_scheme_uri(uri):
         return None
     decision = classify_remote(url)
     return decision.url if decision.status == FETCHABLE else None
+
+
+class DestinationVerdict:
+    """Whether a host may be contacted, and why not when it may not."""
+
+    def __init__(self, ok, detail=""):
+        self.ok = ok
+        self.detail = detail
+
+
+def _default_resolver(host):
+    """Every address `host` resolves to, as strings."""
+    infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+    return [info[4][0] for info in infos]
+
+
+def _is_public(address):
+    """True only for an address on the public internet.
+
+    `is_global` rather than `not is_private`: carrier-grade NAT space
+    (100.64.0.0/10) is neither global nor private, and only `is_global`
+    rejects it. A v4-mapped v6 address is unwrapped first, so
+    `::ffff:127.0.0.1` is judged as the loopback it is.
+    """
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if parsed.version == 6 and parsed.ipv4_mapped is not None:
+        parsed = parsed.ipv4_mapped
+    return parsed.is_global
+
+
+def check_destination(host, resolver=None):
+    """Whether `host` resolves only to public addresses.
+
+    Checked after resolution, never on the hostname string: `2130706433`,
+    `0x7f000001` and `0177.0.0.1` all resolve to 127.0.0.1, so a string check
+    would be no check at all.
+
+    Every returned address must be public. One private answer is enough to
+    refuse -- a round-robin that sometimes answers privately must not be
+    allowed through on a lucky ordering.
+    """
+    resolve = resolver if resolver is not None else _default_resolver
+    try:
+        addresses = list(resolve(host))
+    except Exception:  # noqa: BLE001 - a resolver failure is a refusal
+        return DestinationVerdict(False, "the address could not be resolved")
+    if not addresses:
+        return DestinationVerdict(False, "the address could not be resolved")
+    for address in addresses:
+        if not _is_public(address):
+            return DestinationVerdict(
+                False, "that address is not on the public internet"
+            )
+    return DestinationVerdict(True)
