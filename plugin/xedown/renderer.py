@@ -79,6 +79,17 @@ window.xedownConfig = {config};
 """
 
 
+def _note_rendered(stats, rendered):
+    """Say whether the HTML about to be returned is the document itself.
+
+    A free function rather than a method on `RenderStats`, because `stats`
+    is optional at every call site — `None` means no caller wants to know —
+    and this is the only place that has to know it.
+    """
+    if stats is not None:
+        stats.rendered = rendered
+
+
 def _build_converter():
     markdown_module = vendoring.import_markdown()
     return markdown_module.Markdown(
@@ -113,7 +124,11 @@ def render_fragment(
     how many images were blocked, since the return value is HTML and the
     function must never raise to report anything through an exception
     instead. `None` (the default) means no caller wants to know, which is
-    the common case for a plain fragment render.
+    the common case for a plain fragment render. Its `rendered` flag is set
+    here only on the way out, so a fragment that raised leaves counts no
+    caller will mistake for a description of what is on screen — and
+    `render_document` puts it back to False if one of *its* later steps
+    fails after this one succeeded.
     """
     converter = _build_converter()
     raw = converter.convert(text or "")
@@ -134,7 +149,9 @@ def render_fragment(
             return RemoteImage(decision.uri)
         return images.placeholder_for(decision, alt, display)
 
-    return sanitize(raw, resolve_uri=resolve, on_image=on_image)
+    body = sanitize(raw, resolve_uri=resolve, on_image=on_image)
+    _note_rendered(stats, True)
+    return body
 
 
 def render_document(
@@ -228,6 +245,12 @@ def render_document(
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
+        # `render_fragment` may already have marked the stats rendered, in
+        # the same `try`, before this failed: the body is the first thing
+        # built and the vendored resources are the last. What the caller is
+        # getting is an error page with no images in it, so the counts it
+        # holds describe nothing on screen. Same in the branch below.
+        _note_rendered(stats, False)
         return errors.error_page(
             "Installation incomplete",
             errors.missing_vendor_detail(exc),
@@ -236,6 +259,7 @@ def render_document(
             ui_direction=ui,
         )
     except Exception as exc:  # noqa: BLE001 - a blank pane is never acceptable
+        _note_rendered(stats, False)
         return errors.error_page(
             "Cannot render this document",
             errors.render_failure_detail(exc),
@@ -243,6 +267,13 @@ def render_document(
             nonce=token,
             ui_direction=ui,
         )
+
+    # Past both error-page routes: the body, the stylesheet and the vendored
+    # resources are all in hand, so what this render did about the document's
+    # images describes the page the caller is about to be given. Stated here
+    # as well as in `render_fragment`, so this function's own promise does
+    # not rest on a flag set inside a call it makes.
+    _note_rendered(stats, True)
 
     notice = ""
     if style.user.problem is not None:

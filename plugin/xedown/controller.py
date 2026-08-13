@@ -1208,10 +1208,12 @@ class TabController:
             )
             return
         self.preview.update_body(fragment, resolved)
-        # After the render succeeded, never before: the counting happens as
-        # the body is built, so a render that raised part-way through would
-        # leave a partial count describing a page nobody will see -- the
-        # error page the branch above loads instead.
+        # After the swap, never before: the counting happens as the body is
+        # built, so a render that raised part-way through would leave a
+        # partial count describing a page nobody will see. Nothing is needed
+        # here for that case -- `render_fragment` only marks the stats
+        # rendered on its way out, and the error page the branch above loads
+        # brings its own unrendered stats, which withdraws the offer.
         self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
@@ -1219,7 +1221,11 @@ class TabController:
     def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
             return
-        stats = None
+        # Built even for the error branch below, which never passes it to a
+        # renderer: an unrendered stats object is exactly the "no document,
+        # no offer" answer the chip needs, and it saves the caller having to
+        # tell the two branches apart a second time.
+        stats = images.RenderStats()
         if error is not None:
             html = errors.error_page(
                 "Cannot render this document",
@@ -1228,7 +1234,6 @@ class TabController:
                 ui_direction=self._ui_direction,
             )
         else:
-            stats = images.RenderStats()
             html = renderer.render_document(
                 self._render_text(),
                 base_dir=self._base_dir(),
@@ -1253,15 +1258,13 @@ class TabController:
         # `error is None` is true even when it caught something internally
         # and returned an error page of its own.
         self._page_is_document = not errors.is_error_page(html)
-        # Only for a page that really is the document. `render_document`
-        # fills `stats` in while building the body, which happens before the
-        # steps that can still fail (reading preview.js and the highlight
-        # bundle), so an "Installation incomplete" page can arrive carrying a
-        # real count from a document the reader is not looking at -- and a
-        # "3 remote images [Load]" chip over an error page with no images in
-        # it offers something that is not there.
-        if stats is not None and self._page_is_document:
-            self._note_remote_images(stats)
+        # Unconditional, because `stats.rendered` already carries the same
+        # distinction the line above reads out of the HTML: it is False for
+        # both error-page routes -- the caller's own, and the one
+        # `render_document` takes internally after the body was already
+        # counted -- so this withdraws the offer rather than leaving it
+        # standing over a page that has no images in it.
+        self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
         if not self._page_is_document and self.search.active:
@@ -1561,9 +1564,20 @@ class TabController:
 
     def _note_remote_images(self, stats):
         """Offer to load what this render refused to fetch, or withdraw the
-        offer. Called only for a render that produced the document."""
+        offer.
+
+        `stats.rendered` is the renderer's own witness that the HTML being
+        shown is the document. It matters because the counts alone are not
+        enough: a full-page render builds the body first and can still fail
+        afterwards, so an error page arrives carrying a real count from a
+        document nobody is looking at. Withdrawing the offer in that case is
+        the point -- a "3 remote images [Load]" chip over a page with no
+        images in it offers something that is not there.
+        """
         if self.modebar is not None:
-            self.modebar.set_remote_images(stats.blocked_remote)
+            self.modebar.set_remote_images(
+                stats.blocked_remote if stats.rendered else 0
+            )
 
     def _on_load_images_requested(self, _bar):
         """The reader has chosen to load this document's remote images.

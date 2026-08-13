@@ -196,12 +196,25 @@ class RenderStats:
 
     Filled in by the renderer and read by the controller, which needs
     `blocked_remote` to decide whether the mode bar offers to load them.
+
+    `rendered` is the second half of that answer, and the counts are not
+    usable without it: the body is built *before* the steps of a full-page
+    render that can still fail, so an error page can be returned with real
+    counts already recorded against it. It says that the HTML this describes
+    is the document -- that the images counted here are in the page the
+    reader is about to see. Set by whichever entry point produced that HTML
+    (`render_fragment` when it returns, `render_document` after its last
+    step that can fail, which also puts it back to False when the fragment
+    succeeded and a later step did not), so a caller can offer to load
+    blocked images without first having to tell an error page from a
+    document itself.
     """
 
     def __init__(self):
         self.blocked_remote = 0
         self.remote = 0
         self.insecure = 0
+        self.rendered = False
 
     def record(self, decision):
         if decision.status == REMOTE_BLOCKED:

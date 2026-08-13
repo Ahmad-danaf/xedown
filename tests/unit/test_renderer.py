@@ -372,6 +372,67 @@ def test_an_internal_render_failure_is_recognisable_as_an_error_page(monkeypatch
     assert errors.is_error_page(page)
 
 
+REMOTE_IMAGE = "![x](https://example.com/a.png)"
+
+
+def test_a_successful_render_marks_the_stats_rendered():
+    stats = images.RenderStats()
+    page = renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    assert not errors.is_error_page(page)
+    assert stats.rendered is True
+    assert stats.blocked_remote == 1
+
+
+def test_a_failed_render_leaves_the_stats_unrendered(monkeypatch):
+    # The counts are recorded while the body is built, and the body is built
+    # before the steps that can still fail -- so a failed render hands back
+    # an error page with a real count already on it. `rendered` is what the
+    # controller reads to know that count describes nothing on screen; a
+    # chip offering to load one remote image, over a page with no images in
+    # it, is what this prevents.
+    def explode(_name):
+        raise vendoring.VendorError("bundled resource missing")
+
+    monkeypatch.setattr(vendoring, "read_resource", explode)
+    stats = images.RenderStats()
+    page = renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    assert errors.is_error_page(page)
+    assert stats.blocked_remote == 1  # counted before the failure
+    assert stats.rendered is False
+
+
+def test_a_render_that_raises_before_the_body_leaves_the_stats_unrendered(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(renderer, "render_fragment", explode)
+    stats = images.RenderStats()
+    assert errors.is_error_page(
+        renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    )
+    assert stats.rendered is False
+
+
+def test_a_fragment_render_marks_the_stats_rendered():
+    # The other entry point, used by the in-place body swap: a fragment that
+    # returns is the document, and its caller needs the same answer.
+    stats = images.RenderStats()
+    renderer.render_fragment(REMOTE_IMAGE, stats=stats)
+    assert stats.rendered is True
+    assert stats.blocked_remote == 1
+
+
+def test_a_fragment_render_that_raises_leaves_the_stats_unrendered(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(renderer, "sanitize", explode)
+    stats = images.RenderStats()
+    with pytest.raises(RuntimeError):
+        renderer.render_fragment(REMOTE_IMAGE, stats=stats)
+    assert stats.rendered is False
+
+
 def test_malformed_link_does_not_crash_the_render(base):
     # `urllib.parse.urlparse` raises ValueError on an unbalanced IPv6-literal
     # bracket. render_fragment is a public interface called directly on
