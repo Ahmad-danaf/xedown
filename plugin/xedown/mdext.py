@@ -82,14 +82,16 @@ _THEMATIC_BREAK = re.compile(
     r"(?P=run)[ ]*$"
 )
 
-# A setext underline. One or two hyphens, not three: at three
-# `HRProcessor` (50) claims the line as a rule before `setextheader` (60)
-# ever sees it, and the two behave differently enough that the distinction
-# matters -- see `_ends_list_tracking`. Matched against a line's content
-# with its own indentation stripped, because the column that decides the
-# outcome is the one the line lands on after the parser has dedented it,
-# not the one it was written at.
-_SETEXT_UNDERLINE = re.compile(r"^(?:=+|-{1,2})[ ]*$")
+# A setext underline: a run of `=` or `-` and nothing else.
+# `SetextHeaderProcessor` (60) is *above* `HRProcessor` (50) in the
+# registry, so it is tried first and a run of three or more hyphens is not
+# reliably a rule -- it escapes setext only when it is not line two of its
+# block, which `RE = ^.*?\n[=-]+[ ]*(\n|$)` and a `.match` require.
+# Position in the block is not something this pass can know once the
+# parser starts re-queueing halves, so every `=`/`-` run is treated as an
+# underline, which is the stricter of the two answers. `- - -` and `***`
+# are not runs of `[=-]` and stay rules.
+_SETEXT_UNDERLINE = re.compile(r"^(?:=+|-+)[ ]*$")
 
 # An ATX heading as `SpacedHashHeaderProcessor` (70) defines one: at most
 # six hashes, and a space or end of line after them.
@@ -100,43 +102,86 @@ REWIND = "rewind"
 STOP = "stop"
 
 
-def _ends_list_tracking(content, indent, depth, tab_length):
-    """How a tight line inside a list ends this pass's tracking of one.
+def _ends_list_tracking(content, column, level, tab_length):
+    """How a block splitter inside a list ends this pass's tracking of one.
 
     `REWIND`, `STOP` or None. Three processors *split* the block they are
     given and re-queue the halves: `hr` (50), `setextheader` (60) and
     `hashheader` (70). Each is claimed near the left margin and not at
     `tab_length` columns in, which is what makes them the hazard for a pass
     that moves marker lines to the right: `ListIndentProcessor` dedents
-    every tight line under a nested marker by `tab_length`, and one of these
-    three arriving at the margin can take the list with it. Telling the
-    three cases apart is what keeps the guard from eating the fix.
+    every tight line under a nested marker by `tab_length`, and one of
+    these three arriving at the margin can take the list with it.
+
+    **`column` and `level` are in the coordinates this pass emits, not the
+    ones it read.** `column` is where the line will actually be written --
+    `_place_continuation` decides that and is called for this and for the
+    emission itself, so the two cannot drift -- and `level` is the emitted
+    nesting depth of the item the line follows. Measuring in source
+    coordinates is what let a rule at four columns under a three-column
+    sub-item read as "over-indented, harmless" while the sub-item above it
+    had already been rewritten to four: the two spaces disagreed and the
+    rule reached the margin anyway.
+
+    Given those, `landing` is the column the line reaches after the
+    dedents. `looseDetab` takes `tab_length` off a line only when the line
+    has that much to give, so a line runs out of indentation before it runs
+    out of levels -- hence the `min`.
 
     - **A setext underline** absorbs the line *above* it into the heading,
       so a marker line this pass has moved becomes the heading's text: `- b`
-      renders as an `<h1>` reading "- b" rather than as an item. Indentation
-      cannot save it, so it always `REWIND`s.
-    - **A rule or an ATX heading inside an item** separates a sub-item from
-      the parent it was just nested under, leaving the sub-item four columns
-      in with no list around it -- indented code. `REWIND`. Four or more
-      columns past the nesting it is claimed by nothing above `ulist`, so
-      the fix can stay and this returns None.
-    - **A rule or an ATX heading at the margin**, left of every open item,
-      cuts the block at its own line: the half above is a whole list and
-      keeps the nesting, so there is nothing to undo. But the list is over
-      as far as the parser is concerned, so tracking has to `STOP` --
-      otherwise a later line is still measured against an item that no
-      longer exists. `### Heading` directly under a list line is a shape
-      real READMEs contain, and rewinding it would cost real sublists.
+      renders as an `<h1>` reading "- b" rather than as an item. Nothing
+      about its column saves it, so it always `REWIND`s.
+    - **A rule or an ATX heading at the margin** -- close enough to be
+      claimed where it stands -- cuts the block at its own line. The half
+      above is a whole list, re-parsed with its nesting intact, so there is
+      nothing to undo; but the list is over as far as the parser is
+      concerned, so tracking must `STOP` or a later line is measured
+      against an item that no longer exists. `### Heading` directly under a
+      list line is a shape real READMEs contain, and rewinding it would
+      cost real sublists.
+    - **A rule or an ATX heading that only reaches the margin after the
+      dedents** descends into the item instead, and cuts a sub-item away
+      from the parent it was just nested under -- `REWIND`. Landing further
+      in than that, it is claimed by nothing above `ulist`, and the fix can
+      stay: None.
     """
     if _SETEXT_UNDERLINE.match(content) is not None:
         return REWIND
-    if _THEMATIC_BREAK.match(content) is None and _ATX_HEADING.match(content) is None:
+    if _THEMATIC_BREAK.match(content) is not None:
+        claimed_at = tab_length  # `HRProcessor.RE` tolerates three columns
+    elif _ATX_HEADING.match(content) is not None:
+        claimed_at = 1  # `HashHeaderProcessor.RE` needs the margin exactly
+    else:
         return None
-    if not depth:
+    if column < claimed_at:
         return STOP
-    # Where the line lands once the nesting above it is dedented away.
-    return REWIND if indent - tab_length * (depth - 1) < tab_length else None
+    landing = column - tab_length * min(level - 1, column // tab_length)
+    return REWIND if landing < claimed_at else None
+
+
+def _place_continuation(line, indent, column, depth, own_block, tab_length):
+    """The column a non-marker line is emitted at.
+
+    One definition, called both to write the line and to measure where a
+    block splitter on it will land, so the emission and the guard can never
+    end up in different coordinate spaces.
+    """
+    if not depth:
+        return indent
+    offset = indent - column
+    if own_block:
+        # A block of its own inside the item: `ListIndentProcessor` will
+        # dedent it by `tab_length * depth`, so put it there. An offset of
+        # one to three columns past the continuation column is
+        # insignificant to every block construct, and dropping it is what
+        # keeps a document that already indents `tab_length` per level
+        # byte-identical through this pass. Four or more is the indent of a
+        # code block and is content, so it is carried through.
+        return tab_length * depth + (offset if offset >= tab_length else 0)
+    if offset < tab_length and line[indent] == ">":
+        return tab_length * (depth - 1) + offset
+    return indent
 
 
 # The markers GFM lets a list use to interrupt a paragraph -- the same rule
@@ -261,13 +306,18 @@ def normalize_list_indentation(lines, tab_length=4):
             depth -= 1
         column = open_items[depth - 1] if depth else 0
         ending = (
-            _ends_list_tracking(line[indent:], indent, depth, tab_length)
+            _ends_list_tracking(
+                line[indent:],
+                _place_continuation(line, indent, column, depth, own_block, tab_length),
+                len(open_items),
+                tab_length,
+            )
             if open_items and not after_blank
             else None
         )
         if ending is not None:
-            # A block splitter tight inside a list -- see the third hazard
-            # above. Either way the list is over for this pass; `REWIND`
+            # A block splitter inside a list -- see the third hazard above.
+            # Either way the list is over for this pass; `REWIND`
             # additionally puts back the lines already emitted for this
             # block and hands the rest over untouched, so the block renders
             # exactly as it did before this pass existed. Rewinding rather
@@ -322,24 +372,13 @@ def normalize_list_indentation(lines, tab_length=4):
         else:
             if after_blank:
                 own_block = True
-            offset = indent - column
-            if not depth:
-                out.append(line)
-            elif own_block:
-                # A block of its own inside the item: `ListIndentProcessor`
-                # will dedent it by `tab_length * depth`, so put it there.
-                # An offset of one to three columns past the continuation
-                # column is insignificant to every block construct, and
-                # dropping it is what keeps a document that already indents
-                # `tab_length` per level byte-identical through this pass.
-                # Four or more is the indent of a code block and is content,
-                # so it is carried through.
-                carried = offset if offset >= tab_length else 0
-                out.append(" " * (tab_length * depth + carried) + line[indent:])
-            elif offset < tab_length and line[indent] == ">":
-                out.append(" " * (tab_length * (depth - 1) + offset) + line[indent:])
-            else:
-                out.append(line)
+            placed = _place_continuation(
+                line, indent, column, depth, own_block, tab_length
+            )
+            # Leading whitespace is spaces by now -- `normalize_whitespace`
+            # (30) expanded tabs long before this pass -- so rebuilding the
+            # line from a column is lossless.
+            out.append(" " * placed + line[indent:])
         after_marker = is_item
         after_blank = False
     return out

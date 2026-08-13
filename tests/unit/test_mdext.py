@@ -744,10 +744,56 @@ def test_a_splitter_at_the_margin_still_ends_the_tracking():
     assert _normalized(source) == source
 
 
-def test_a_deeply_indented_splitter_is_claimed_by_nothing_and_is_left_alone():
+def test_a_deeply_indented_rule_is_claimed_by_nothing_and_is_left_alone():
     # Four or more columns past the nesting, a rule is not a rule to any
-    # processor, so there is no hazard and the fix stays.
-    assert _normalized("- a\n      ---\n  - b") == "- a\n      ---\n    - b"
+    # processor, so there is no hazard and the fix stays. `***` and not
+    # `---`: a run of hyphens is also a setext underline, and
+    # `SetextHeaderProcessor` (60) is tried before `HRProcessor` (50).
+    assert _normalized("- a\n      ***\n  - b") == "- a\n      ***\n    - b"
+
+
+def test_a_run_of_hyphens_is_treated_as_a_setext_underline():
+    # Registry order is 70 -> 60 -> 50, so setext is tried *first*; `---`
+    # reaches `hr` only when it is not line two of its block, and which line
+    # of which block it ends up on is not knowable here once the parser
+    # starts re-queueing halves. The stricter answer is the safe one.
+    assert _normalized("- a\n      ---\n  - b") == "- a\n      ---\n  - b"
+
+
+# The splitter's landing column has to be measured in the coordinates this
+# pass *emits*. Measuring in source coordinates let a rule at four columns
+# under a three-column sub-item look over-indented and harmless, while the
+# sub-item above it had already been rewritten to four -- so the rule
+# reached the margin after the dedent and ate the marker.
+
+
+def test_a_splitter_is_measured_against_the_rewritten_geometry():
+    # The child's content column is five, so in source coordinates the rule
+    # at four is outside it and looks harmless. In emitted coordinates the
+    # child is at four and the rule is beside it, one dedent from the
+    # margin.
+    source = "- a\n   - b\n    ---\n   - z"
+    assert _normalized(source) == source
+
+
+def test_the_same_measurement_holds_for_every_child_marker():
+    for child in ("-", "*", "+", "1.", "1)"):
+        for child_indent in (2, 3):
+            source = (
+                f"- a\n{' ' * child_indent}{child} b\n    ---\n"
+                f"{' ' * child_indent}{child} z"
+            )
+            assert _normalized(source) == source, (child, child_indent)
+
+
+def test_a_marker_never_leaks_into_a_heading(convert):
+    # The reader-facing form of the same claim, over the shapes the
+    # enumeration found: a bullet or a number must never end up as heading
+    # text.
+    for child_indent in (2, 3):
+        for splitter in ("---", "===", "-", "# x"):
+            html = convert(f"- a\n{' ' * child_indent}- b\n    {splitter}\n  - z")
+            assert ">- b<" not in html, (child_indent, splitter)
 
 
 def test_a_setext_underline_fires_wherever_it_is():
