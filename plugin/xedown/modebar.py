@@ -25,6 +25,10 @@ _STYLE = b"""
   font-size: .8em;
   padding: 0 .3em;
 }
+.xedown-modebar .xedown-remote-notice {
+  color: alpha(currentColor, 0.6);
+  padding: 0 .5em;
+}
 """
 
 _provider_installed = False
@@ -59,6 +63,7 @@ class ModeBar(Gtk.Box):
     __gsignals__: ClassVar = {
         "mode-selected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "refresh-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "load-images-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self):
@@ -104,6 +109,24 @@ class ModeBar(Gtk.Box):
         self._name(self._refresh_button, a11y.NAMES["refresh"])
         self._refresh_button.connect("clicked", self._on_refresh_clicked)
         self.pack_end(self._refresh_button, False, False, 0)
+
+        # Blocked is the safe default, so this is a quiet chip rather than a
+        # warning bar: a document with one badge image should not raise an
+        # alarm every time it is opened. `set_no_show_all` for the same
+        # reason the refresh button has it.
+        self._remote_button = Gtk.Button(label="Load")
+        self._remote_button.set_no_show_all(True)
+        self._name(self._remote_button, a11y.NAMES["load_images"])
+        self._remote_button.connect(
+            "clicked", lambda _b: self.emit("load-images-requested")
+        )
+        self.pack_end(self._remote_button, False, False, 0)
+
+        self._remote_label = Gtk.Label()
+        self._remote_label.set_no_show_all(True)
+        self._remote_label.get_style_context().add_class("xedown-remote-notice")
+        self._name(self._remote_label, a11y.NAMES["remote_images_notice"])
+        self.pack_end(self._remote_label, False, False, 0)
 
         self._stale_dot = Gtk.Label(label="●")
         self._stale_dot.get_style_context().add_class("xedown-stale-dot")
@@ -234,6 +257,27 @@ class ModeBar(Gtk.Box):
             if showing
             else "Refresh the preview (Ctrl+Shift+R)"
         )
+
+    def set_remote_images(self, count):
+        """Offer to load `count` blocked remote images, or hide the offer.
+
+        The count goes into the accessible name as well as the visible label:
+        the chip appearing is what makes it mean anything, and a screen reader
+        gets no other signal that it did.
+        """
+        showing = bool(count)
+        if showing:
+            words = "1 remote image" if count == 1 else f"{count} remote images"
+            self._remote_label.set_text(words)
+            accessible = self._remote_label.get_accessible()
+            if accessible is not None:
+                accessible.set_name(f"{a11y.NAMES['remote_images_notice']}: {words}")
+            self._remote_button.set_tooltip_text(
+                "Load these images. The websites they come from will see your "
+                "IP address."
+            )
+        self._remote_label.set_visible(showing)
+        self._remote_button.set_visible(showing)
 
     def _on_refresh_clicked(self, _button):
         self.emit("refresh-requested")
