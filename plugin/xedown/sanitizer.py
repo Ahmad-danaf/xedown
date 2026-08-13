@@ -5,6 +5,7 @@ expressions or string replacement is not sound and is forbidden here.
 """
 
 import html as html_module
+import re
 from html.parser import HTMLParser
 
 from . import remoteimages
@@ -78,19 +79,44 @@ _GLOBAL_ATTRIBUTES = frozenset({"dir", "id", "title"})
 
 _ALLOWED_DIR_VALUES = frozenset({"ltr", "rtl", "auto"})
 
+_ALLOWED_ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
+
+# `start` is a plain integer, in principle unbounded, so it cannot be
+# checked against an allowlist of values the way `align` and `dir` are.
+# Python-Markdown derives it literally from the digits before the first
+# list item's `.` marker (`vendor/markdown/blockprocessors.py:402,429`) --
+# it is never parsed to `int`, so an author can write an arbitrarily long
+# digit run and have it land here unexamined. The cap below is not a
+# security boundary (an oversized number can neither execute nor fetch);
+# it exists so an absurd literal doesn't reach the page just because
+# nothing said not to. Ten digits comfortably covers any real list (it
+# exceeds a signed 32-bit int) while excluding runs no document could
+# have a legitimate reason to write.
+_START_RE = re.compile(r"-?\d+")
+_MAX_START_DIGITS = 10
+
 ALLOWED_ATTRIBUTES = {
     "a": frozenset({"href", "name"}),
-    "img": frozenset({"src", "alt", "width", "height"}),
+    "img": frozenset({"src", "alt", "width", "height", "align"}),
     "code": frozenset({"class"}),
     "span": frozenset({"class"}),
-    "div": frozenset({"class"}),
+    "div": frozenset({"class", "align"}),
     "li": frozenset({"class"}),
     "ul": frozenset({"class"}),
+    "ol": frozenset({"start"}),
     "input": frozenset({"type", "checked", "disabled"}),
     "td": frozenset({"align", "colspan", "rowspan"}),
     "th": frozenset({"align", "colspan", "rowspan"}),
     "sup": frozenset({"class"}),
     "details": frozenset({"open"}),
+    "p": frozenset({"align"}),
+    "h1": frozenset({"align"}),
+    "h2": frozenset({"align"}),
+    "h3": frozenset({"align"}),
+    "h4": frozenset({"align"}),
+    "h5": frozenset({"align"}),
+    "h6": frozenset({"align"}),
+    "table": frozenset({"align"}),
 }
 
 ALLOWED_URI_SCHEMES = frozenset({"http", "https", "mailto", "file"})
@@ -165,6 +191,34 @@ def _filter_dir(value):
     return normalized if normalized in _ALLOWED_DIR_VALUES else ""
 
 
+def _filter_align(value):
+    """`align`, or the empty string when it is not one of the four values.
+
+    An allowlist of values, the same shape as `_filter_dir`. `align`
+    cannot execute or fetch anything, so this is not a scripting defence
+    -- it is the same rule `class` and `dir` already follow: document
+    content does not reach the page unexamined, even when it is inert.
+    """
+    normalised = (value or "").strip().lower()
+    return normalised if normalised in _ALLOWED_ALIGN_VALUES else ""
+
+
+def _filter_start(value):
+    """`start`, or the empty string when it is not a small integer.
+
+    Unlike `align`, `start` has no enumerable set of good values -- it is
+    a counting number, in principle unbounded. So this checks shape (an
+    optional `-` then digits, nothing else -- no surrounding space, no
+    leading `+`) and caps the digit run rather than matching against a
+    fixed list. See `_MAX_START_DIGITS` for why the cap exists at all.
+    """
+    normalised = (value or "").strip()
+    if _START_RE.fullmatch(normalised) is None:
+        return ""
+    digits = normalised.lstrip("-")
+    return normalised if len(digits) <= _MAX_START_DIGITS else ""
+
+
 def _filter_attribute_value(name, value):
     """The value to emit for `name`, or None to drop the attribute.
 
@@ -180,6 +234,10 @@ def _filter_attribute_value(name, value):
         return _filter_class(value) or None
     if name == "dir":
         return _filter_dir(value) or None
+    if name == "align":
+        return _filter_align(value) or None
+    if name == "start":
+        return _filter_start(value) or None
     return value
 
 

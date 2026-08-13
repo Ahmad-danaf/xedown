@@ -323,6 +323,83 @@ def test_dir_goes_with_an_element_that_is_dropped():
     assert "dir=" not in sanitize('<script dir="rtl">x</script>')
 
 
+def test_align_survives_on_a_div():
+    assert 'align="center"' in sanitizer.sanitize('<div align="center">x</div>')
+
+
+def test_align_survives_on_a_heading_and_a_table():
+    assert 'align="center"' in sanitizer.sanitize('<h1 align="center">T</h1>')
+    assert 'align="right"' in sanitizer.sanitize('<table align="right"></table>')
+
+
+def test_align_survives_on_an_image():
+    # img goes through _emit_img, a separate attribute loop from every
+    # other element. It is the reason Task 6 extracted the shared filter.
+    out = sanitizer.sanitize('<img src="a.png" align="center" alt="x">')
+    assert 'align="center"' in out
+
+
+def test_align_takes_an_allowlist_of_values():
+    for good in ("left", "center", "right", "justify"):
+        assert f'align="{good}"' in sanitizer.sanitize(f'<p align="{good}">x</p>')
+    for bad in ("middle", "javascript:alert(1)", "", "center; x", "CENTER)"):
+        assert "align" not in sanitizer.sanitize(f'<p align="{bad}">x</p>')
+
+
+def test_align_is_case_insensitive_like_dir():
+    assert 'align="center"' in sanitizer.sanitize('<p align="CENTER">x</p>')
+
+
+def test_align_is_not_allowed_on_arbitrary_elements():
+    # An allowlist per element, not a global attribute: `align` on a span
+    # or a list item is not something a README needs and not something
+    # this pass promised.
+    assert "align" not in sanitizer.sanitize('<span align="center">x</span>')
+    assert "align" not in sanitizer.sanitize('<li align="center">x</li>')
+
+
+def test_div_keeps_class_alongside_the_new_align_entry():
+    # ALLOWED_ATTRIBUTES["div"] gained "align" by editing the existing
+    # entry, not by a second "div" key -- a duplicate key would silently
+    # drop "class", which the renderer's own markup depends on.
+    out = sanitizer.sanitize('<div class="hljs" align="center">x</div>')
+    assert 'class="hljs"' in out
+    assert 'align="center"' in out
+
+
+def test_ol_start_survives_sanitization():
+    # Python-Markdown already emits <ol start="7"> for a list that begins
+    # at 7 (vendor/markdown/blockprocessors.py:402); ALLOWED_ATTRIBUTES
+    # simply had no "ol" entry to let it through.
+    assert 'start="7"' in sanitizer.sanitize('<ol start="7"><li>x</li></ol>')
+
+
+def test_ol_start_rejects_a_non_numeric_value():
+    assert "start" not in sanitizer.sanitize('<ol start="abc"><li>x</li></ol>')
+
+
+def test_ol_start_accepts_a_negative_value():
+    # HTML permits a countdown list; a leading "-" is not a scripting
+    # surface, so it is honoured like any other digit run.
+    assert 'start="-5"' in sanitizer.sanitize('<ol start="-5"><li>x</li></ol>')
+
+
+def test_ol_start_rejects_an_empty_value():
+    assert "start" not in sanitizer.sanitize('<ol start=""><li>x</li></ol>')
+
+
+def test_ol_start_rejects_an_absurdly_long_digit_run():
+    # Not a security boundary -- an oversized number can't execute or
+    # fetch -- but an unbounded literal is still content reaching the page
+    # unexamined, so it is capped well above anything a real list needs.
+    huge = "1" * 40
+    assert "start" not in sanitizer.sanitize(f'<ol start="{huge}"><li>x</li></ol>')
+
+
+def test_ol_start_is_not_allowed_on_a_ul():
+    assert "start" not in sanitizer.sanitize('<ul start="7"><li>x</li></ul>')
+
+
 def test_bdi_survives_and_keeps_its_text():
     result = sanitize("<p>افتح <bdi>/usr/local/share</bdi> ثم تابع.</p>")
     assert "<bdi>" in result and "</bdi>" in result
@@ -407,6 +484,15 @@ def test_img_keeps_a_valid_dir_and_drops_an_invalid_one():
     dropped = sanitizer.sanitize('<img src="a.png" dir="sideways" alt="x">')
     assert 'dir="rtl"' in kept
     assert "dir" not in dropped
+
+
+def test_align_filtering_is_identical_on_img_and_non_img():
+    assert 'align="center"' in sanitizer.sanitize('<p align="center">x</p>')
+    assert "align" not in sanitizer.sanitize('<p align="middle">x</p>')
+    kept = sanitizer.sanitize('<img src="a.png" align="center" alt="x">')
+    dropped = sanitizer.sanitize('<img src="a.png" align="middle" alt="x">')
+    assert 'align="center"' in kept
+    assert "align" not in dropped
 
 
 def test_img_never_receives_a_class_attribute_from_content():
