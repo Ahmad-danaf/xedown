@@ -738,3 +738,16 @@ def test_an_oversized_inline_image_produces_a_page_not_an_exception():
     assert "xedown-image-error" in page
     assert "20000" in page
     assert "Cannot render this document" not in page
+
+
+def test_a_damaged_inline_image_produces_a_page_not_an_exception():
+    # A PNG signature with no IHDR is corrupt, not oversized -- render_document
+    # must still degrade to a placeholder rather than raise or claim a size.
+    import base64
+
+    signature_only = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    uri = f"data:image/png;base64,{signature_only}"
+    page = renderer.render_document(f"![x]({uri})")
+    assert "xedown-image-error" in page
+    assert "Cannot render this document" not in page
+    assert "0×0" not in page

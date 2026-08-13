@@ -327,3 +327,38 @@ def test_a_malformed_payload_does_not_raise():
 def test_the_refusal_honours_the_fallback_setting():
     decision = images.classify_image(data_uri(10000, 10000), None)
     assert images.placeholder_for(decision, "alt", images.DISPLAY_HIDDEN) is None
+
+
+def test_a_data_image_with_only_a_signature_is_damaged_not_too_large():
+    # No IHDR at all -- this is not "declares 0x0 pixels", it is unreadable.
+    # Reusing TOO_LARGE_TO_DECODE's wording here would tell the reader a
+    # corrupt image is an oversized one, which is neither true nor useful.
+    signature_only = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    decision = images.classify_image(f"data:image/png;base64,{signature_only}", None)
+    assert decision.status == images.DAMAGED
+    text = images.reason_text(decision)
+    assert "too large" not in text
+    assert "0×0" not in text
+
+
+def test_a_data_image_truncated_mid_ihdr_is_also_damaged():
+    # Enough of a chunk header to claim PNG, not enough of it to read.
+    partial = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + b"\x00\x00"
+    encoded = base64.b64encode(partial).decode("ascii")
+    decision = images.classify_image(f"data:image/png;base64,{encoded}", None)
+    assert decision.status == images.DAMAGED
+    text = images.reason_text(decision)
+    assert "too large" not in text
+    assert "0×0" not in text
+
+
+def test_a_genuine_bomb_is_still_too_large_not_damaged():
+    decision = images.classify_image(data_uri(20000, 20000), None)
+    assert decision.status == images.TOO_LARGE_TO_DECODE
+    assert "20000" in images.reason_text(decision)
+
+
+def test_the_damaged_outcome_honours_the_fallback_setting():
+    signature_only = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    decision = images.classify_image(f"data:image/png;base64,{signature_only}", None)
+    assert images.placeholder_for(decision, "alt", images.DISPLAY_HIDDEN) is None

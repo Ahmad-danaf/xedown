@@ -180,6 +180,18 @@ def oversized_image_text(detail):
     return f"Image is too large to display safely ({detail})"
 
 
+def damaged_image_text():
+    """Placeholder text for a `data:` image that claims a format xedown
+    parses but does not yield readable dimensions -- corrupt or evasive, not
+    oversized.
+
+    Deliberately short and free of the reference: for a `data:` URI,
+    `decision.reference` is the entire base64 blob, and quoting it back would
+    fill the placeholder with unreadable text rather than an answer.
+    """
+    return "Image is damaged or could not be read."
+
+
 def with_alt(text, alt):
     """`text`, followed by the author's alt text when there is any.
 

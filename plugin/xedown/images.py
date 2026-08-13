@@ -26,6 +26,7 @@ UNRESOLVED = "unresolved"
 MISSING = "missing"
 UNREADABLE = "unreadable"
 TOO_LARGE_TO_DECODE = "too_large_to_decode"
+DAMAGED = "damaged"
 
 DISPLAY_PLACEHOLDER = "placeholder"
 DISPLAY_ALT = "alt"
@@ -78,11 +79,17 @@ def classify_image(reference, base_dir, fetch_remote=False):
         # emitted, so WebKit never sees the payload at all.
         verdict = _data_uri_verdict(reference)
         if verdict is not None and verdict.known and not verdict.ok:
-            return ImageDecision(
-                TOO_LARGE_TO_DECODE,
-                reference=reference,
-                detail=verdict.describe(),
-            )
+            # `known and not ok` covers two different failures that must not
+            # share wording: a real measurement over the limit (width is the
+            # measurement) and a format that claimed to parse but yielded no
+            # dimensions at all -- corrupt or evasive, not "0x0 pixels".
+            if verdict.width:
+                return ImageDecision(
+                    TOO_LARGE_TO_DECODE,
+                    reference=reference,
+                    detail=verdict.describe(),
+                )
+            return ImageDecision(DAMAGED, reference=reference)
         return ImageDecision(OK, uri=reference, reference=reference)
     if scheme in links.REMOTE_SCHEMES:
         remote = remoteimages.classify_remote(reference)
@@ -199,6 +206,8 @@ def reason_text(decision):
         )
     if decision.status == TOO_LARGE_TO_DECODE:
         return errors.oversized_image_text(decision.detail)
+    if decision.status == DAMAGED:
+        return errors.damaged_image_text()
     return errors.local_image_unresolved_text(decision.reference)
 
 
