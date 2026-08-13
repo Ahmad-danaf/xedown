@@ -11,6 +11,7 @@ normalise so hard that real differences vanish. Every rule here is
 narrow and named for what it forgives.
 """
 
+import html as html_module
 import pathlib
 import re
 from html.parser import HTMLParser
@@ -66,7 +67,7 @@ class _Canonicaliser(HTMLParser):
 
     def handle_data(self, data):
         if self._preserve_depth:
-            self.parts.append(data)
+            self.parts.append(html_module.escape(data, quote=False))
             return
         collapsed = _WHITESPACE.sub(" ", data)
         if collapsed.strip() == "":
@@ -75,7 +76,12 @@ class _Canonicaliser(HTMLParser):
             if collapsed:
                 self.parts.append(" ")
             return
-        self.parts.append(collapsed)
+        # HTMLParser(convert_charrefs=True) already decoded entities on the
+        # way in, so text that merely looks like markup -- literal `<p>` in
+        # prose -- is sitting here as bare `<`/`>`/`&`. Re-escape on the way
+        # out or that literal text serialises identically to real markup,
+        # and two meaningfully different documents compare equal.
+        self.parts.append(html_module.escape(collapsed, quote=False))
 
     def handle_comment(self, data):
         return
@@ -94,7 +100,14 @@ class _Canonicaliser(HTMLParser):
             elif name in ("href", "src"):
                 value = self._relativise(value)
             kept[name] = value
-        return "".join(f' {name}="{kept[name]}"' for name in sorted(kept))
+        # Symmetric with handle_data: the parser already decoded entities on
+        # the way in, so an embedded quote is sitting here as a bare `"`.
+        # Re-escape on the way out or it terminates the attribute early and
+        # is read back as a second, bogus attribute.
+        return "".join(
+            f' {name}="{html_module.escape(kept[name], quote=True)}"'
+            for name in sorted(kept)
+        )
 
     @staticmethod
     def _filter_class(value):

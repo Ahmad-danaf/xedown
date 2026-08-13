@@ -93,3 +93,30 @@ def test_escaped_entities_are_not_double_decoded():
     assert normalise.canonicalise("<p>&amp;lt;</p>") != normalise.canonicalise(
         "<p><</p>"
     )
+
+
+def test_literal_angle_brackets_do_not_become_markup():
+    # HTMLParser(convert_charrefs=True) decodes `&lt;`/`&gt;` on the way in.
+    # Serialising that text back out without re-escaping would let literal
+    # tag-like text in prose collide with an actual tag boundary -- one
+    # paragraph would canonicalise the same as two.
+    assert normalise.canonicalise(
+        "<p>x&lt;/p&gt;&lt;p&gt;y</p>"
+    ) != normalise.canonicalise("<p>x</p><p>y</p>")
+
+
+def test_an_embedded_quote_does_not_become_a_second_attribute():
+    # Same defect, in an attribute value: `&quot;` decodes to a literal `"`
+    # on the way in. Writing it back unescaped terminates the attribute
+    # early, and what follows reads as a second, bogus attribute.
+    assert normalise.canonicalise(
+        '<a href="x&quot; y=&quot;z">t</a>'
+    ) != normalise.canonicalise('<a href="x" y="z">t</a>')
+
+
+def test_literal_and_entity_ampersand_are_equivalent():
+    # Both spellings decode to the same text; re-escaping on output must not
+    # treat them differently (e.g. by double-escaping the entity form).
+    assert normalise.canonicalise("<p>a &amp; b</p>") == normalise.canonicalise(
+        "<p>a & b</p>"
+    )
