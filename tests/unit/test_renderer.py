@@ -2,7 +2,7 @@ import os
 import re
 
 import pytest
-from xedown import errors, renderer, stylesheets, themes, vendoring
+from xedown import errors, images, renderer, stylesheets, themes, vendoring
 
 
 @pytest.fixture
@@ -460,20 +460,20 @@ def test_an_unusable_display_value_never_reaches_the_page():
     # out of the config block, so a value that was coerced for the body and
     # not for the config would leave the two disagreeing.
     html = renderer.render_document("![A](pics/gone.png)", image_display="nonsense")
-    assert '"imageDisplay": "placeholder"' in html
+    assert '"imageFallback": "placeholder"' in html
     assert "nonsense" not in html
 
 
 def test_the_page_carries_its_config():
     html = renderer.render_document("# x", code_copy_buttons=False, image_display="alt")
     assert '"codeCopy": false' in html
-    assert '"imageDisplay": "alt"' in html
+    assert '"imageFallback": "alt"' in html
 
 
 def test_the_config_defaults_reproduce_v01_behaviour():
     html = renderer.render_document("# x")
     assert '"codeCopy": true' in html
-    assert '"imageDisplay": "placeholder"' in html
+    assert '"imageFallback": "placeholder"' in html
 
 
 ARABIC_DOC = "# عنوان\n\nهذه فقرة باللغة العربية تُقرأ من اليمين إلى اليسار.\n"
@@ -594,3 +594,57 @@ def test_angle_brackets_and_newlines_cannot_escape_the_language_attribute():
     html_out = renderer.render_document("# Title\n", lang="en><script>\nx")
     assert "<script>" not in html_out.split("<body")[0]
     assert "lang=" in html_out
+
+
+def test_a_blocked_render_does_not_name_the_scheme_in_its_csp():
+    page = renderer.render_document("![x](https://e.com/a.png)")
+    assert "xedown-image:" not in page
+    assert "img-src file: data:;" in page
+
+
+def test_a_permitted_render_names_the_scheme_in_its_csp():
+    page = renderer.render_document("![x](https://e.com/a.png)", fetch_remote=True)
+    assert "img-src file: data: xedown-image:;" in page
+
+
+def test_no_render_ever_grants_the_page_https():
+    for permitted in (False, True):
+        page = renderer.render_document(
+            "![x](https://e.com/a.png)", fetch_remote=permitted
+        )
+        assert "img-src" in page
+        img_src = page.split("img-src", 1)[1].split(";", 1)[0]
+        assert "https:" not in img_src
+        assert "http:" not in img_src
+
+
+def test_a_permitted_render_emits_the_scheme_url():
+    body = renderer.render_fragment("![x](https://e.com/a.png)", fetch_remote=True)
+    assert "xedown-image:https%3A%2F%2Fe.com%2Fa.png" in body
+
+
+def test_stats_report_what_the_render_did():
+    stats = images.RenderStats()
+    renderer.render_document(
+        "![a](https://e.com/a.png)\n\n![b](http://e.com/b.png)", stats=stats
+    )
+    assert stats.blocked_remote == 1
+    assert stats.insecure == 1
+
+
+def test_stats_are_optional():
+    assert renderer.render_document("![a](https://e.com/a.png)")
+
+
+def test_the_config_block_renames_the_fallback_key():
+    # Scoped to the window.xedownConfig assignment itself, not the whole
+    # page: preview.js still spells its own default-config key
+    # "imageDisplay" until Task 13 renames it there too, and that inlined
+    # script text is not what this test is about. Anchoring on the config
+    # blob keeps this test about the one thing Task 11 owns -- the JSON key
+    # -- rather than a text search a later, unrelated task would break.
+    page = renderer.render_document("hello")
+    after = page.split("window.xedownConfig = ", 1)[1]
+    config_block = after.split("</script>", 1)[0]
+    assert "imageFallback" in config_block
+    assert "imageDisplay" not in config_block

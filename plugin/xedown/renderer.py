@@ -4,16 +4,25 @@ import html
 import json
 import secrets
 
-from . import direction, errors, images, settings, stylesheets, themes, vendoring
+from . import (
+    direction,
+    errors,
+    images,
+    remoteimages,
+    settings,
+    stylesheets,
+    themes,
+    vendoring,
+)
 from .links import resolve_to_uri
 from .mdext import make_extensions
-from .sanitizer import sanitize
+from .sanitizer import RemoteImage, sanitize
 
 CONTENT_ELEMENT_ID = "xedown-content"
 
-_CSP = (
+_CSP_TEMPLATE = (
     "default-src 'none'; "
-    "img-src file: data:; "
+    "img-src {img_sources}; "
     "style-src 'nonce-{nonce}'; "
     "script-src 'nonce-{nonce}'; "
     "base-uri 'none'; "
@@ -21,6 +30,22 @@ _CSP = (
     "frame-src 'none'; "
     "object-src 'none'"
 )
+
+
+def _csp(nonce, fetch_remote):
+    """The policy for one page.
+
+    `img-src` never contains `http:` or `https:`, whatever the settings say:
+    the page is not the thing that fetches. The private scheme is listed only
+    for a permitted render, which puts a second, independent layer under the
+    render-time gating -- a blocked document could not load such a URL even
+    if one reached its DOM.
+    """
+    sources = "file: data:"
+    if fetch_remote:
+        sources += f" {remoteimages.SCHEME}:"
+    return _CSP_TEMPLATE.format(img_sources=sources, nonce=nonce)
+
 
 # The stylesheet is assembled by `stylesheets.assemble_css`: the syntax sheet
 # first, then preview.css, then the theme. preview.css carries an override
@@ -63,7 +88,13 @@ def _build_converter():
     )
 
 
-def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDER):
+def render_fragment(
+    text,
+    base_dir=None,
+    image_display=images.DISPLAY_PLACEHOLDER,
+    fetch_remote=False,
+    stats=None,
+):
     """Convert Markdown to sanitized body HTML with absolute URIs.
 
     URI resolution happens inside the sanitizer's single structural pass.
@@ -71,7 +102,18 @@ def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDE
     leaves a remote/anchor target alone). Images go through `on_image`
     instead, which classifies the reference once — including a `stat`, so a
     missing file and an unreadable one are told apart — and returns either a
-    usable src or the placeholder `image_display` asks for.
+    usable src, a `RemoteImage` for a fetchable one, or the placeholder
+    `image_display` asks for.
+
+    `fetch_remote` is the document's permission to address a remote image at
+    all, already resolved by the caller; it is threaded straight through to
+    `images.classify_image`, which is the only thing that consults it.
+
+    `stats` is an out-parameter: the one way this function's caller learns
+    how many images were blocked, since the return value is HTML and the
+    function must never raise to report anything through an exception
+    instead. `None` (the default) means no caller wants to know, which is
+    the common case for a plain fragment render.
     """
     converter = _build_converter()
     raw = converter.convert(text or "")
@@ -83,9 +125,13 @@ def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDE
         return resolve_to_uri(value, base_dir)
 
     def on_image(reference, alt):
-        decision = images.classify_image(reference, base_dir)
+        decision = images.classify_image(reference, base_dir, fetch_remote=fetch_remote)
+        if stats is not None:
+            stats.record(decision)
         if decision.status == images.OK:
             return decision.uri
+        if decision.status == images.FETCH:
+            return RemoteImage(decision.uri)
         return images.placeholder_for(decision, alt, display)
 
     return sanitize(raw, resolve_uri=resolve, on_image=on_image)
@@ -102,6 +148,8 @@ def render_document(
     text_direction=direction.AUTO,
     ui_direction=direction.LTR,
     lang=None,
+    fetch_remote=False,
+    stats=None,
 ):
     """Build the complete preview page. Never raises — failures become a page.
 
@@ -138,6 +186,18 @@ def render_document(
     A value that is not a non-empty string produces no `lang` attribute at
     all rather than an empty one, which a screen reader would treat as a
     language it does not recognise.
+
+    `fetch_remote` is the document's permission to fetch remote images at
+    all, already resolved by the caller from the global setting and any
+    per-document override; it decides both what `render_fragment` does with
+    a remote reference and whether the CSP's `img-src` names the private
+    scheme, so a blocked document cannot load one even if a stray URL
+    somehow reached its DOM. `stats`, like `render_fragment`'s argument of
+    the same name, is an out-parameter: it is the only way a caller learns
+    how many remote images were blocked, because this function returns the
+    page and promises never to raise, so nothing can come back as a return
+    value or an exception instead. `None` (the default) means no caller
+    wants to know.
     """
     token = nonce or secrets.token_urlsafe(16)
     style = style if style is not None else stylesheets.PreviewStyle()
@@ -157,7 +217,13 @@ def render_document(
     ui = direction.coerce_ui(ui_direction)
     try:
         doc_direction = direction.resolve(text_direction, text)
-        body = render_fragment(text, base_dir=base_dir, image_display=display)
+        body = render_fragment(
+            text,
+            base_dir=base_dir,
+            image_display=display,
+            fetch_remote=fetch_remote,
+            stats=stats,
+        )
         stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
@@ -202,7 +268,7 @@ def render_document(
         lang_attribute = f' lang="{html.escape(lang.strip(), quote=True)}"'
 
     return _DOCUMENT.format(
-        csp=_CSP.format(nonce=token),
+        csp=_csp(token, fetch_remote),
         nonce=token,
         appearance="dark" if dark else "light",
         theme=theme_identifier,
@@ -210,7 +276,7 @@ def render_document(
         notice=notice,
         body=body,
         stylesheet=stylesheet,
-        config=json.dumps({"codeCopy": copy_buttons, "imageDisplay": display}),
+        config=json.dumps({"codeCopy": copy_buttons, "imageFallback": display}),
         preview_js=preview_js,
         highlight_js=highlight_js,
         ui_direction=ui,
