@@ -153,8 +153,38 @@ def classify_image(reference, base_dir, fetch_remote=False):
     )
 
 
+# The five characters the URL and base64 specifications both call ASCII
+# whitespace. Deliberately not `str.strip()`, which also strips U+00A0 and
+# the rest of Unicode's whitespace: a media type ending `;base64\xa0` is NOT
+# base64 to a browser, and treating it as if it were is how a percent-encoded
+# payload would slip past the measurement below.
+_ASCII_WHITESPACE = "\t\n\f\r "
+_ASCII_WHITESPACE_BYTES = _ASCII_WHITESPACE.encode("ascii")
+
+
+def _declares_base64(head):
+    """True when `head`'s media type ends with the `;base64` marker.
+
+    The WHATWG data-URL grammar puts the marker last -- `;`, optional spaces,
+    then `base64` -- so `data:image/png;x=base64,...` is a *percent-encoded*
+    URL that happens to contain the word. Searching for the substring anywhere
+    would take the base64 branch for it and, when that decode failed, leave
+    the payload unmeasured while every browser rendered it.
+    """
+    media_type = head.strip(_ASCII_WHITESPACE)
+    if media_type[-6:].lower() != "base64":
+        return False
+    return media_type[:-6].rstrip(" ").endswith(";")
+
+
 def _data_uri_verdict(reference):
-    """`imagelimits.PixelVerdict` for a base64 `data:` image, or None.
+    """`imagelimits.PixelVerdict` for a `data:` image, or None.
+
+    The payload is decoded the way the WHATWG data-URL processor decodes it,
+    and in that order: percent-decode the body first, then base64-decode it
+    only if the media type declares `;base64`. A percent-encoded data URL is
+    an ordinary form every browser renders, and treating it as "not judged"
+    left the identical bomb refused in one spelling and allowed in the other.
 
     None and `known=False` both mean "not judged", and both leave the image
     exactly as it renders today. Only a payload that can actually be measured
@@ -163,19 +193,28 @@ def _data_uri_verdict(reference):
     this guards against.
     """
     head, separator, payload = reference.partition(",")
-    if not separator or "base64" not in head.lower():
+    if not separator:
+        # No comma at all: not a data URL a browser would render either.
         return None
-    # The whole payload is decoded -- no fixed prefix budget. A JPEG's frame
-    # header sits after any APP1/EXIF segment, and phone and camera JPEGs
-    # routinely carry a 10-60 KB embedded thumbnail there, so a fixed cutoff
-    # is either restrictive (an ordinary photo's header falls past it and
-    # gets refused as unmeasurable) or unsafe (an attacker pads the segment
-    # to push a bomb's declared size past whatever cutoff was chosen). Base64
-    # encodes 3 bytes per 4 characters, so the payload is trimmed to a whole
-    # quantum before decoding.
     try:
-        trimmed = payload[: len(payload) - (len(payload) % 4)]
-        return imagelimits.pixel_verdict(base64.b64decode(trimmed))
+        body = urllib.parse.unquote_to_bytes(payload)
+        if _declares_base64(head):
+            # Forgiving-base64, as the specification calls it: ASCII
+            # whitespace is ignored rather than fatal, and the payload is
+            # trimmed to a whole 4-character quantum (base64 encodes 3 bytes
+            # per 4 characters) before decoding.
+            #
+            # The whole payload is decoded -- no fixed prefix budget. A JPEG's
+            # frame header sits after any APP1/EXIF segment, and phone and
+            # camera JPEGs routinely carry a 10-60 KB embedded thumbnail
+            # there, so a fixed cutoff is either restrictive (an ordinary
+            # photo's header falls past it and gets refused as unmeasurable)
+            # or unsafe (an attacker pads the segment to push a bomb's
+            # declared size past whatever cutoff was chosen).
+            stripped = body.translate(None, _ASCII_WHITESPACE_BYTES)
+            trimmed = stripped[: len(stripped) - (len(stripped) % 4)]
+            body = base64.b64decode(trimmed)
+        return imagelimits.pixel_verdict(body)
     except Exception:  # noqa: BLE001 - unmeasurable is not a failure
         return None
 

@@ -3,6 +3,7 @@
 import base64
 import os
 import struct
+import urllib.parse
 import zlib
 
 import pytest
@@ -32,8 +33,8 @@ def test_a_readable_local_file_is_shown(tmp_path, image):
     assert decision.uri.endswith("/pics/a.png")
 
 
-def data_uri(width, height, subtype="png"):
-    """A `data:` image that is tiny on the wire whatever it declares."""
+def png_bytes(width, height):
+    """A PNG that is tiny on the wire whatever size it declares."""
 
     def chunk(tag, payload):
         return (
@@ -43,11 +44,26 @@ def data_uri(width, height, subtype="png"):
             + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
         )
 
-    png = b"\x89PNG\r\n\x1a\n" + chunk(
+    return b"\x89PNG\r\n\x1a\n" + chunk(
         b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
     )
-    encoded = base64.b64encode(png).decode("ascii")
+
+
+def data_uri(width, height, subtype="png"):
+    """A `data:` image that is tiny on the wire whatever it declares."""
+    encoded = base64.b64encode(png_bytes(width, height)).decode("ascii")
     return f"data:image/{subtype};base64,{encoded}"
+
+
+def percent_encoded_data_uri(width, height, subtype="png", head_suffix=""):
+    """The same image in the other spelling every browser renders.
+
+    A `data:` URL whose body is percent-encoded rather than base64 is not an
+    exotic form -- it is what the WHATWG data-URL processor does by default,
+    and base64 is the special case.
+    """
+    body = urllib.parse.quote(png_bytes(width, height), safe="")
+    return f"data:image/{subtype}{head_suffix},{body}"
 
 
 def test_a_data_uri_is_shown_without_touching_the_filesystem():
@@ -314,9 +330,61 @@ def test_an_unmeasurable_data_image_is_left_exactly_as_it_was():
     assert decision.status == images.OK
 
 
-def test_a_non_base64_data_uri_is_left_alone():
+def test_a_non_base64_payload_that_matches_no_format_is_left_alone():
+    # Measured now rather than skipped -- and still shown, because four
+    # percent-decoded bytes are not a container this module parses.
     decision = images.classify_image("data:image/gif,%89PNG", None)
     assert decision.status == images.OK
+
+
+def test_a_percent_encoded_bomb_is_refused_exactly_like_a_base64_one():
+    # The cap is stated absolutely in four documents, and it was not: a
+    # percent-encoded data URL is an ordinary form every browser renders, and
+    # the verdict function returned "not judged" for anything without a
+    # `;base64` marker. The identical 20000x20000 bomb was refused in one
+    # spelling and allowed in the other.
+    decision = images.classify_image(percent_encoded_data_uri(20000, 20000), None)
+    assert decision.status == images.TOO_LARGE_TO_DECODE
+    assert "20000" in images.reason_text(decision)
+
+
+def test_a_percent_encoded_ordinary_image_still_renders():
+    decision = images.classify_image(percent_encoded_data_uri(1200, 800), None)
+    assert decision.status == images.OK
+
+
+def test_a_base64_marker_that_is_not_the_last_parameter_is_percent_decoded():
+    # `;x=base64` does not make a data URL base64 -- the marker is the last
+    # parameter or it is nothing. Reading it as base64 would fail the decode
+    # and leave the bomb unmeasured, which is exactly the shape of the hole.
+    reference = percent_encoded_data_uri(20000, 20000, head_suffix=";x=base64")
+    assert images.classify_image(reference, None).status == (images.TOO_LARGE_TO_DECODE)
+
+
+def percent_escaped(reference):
+    """`reference` with a percent-escaped space every 40 payload characters.
+
+    Whitespace inside a base64 payload is legal and ignored (forgiving-base64),
+    and a URL may spell it `%20`. Both have to survive the percent-decode that
+    now runs first.
+    """
+    head, _, payload = reference.partition(",")
+    chunks = [payload[i : i + 40] for i in range(0, len(payload), 40)]
+    return f"{head},{'%20'.join(chunks)}"
+
+
+def test_a_base64_payload_carrying_percent_escaped_whitespace_is_still_measured():
+    reference = percent_escaped(data_uri(20000, 20000))
+    assert images.classify_image(reference, None).status == (images.TOO_LARGE_TO_DECODE)
+
+
+def test_a_base64_payload_carrying_percent_escaped_whitespace_still_renders():
+    reference = percent_escaped(data_uri(1200, 800))
+    assert images.classify_image(reference, None).status == images.OK
+
+
+def test_a_base64_marker_with_no_comma_at_all_is_left_alone():
+    assert images.classify_image("data:image/png;base64", None).status == images.OK
 
 
 def test_a_malformed_payload_does_not_raise():
