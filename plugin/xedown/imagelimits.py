@@ -31,6 +31,34 @@ MAX_PIXELS = 25_000_000
 # cap only bites on extreme geometry that is already under the pixel cap.
 MAX_SIDE = 32_768
 
+# Max steps through the JPEG marker walk before assuming corruption or evasion.
+# With data.find() and the per-marker step cost, this bounds pathological inputs.
+_MAX_STEPS = 8192
+
+
+def claims_a_format(data):
+    """True if `data` has magic bytes matching a format we parse.
+
+    A well-formed file in a claimed format always yields dimensions. If it
+    doesn't, the file is corrupt or evasive, not a new format.
+    """
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 2:
+        return False
+    # PNG
+    if len(data) >= 8 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return True
+    # GIF
+    if len(data) >= 6 and data[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    # BMP
+    if len(data) >= 2 and data[:2] == b"BM":
+        return True
+    # RIFF/WEBP
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    # JPEG
+    return len(data) >= 2 and data[:2] == b"\xff\xd8"
+
 
 class PixelVerdict:
     """Whether an image may be decoded, and what it said its size was.
@@ -53,13 +81,26 @@ class PixelVerdict:
 
 
 def pixel_verdict(data):
-    """Whether `data`'s declared size is safe to hand to a decoder."""
+    """Whether `data`'s declared size is safe to hand to a decoder.
+
+    Returns four possible states:
+    - Measured, within limits: ok=True, known=True
+    - Measured, over limits: ok=False, known=True
+    - Claims format but unmeasurable (corrupt/evasive): ok=False, known=True
+    - Not a format we parse: ok=True, known=False
+    """
     size = image_dimensions(data)
-    if size is None:
-        return PixelVerdict(True, known=False)
-    width, height = size
-    ok = width * height <= MAX_PIXELS and width <= MAX_SIDE and height <= MAX_SIDE
-    return PixelVerdict(ok, width=width, height=height, known=True)
+    if size is not None:
+        # Successfully measured
+        width, height = size
+        ok = width * height <= MAX_PIXELS and width <= MAX_SIDE and height <= MAX_SIDE
+        return PixelVerdict(ok, width=width, height=height, known=True)
+    # Unmeasurable: is it a format we claim to parse?
+    if claims_a_format(data):
+        # Format claimed but dimensions missing = corruption or evasion
+        return PixelVerdict(False, known=True)
+    # Not a format we recognize
+    return PixelVerdict(True, known=False)
 
 
 def _png_dimensions(data):
@@ -143,42 +184,30 @@ def _jpeg_dimensions(data):
         return None
     index = 2
     limit = len(data)
-    loop_limit = 4096  # Prevent DoS on highly fragmented files
 
-    while index < limit:
-        # Use find() for speed: C time instead of Python loop over non-marker bytes
-        ff_pos = data.find(b"\xff", index)
-        if ff_pos == -1:
+    for _ in range(_MAX_STEPS):
+        # Find next 0xFF marker; cost is C time (find()) not Python byte loop
+        index = data.find(b"\xff", index)
+        if index < 0 or index + 1 >= limit:
             return None
-        index = ff_pos
 
-        # Skip consecutive 0xFF bytes (fill bytes per ITU-T.81)
-        fill_start = index
-        while index + 1 < limit and data[index + 1] == 0xFF:
+        nxt = data[index + 1]
+
+        if nxt == 0xFF:
+            # Fill byte; the real marker is further along
             index += 1
-            # Cap the fill-byte scan to prevent DoS
-            if index - fill_start > 16:
-                break
+            continue
 
-        if index + 1 >= limit:
-            return None
+        if nxt == 0x00:
+            # Byte stuffing (escaped 0xFF in payload)
+            index += 2
+            continue
 
-        marker = data[index + 1]
+        marker = nxt
 
         # Markers with no segment length
         if marker in (0xD8, 0xD9, 0x01) or 0xD0 <= marker <= 0xD7:
             index += 2
-            loop_limit -= 1
-            if loop_limit < 0:
-                return None
-            continue
-
-        # Byte stuffing: 0xFF 0x00 is escaped and not a marker
-        if marker == 0x00:
-            index += 2
-            loop_limit -= 1
-            if loop_limit < 0:
-                return None
             continue
 
         # All other markers carry a segment with length field
@@ -196,12 +225,10 @@ def _jpeg_dimensions(data):
             height, width = struct.unpack(">HH", data[index + 5 : index + 9])
             return width, height
 
-        # Skip this segment (index points to FF, so add 2 for marker + length bytes)
+        # Skip this segment (index points to 0xFF, so +2 for marker, +length for segment)
         index += 2 + length
-        loop_limit -= 1
-        if loop_limit < 0:
-            return None
 
+    # Exceeded step limit; assume corruption or evasion
     return None
 
 

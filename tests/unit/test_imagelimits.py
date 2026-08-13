@@ -127,9 +127,10 @@ def test_one_pixel_over_the_side_cap_is_refused():
     assert verdict.ok is False
 
 
-def test_an_unmeasurable_payload_is_reported_as_unknown_not_as_refused():
-    # Each caller decides what to do with "cannot measure": the fetch path
-    # refuses, the data: path allows. The verdict must not decide for them.
+def test_an_unrecognized_format_is_reported_as_unknown_not_as_refused():
+    # A format we don't parse (AVIF) is unknown, not refused. The fetch path
+    # refuses unmeasurable images, but only those claiming a format we parse.
+    # Unknown formats get the benefit of the doubt: known=False, ok=True.
     verdict = imagelimits.pixel_verdict(b"\x00\x00\x00\x20ftypavif")
     assert verdict.known is False
     assert verdict.ok is True
@@ -335,3 +336,52 @@ def test_bmp_with_unknown_dib_size_returns_none():
         + b"\x00" * 10
     )
     assert imagelimits.image_dimensions(data) is None
+
+
+# --- Fix Round 2: Structural safety - distinguish "not our format" from "corrupt" ---
+
+
+@pytest.mark.parametrize("fill_count", [0, 1, 17, 18, 100, 10000])
+def test_bomb_refused_at_any_fill_run_length(fill_count):
+    # A 20000×20000 bomb with any number of 0xFF fill bytes before SOF.
+    # With the new rule, it's always measured and refused, never allowed.
+    fill_bytes = b"\xff" * fill_count
+    sof_frame = (
+        b"\xff\xc0"  # SOF0
+        + struct.pack(">H", 11)
+        + b"\x08"
+        + struct.pack(">HH", 20000, 20000)
+        + b"\x03"
+    )
+    data = (
+        b"\xff\xd8"
+        + b"\xff\xe0"
+        + struct.pack(">H", 4)
+        + b"\x00\x00"
+        + fill_bytes
+        + sof_frame
+    )
+    verdict = imagelimits.pixel_verdict(data)
+    # Either measured and refused, or unmeasurable but claimed (refused on corruption).
+    # With many fill bytes (~10000+), the walk exceeds _MAX_STEPS, returns None,
+    # and refusal comes from "format claimed but unmeasurable" rule.
+    assert verdict.ok is False, f"bomb with {fill_count} fill bytes must be refused"
+
+
+def test_format_claimed_but_unmeasurable_is_refused():
+    # A PNG with the magic bytes but truncated before IHDR: claims PNG but has
+    # no dimensions. This is corruption or evasion, not a new format.
+    truncated_png = png_bytes(100, 100)[:12]  # Just the magic and part of IHDR
+    assert imagelimits.image_dimensions(truncated_png) is None
+    verdict = imagelimits.pixel_verdict(truncated_png)
+    # Should recognize PNG magic and refuse
+    assert verdict.known is True
+    assert verdict.ok is False
+
+
+def test_not_our_format_still_allowed_as_unknown():
+    # AVIF and other formats we don't parse: still ok=True, known=False.
+    # The new rule only affects formats we claim to parse.
+    verdict = imagelimits.pixel_verdict(b"\x00\x00\x00\x20ftypavif")
+    assert verdict.known is False
+    assert verdict.ok is True
