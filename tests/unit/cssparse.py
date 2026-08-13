@@ -19,6 +19,33 @@ def _normalise(text):
     return " ".join(text.split())
 
 
+def _split_selector_list(prelude):
+    """Split a selector group on top-level commas only.
+
+    A bare `prelude.split(",")` breaks on `:is(a, b, c)` -- introduced by
+    preview.css's `[align] :is(p, h1, ...)` rule -- by treating the commas
+    inside the functional pseudo-class as if they separated whole selectors,
+    scattering `h1`, `h2`, etc. out as spurious top-level keys. Depth-tracked
+    so a comma inside any parenthesised argument list (`:is()`, `:not()`, a
+    future `:where()`) stays part of the one selector it belongs to.
+    """
+    parts = []
+    buffer = ""
+    depth = 0
+    for char in prelude:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if char == "," and depth == 0:
+            parts.append(buffer)
+            buffer = ""
+        else:
+            buffer += char
+    parts.append(buffer)
+    return parts
+
+
 def declarations(css, prefix=""):
     """`(map, duplicates)` for `css`.
 
@@ -61,7 +88,7 @@ def declarations(css, prefix=""):
             duplicates.extend(nested_duplicates)
             continue
 
-        for selector in prelude.split(","):
+        for selector in _split_selector_list(prelude):
             selector = _normalise(selector)
             if not selector:
                 continue

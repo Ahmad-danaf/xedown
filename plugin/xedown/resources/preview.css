@@ -365,3 +365,106 @@ img:not([width]):not([height]) { max-height: 80vh; width: auto; }
 @media (prefers-reduced-motion: reduce) {
   .xedown-remote.xedown-loading { animation: none; }
 }
+
+/* Presentational alignment, as an attribute rather than a class, because
+   that is how READMEs are written: `<div align="center">` around a title
+   block is close to a convention. The attribute selector is not
+   decoration -- `p, h1..h6, blockquote, td, th { text-align: start }`
+   above is specificity 0,0,1 and an align="" hint is 0,0,0, so without a
+   selector that outranks it the attribute would be allowed through the
+   sanitizer and change nothing on screen.
+
+   The descendant rule exists for the same reason one level down: a
+   heading inside a centred div gets `text-align: start` directly, which
+   beats inheriting `center` from its parent. `inherit` puts it back.
+
+   `table` is deliberately not given any special treatment here, even
+   though the sanitizer allows `align` on it. Legacy `align` on a table
+   means float/centre-as-a-block, not text-align -- and `table { width:
+   auto; min-width: 100% }` elsewhere in this file already stretches the
+   table to fill its container, so a rule implying tables centre would be
+   a no-op in this layout. The bare `[align="center"]` selector below does
+   still match a `table[align="center"]`, but `text-align` only affects a
+   table's own inline content, of which it has none -- harmless, not a
+   feature. */
+[align="left"]    { text-align: left; }
+[align="center"]  { text-align: center; }
+[align="right"]   { text-align: right; }
+[align="justify"] { text-align: justify; }
+
+/* First use of :is() in this stylesheet. WebKitGTK has supported it since
+   2.30; the development machine runs 2.52.3. Written out longhand it
+   would be nine selectors repeated four times. */
+[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
+  text-align: inherit;
+}
+
+/* left and right stay physical, deliberately. `dir` handles logical
+   direction; an author who typed align="left" inside an RTL document
+   asked for the left-hand side and gets it. */
+
+/* A collapsible section. The marker is the browser's own -- drawing one
+   would mean owning its open and closed states in four themes for no
+   gain. */
+details {
+  border: 1px solid var(--xedown-border);
+  border-radius: 6px;
+  padding: .6em .9em;
+  margin: 1em 0;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 600;
+  /* The list-item display keeps the disclosure triangle; `start` keeps it
+     on the correct side in an RTL document. */
+  text-align: start;
+}
+
+details[open] > summary {
+  margin-bottom: .6em;
+  border-bottom: 1px solid var(--xedown-border);
+  padding-bottom: .4em;
+}
+
+details > :last-child { margin-bottom: 0; }
+
+/* A key cap. Sized in em so it tracks the reader's text-size setting. The
+   font is deliberately not set here: every theme already declares one for
+   `code, pre` and `kbd` together, and this sheet and a theme's sheet must
+   never both own the same selector/property (see
+   test_base_and_theme_never_declare_the_same_property_twice) -- a key cap
+   staying in the theme's monospace, matching `code`, is the reasonable
+   reading of that ownership split anyway. */
+kbd {
+  font-size: .88em;
+  padding: .12em .45em;
+  border: 1px solid var(--xedown-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--xedown-code-bg);
+  white-space: nowrap;
+}
+
+/* Definition lists. Indented on the inline side so they read correctly in
+   both directions. */
+dl { margin: 1em 0; }
+dt { font-weight: 600; margin-top: .8em; }
+dd { margin: .2em 0 0; padding-inline-start: 1.5em; }
+
+/* A table caption is a label for the table, not a row in it. */
+caption {
+  caption-side: top;
+  text-align: start;
+  color: var(--xedown-muted);
+  font-size: .92em;
+  padding-bottom: .4em;
+}
+
+/* An abbreviation's expansion is only reachable by hover or by an
+   assistive technology, so the underline is the only affordance saying it
+   is there at all. */
+abbr[title] {
+  text-decoration: underline dotted;
+  cursor: help;
+}
