@@ -1,6 +1,7 @@
 """Orchestrates one tab: mode bar, preview, scroll memory, refresh, teardown."""
 
 import os
+import weakref
 
 import gi
 
@@ -15,7 +16,9 @@ from . import (
     diskstate,
     errors,
     images,
+    imagescheme,
     modestore,
+    remoteimages,
     renderer,
     settings,
     stylesheets,
@@ -41,6 +44,20 @@ EXTERNAL_CHANGE_MESSAGE = (
 # dialog follows, and that dialog -- not xedown -- is what discards the
 # user's work.
 RELOAD_LABEL = "Reload…"
+
+# Every controller currently alive in this process, so that the last one out
+# can release the image-fetch resources `imagescheme` holds on everyone's
+# behalf -- a thread pool with queued fetches in it, which nothing else in
+# the plugin is positioned to shut down (a plugin disable, or the last window
+# closing, must not leave workers dialling hosts for tabs that no longer
+# exist). Added in `activate` and dropped in `deactivate`, which is the same
+# pair of moments the view's own `_xedown_controller` attribute exists
+# between, so this cannot go stale the way a second reference held elsewhere
+# would: it is not another source of truth about *which* controller a view
+# has, only a count of how many are still running. Weak, so a controller that
+# somehow escapes teardown is still collectable and still leaves the set --
+# strong references here would turn that into a leak for the life of xed.
+_live_controllers = weakref.WeakSet()
 
 
 class TabController:
@@ -112,11 +129,19 @@ class TabController:
         # with it. See _attach_focus_watch.
         self._focus_window = None
         self._focus_handler_id = None
+        # This tab's own permission to fetch the remote images its document
+        # names, granted by the reader pressing Load. Per tab and per
+        # session: it survives mode switches, reloads and reverts, a tab
+        # close is what ends it, and it never extends to the same file open
+        # in another tab -- which is the point, since the grant is about the
+        # document the reader looked at and decided to trust.
+        self._remote_unblocked = False
 
     # --- lifecycle ---------------------------------------------------------
 
     def activate(self):
         self._active = True
+        _live_controllers.add(self)
         self._connect(self.document, "saved", self._on_document_saved)
         self._connect(self.document, "loaded", self._on_document_loaded)
         if self.tab is not None:
@@ -153,6 +178,12 @@ class TabController:
             stylewatcher.get_watcher().disconnect(self._stylesheet_token)
             self._stylesheet_token = None
 
+        # The third process-wide registration this controller makes, and the
+        # third that has to be given back here. Unconditional: the list
+        # tolerates a callback that never listened, which is every tab that
+        # was never built (`_build_if_markdown` is where it is added).
+        imagescheme.forget_failure_listener(self._on_remote_image_failed)
+
         if self.appearance_watcher is not None:
             self.appearance_watcher.disconnect()
             self.appearance_watcher = None
@@ -175,6 +206,22 @@ class TabController:
             self.searchbar.destroy()
             self.searchbar = None
         self._built = False
+
+        # Last one out. Done after the WebView above is destroyed, so any
+        # scheme request still outstanding is already orphaned by the time
+        # the fetcher stops answering -- `imagescheme.shutdown()` cancels
+        # queued fetches without answering their callbacks, and that is only
+        # harmless for requests whose page has gone. The emptiness test is
+        # what keeps a closing tab from tearing the pool out from under a
+        # tab in another window: while any controller is still registered,
+        # this does nothing. A later request cannot land on the fetcher this
+        # tears down either -- `imagescheme._on_request` asks `get_fetcher()`
+        # fresh every time, and that function builds a new one rather than
+        # returning the shut-down instance, which is what makes a
+        # disable/re-enable cycle work as well.
+        _live_controllers.discard(self)
+        if not _live_controllers:
+            imagescheme.shutdown()
 
     def _connect(self, owner, signal, callback):
         self._handlers.append((owner, owner.connect(signal, callback)))
@@ -301,7 +348,10 @@ class TabController:
             store, user=stylewatcher.get_watcher().current()
         )
         self._settings_token = store.connect(self._on_settings_changed)
-        self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
+        # `image_fallback`, not `remote_images`: the first is what to show in
+        # place of an image that is not being displayed, the second is the
+        # fetch policy and is read per render by `_fetch_remote`.
+        self._image_display = images.coerce_display(store.get(settings.IMAGE_FALLBACK))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
         self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
         self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
@@ -323,6 +373,18 @@ class TabController:
         self.modebar.show_all()
         self._connect(self.modebar, "mode-selected", self._on_mode_selected)
         self._connect(self.modebar, "refresh-requested", self._on_refresh_requested)
+        self._connect(
+            self.modebar, "load-images-requested", self._on_load_images_requested
+        )
+
+        # Before the WebView exists, because the handler is installed on the
+        # default web context and a page can ask for a `xedown-image:` URL
+        # from the moment it loads. `register_once` is idempotent for the
+        # life of the process; the listener is added exactly once per built
+        # tab (this method refuses to run twice, `_built` sees to that) and
+        # removed again in `deactivate`.
+        imagescheme.register_once()
+        imagescheme.note_failure_listener(self._on_remote_image_failed)
 
         self.preview = PreviewView(
             on_link=self._on_link_activated,
@@ -492,6 +554,16 @@ class TabController:
         """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return
+        # Refresh means "try again", and that includes the remote images that
+        # did not arrive: the fetcher remembers failures precisely so that a
+        # re-render every 250ms does not re-dial a dead host four times a
+        # second, and this is one of the three moments (with the Load button
+        # and a reconnect) at which a reader has said to forget them.
+        # Successes are kept. Asked only of a tab that is actually fetching:
+        # for a blocked document the answer could not change anything, and
+        # `get_fetcher()` would build a thread pool to be told so.
+        if self._fetch_remote():
+            imagescheme.get_fetcher().invalidate_failures()
         self._cancel_refresh()
         self._refresh_body_now()
 
@@ -1117,11 +1189,14 @@ class TabController:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
             return
         text = self._render_text()
+        stats = images.RenderStats()
         try:
             fragment = renderer.render_fragment(
                 text,
                 base_dir=self._base_dir(),
                 image_display=self._image_display,
+                fetch_remote=self._fetch_remote(),
+                stats=stats,
             )
             # Inside the try with the render: under `auto` this reads the
             # same text, and a failure here must land on the same error page
@@ -1133,12 +1208,18 @@ class TabController:
             )
             return
         self.preview.update_body(fragment, resolved)
+        # After the render succeeded, never before: the counting happens as
+        # the body is built, so a render that raised part-way through would
+        # leave a partial count describing a page nobody will see -- the
+        # error page the branch above loads instead.
+        self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
 
     def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
             return
+        stats = None
         if error is not None:
             html = errors.error_page(
                 "Cannot render this document",
@@ -1147,6 +1228,7 @@ class TabController:
                 ui_direction=self._ui_direction,
             )
         else:
+            stats = images.RenderStats()
             html = renderer.render_document(
                 self._render_text(),
                 base_dir=self._base_dir(),
@@ -1157,6 +1239,8 @@ class TabController:
                 text_direction=self._text_direction,
                 ui_direction=self._ui_direction,
                 lang=self._page_language(),
+                fetch_remote=self._fetch_remote(),
+                stats=stats,
             )
         base_dir = self._base_dir()
         self.preview.load_document(
@@ -1169,6 +1253,15 @@ class TabController:
         # `error is None` is true even when it caught something internally
         # and returned an error page of its own.
         self._page_is_document = not errors.is_error_page(html)
+        # Only for a page that really is the document. `render_document`
+        # fills `stats` in while building the body, which happens before the
+        # steps that can still fail (reading preview.js and the highlight
+        # bundle), so an "Installation incomplete" page can arrive carrying a
+        # real count from a document the reader is not looking at -- and a
+        # "3 remote images [Load]" chip over an error page with no images in
+        # it offers something that is not there.
+        if stats is not None and self._page_is_document:
+            self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
         if not self._page_is_document and self.search.active:
@@ -1290,7 +1383,7 @@ class TabController:
         text size do not: they are two custom properties the loaded page
         already reads, so they are poked in place.
 
-        `REMOTE_IMAGES` and `CODE_COPY_BUTTONS` are handled here rather than
+        `IMAGE_FALLBACK` and `CODE_COPY_BUTTONS` are handled here rather than
         through a reload: the first changes only the body, the second only
         the page's own config. Both are re-read before the theme branch, so
         a broadcast that moves several keys at once cannot leave a reload
@@ -1301,6 +1394,13 @@ class TabController:
         <head> to rebuild. It costs one re-render of the Markdown, which is
         the right price for a setting nobody changes twice a day and reuses
         machinery that is already correct about mode and staleness.
+
+        `REMOTE_IMAGES` — the other half of the pair of names `IMAGE_FALLBACK`
+        was split from — behaves the opposite way to all three: it is the
+        *fetch policy*, and a permitted page names the private image scheme
+        in its own Content-Security-Policy, which is a <meta> in <head>.
+        Only a whole new page can carry a new one, so it rides with the
+        theme in the reload branch rather than with the body-only three.
 
         `AUTO_REFRESH` and `REFRESH_DELAY_MS` are cached rather than read at
         use time so the debounce path stays a timer schedule and nothing
@@ -1323,7 +1423,7 @@ class TabController:
         )
         previous_display = self._image_display
         previous_direction = self._text_direction
-        self._image_display = images.coerce_display(store.get(settings.REMOTE_IMAGES))
+        self._image_display = images.coerce_display(store.get(settings.IMAGE_FALLBACK))
         self._copy_buttons = bool(store.get(settings.CODE_COPY_BUTTONS))
         was_auto = self._auto_refresh
         self._auto_refresh = bool(store.get(settings.AUTO_REFRESH))
@@ -1349,7 +1449,11 @@ class TabController:
         # the second one knows the first already happened, so one broadcast
         # never renders the body twice.
         refreshed = False
-        if settings.PREVIEW_THEME in changed:
+        # `REMOTE_IMAGES` rides with the theme: both live in <head> (the
+        # stylesheet and the CSP), and both are therefore a whole page or
+        # nothing. Sharing the branch also means one broadcast that moves
+        # both still reloads exactly once.
+        if settings.PREVIEW_THEME in changed or settings.REMOTE_IMAGES in changed:
             self.state.preview_stale = True
             if self._built and self.state.mode is Mode.PREVIEW:
                 self._reload_preview(restore_scroll=self._current_preview_scroll())
@@ -1397,7 +1501,7 @@ class TabController:
             return
 
         if (
-            settings.CODE_COPY_BUTTONS in changed or settings.REMOTE_IMAGES in changed
+            settings.CODE_COPY_BUTTONS in changed or settings.IMAGE_FALLBACK in changed
         ) and self.preview is not None:
             self.preview.set_config(self._copy_buttons, self._image_display)
 
@@ -1441,9 +1545,114 @@ class TabController:
 
     # --- link and image handling -------------------------------------------
 
-    def _on_image_error(self, _source):
-        # The placeholder is already in the page; nothing further is required.
-        return
+    def _fetch_remote(self):
+        """Whether this tab may fetch remote images right now.
+
+        The global setting or this tab's own grant, in that order. Read from
+        the store at render time rather than cached in a field like
+        `_image_display`: it is asked once per render, not once per image,
+        and a value that cannot be stale is one less thing for
+        `_on_settings_changed` to keep in step.
+        """
+        return (
+            settings.get_settings().get(settings.REMOTE_IMAGES) == "https"
+            or self._remote_unblocked
+        )
+
+    def _note_remote_images(self, stats):
+        """Offer to load what this render refused to fetch, or withdraw the
+        offer. Called only for a render that produced the document."""
+        if self.modebar is not None:
+            self.modebar.set_remote_images(stats.blocked_remote)
+
+    def _on_load_images_requested(self, _bar):
+        """The reader has chosen to load this document's remote images.
+
+        A full page reload rather than a body swap, because the permission
+        is carried by the page's own Content-Security-Policy, which is a
+        <meta> in <head>: a body full of `xedown-image:` sources swapped
+        into a page that was loaded while blocked would be refused by that
+        page's own policy, image by image. Outside Preview there is nothing
+        loaded to reload -- the staleness below is what makes the switch
+        back render with the new permission.
+        """
+        self._remote_unblocked = True
+        # The offer has been accepted, so it stops being made now rather
+        # than at the next render: with the permission granted there are no
+        # blocked images left to count, and in Markdown mode no render is
+        # coming until the reader switches back.
+        if self.modebar is not None:
+            self.modebar.set_remote_images(0)
+        # A URL this document names may already be marked failed -- from
+        # another tab, or from this one while it was offline. Pressing Load
+        # is exactly the "try again" the cache's failure half is dropped
+        # for; successes are kept.
+        imagescheme.get_fetcher().invalidate_failures()
+        self.state.preview_stale = True
+        if self._built and self.state.mode is Mode.PREVIEW:
+            self._reload_preview(restore_scroll=self._current_preview_scroll())
+        else:
+            self._update_refresh_cue()
+
+    def _on_image_error(self, source):
+        """The page says an image did not load. Say why, when xedown knows.
+
+        For a local image there is nothing to add: the reason was decided at
+        render time and the placeholder already carries it. A
+        `xedown-image:` source is the case this exists for -- the page
+        cannot know why a fetch failed, and "could not be loaded" is not an
+        answer anyone can act on.
+
+        The fetcher's own cache is asked rather than any record of this
+        controller's: it already holds every failure, bounded by
+        `CACHE_BYTES`, and it is the same answer whichever tab asks.
+
+        This is the route that lands. `_on_remote_image_failed` below hears
+        about the same failure earlier, but the page only builds the
+        placeholder these messages are written into when the image's `error`
+        event fires -- which is after the scheme request has been failed, so
+        the earlier message usually has nothing to match yet. Here the
+        placeholder certainly exists: the page posted this while creating
+        it.
+        """
+        if self.preview is None:
+            return
+        url = remoteimages.parse_scheme_uri(source)
+        if url is None:
+            return
+        result = imagescheme.get_fetcher().cached(url)
+        if result is None or result.ok:
+            # Still in flight, evicted, or a fetch that succeeded and then
+            # would not decode. Nothing honest to say beyond what the page
+            # already says for itself.
+            return
+        self.preview.set_image_message(
+            source,
+            errors.remote_image_failure_text(result.error, result.detail),
+        )
+
+    def _on_remote_image_failed(self, view, url, result):
+        """Tell this tab's page why one of its images did not arrive.
+
+        Routed by the WebView the request came from, so a failure lands in
+        the tab that asked for it and nowhere else; a destroyed view reports
+        None, which is the whole check needed. Both parts are an
+        optimisation rather than a guard -- `imagescheme` records that
+        finishing a destroyed view's request is safe, and this listener is
+        dropped in `deactivate()`, so a torn-down controller is never
+        reached at all.
+
+        Writes the same sentence `_on_image_error` does, and the two are
+        idempotent in either order: this one lands when the placeholder is
+        already in the page, that one covers the ordinary case where it is
+        not there yet.
+        """
+        if view is None or self.preview is None or view is not self.preview.widget:
+            return
+        self.preview.set_image_message(
+            remoteimages.scheme_uri(url),
+            errors.remote_image_failure_text(result.error, result.detail),
+        )
 
     def _on_link_activated(self, uri):
         decision = classify_link(uri, self._base_dir())

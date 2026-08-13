@@ -153,6 +153,21 @@ def note_failure_listener(callback):
     _failure_listeners.append(callback)
 
 
+def forget_failure_listener(callback):
+    """Stop telling `callback` about failures. Safe if it never listened.
+
+    The list is process-wide and its entries are ordinarily bound methods of
+    a per-tab controller, so without this a closed tab's controller -- and
+    the WebView, buffer and document it references -- would be held here for
+    the life of the process, one entry per tab ever opened. Bound methods
+    compare equal by `(instance, function)`, which is what makes `remove`
+    find the entry `note_failure_listener` was handed even though the caller
+    passes a freshly-created bound-method object.
+    """
+    with contextlib.suppress(ValueError):
+        _failure_listeners.remove(callback)
+
+
 def register_once():
     """Install the scheme handler. Safe to call from every activation.
 
