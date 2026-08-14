@@ -389,6 +389,5 @@ def test_the_align_inherit_rule_does_not_override_a_cell_s_own_alignment():
     # away.
     css = vendoring.read_resource("preview.css")
     assert (
-        "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align])"
-        in css
+        "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align])" in css
     )
