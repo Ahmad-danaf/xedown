@@ -63,6 +63,7 @@ ModeBar = None
 xedown_a11y = None
 xedown_errors = None
 xedown_imagescheme = None
+xedown_perflimits = None
 xedown_prefs = None
 xedown_remoteimages = None
 xedown_settings = None
@@ -74,11 +75,12 @@ XedownWindowActivatable = None
 def _lazy_imports():
     global TabController, Mode, ModeBar, xedown_a11y, xedown_prefs, xedown_settings
     global xedown_shortcuts, xedown_stylewatcher, XedownWindowActivatable
-    global xedown_errors, xedown_imagescheme, xedown_remoteimages
+    global xedown_errors, xedown_imagescheme, xedown_remoteimages, xedown_perflimits
     from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import a11y as _a11y
     from xedown import errors as _errors
     from xedown import imagescheme as _imagescheme
+    from xedown import perflimits as _perflimits
     from xedown import prefs as _prefs
     from xedown import remoteimages as _remoteimages
     from xedown import settings as _settings
@@ -92,6 +94,7 @@ def _lazy_imports():
     xedown_a11y = _a11y
     xedown_errors = _errors
     xedown_imagescheme = _imagescheme
+    xedown_perflimits = _perflimits
     xedown_prefs = _prefs
     xedown_remoteimages = _remoteimages
     xedown_settings = _settings
@@ -4369,8 +4372,14 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
     def step_perf_setup(self):
         """Open a document above DEFER_INITIAL_MIN_CHARS in Preview mode."""
         path = os.path.join(self._tmpdir, "large.md")
+        # Derived from the guard's own threshold, not a bare literal: if
+        # `perflimits.DEFER_INITIAL_MIN_CHARS` is retuned later, this
+        # fixture moves with it instead of silently falling below it and
+        # turning `perf-large-opens-in-source` into a false FAIL with only
+        # "mode=..." to explain why.
+        chars = int(xedown_perflimits.DEFER_INITIAL_MIN_CHARS * 1.5)
         with open(path, "w", encoding="utf-8") as handle:
-            handle.write(_large_markdown(400_000))
+            handle.write(_large_markdown(chars))
         self._perf_tab = self.window.create_tab_from_location(
             Gio.File.new_for_path(path), None, 0, False, True
         )
@@ -4381,33 +4390,71 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
 
     def step_perf_deferred_check(self):
         """Nothing should have rendered, so nothing should have stalled."""
-        worst = self._stop_latency_watch()
+        self._perf_open_worst = self._stop_latency_watch()
         controller = self._controller_for(self._perf_tab.get_view())
         record("perf-large-controller-built", controller is not None)
         mode = controller.state.mode if controller is not None else None
         record("perf-large-opens-in-source", mode is Mode.SOURCE, f"mode={mode}")
         # The guard's whole purpose: an unrequested render never happened,
-        # so the loop was never blocked. 250 ms is generous -- an actual
-        # 400k render measures around 700 ms.
+        # so the loop was never blocked. 250 ms is generous -- a real
+        # render at this size measures around 700 ms (step_perf_build_check
+        # below is the positive control that proves the watcher can tell
+        # the two apart, rather than this bound simply never being tripped).
         record(
             "perf-large-open-does-not-stall-the-loop",
-            worst < 0.25,
-            f"worst tick gap {worst * 1000:.0f}ms",
+            self._perf_open_worst < 0.25,
+            f"worst tick gap {self._perf_open_worst * 1000:.0f}ms",
         )
         self._schedule(500, self.step_perf_build)
         return False
 
     def step_perf_build(self):
-        """Take the offer, then confirm typing does not re-render."""
+        """Take the offer.
+
+        The render this triggers is the scenario's positive control:
+        unlike the quiet open and typing windows, this one is *supposed*
+        to stall, and `step_perf_build_check` confirms the watcher actually
+        saw it -- an absolute threshold nothing ever trips is not evidence
+        the instrument works, only that it has never been tested.
+        """
         controller = self._controller_for(self._perf_tab.get_view())
+        self._start_latency_watch()
         controller.set_mode(Mode.PREVIEW)
-        self._schedule(4000, self.step_perf_typing)
+        # Generous headroom, not a tuned figure: this covers both the
+        # ~700-900 ms synchronous Python render (markdown -> sanitize ->
+        # renderer, all on this thread, per perflimits.py) and WebKit's own
+        # out-of-process DOM parse/layout/paint of a page this large, which
+        # this probe cannot observe directly and which is not xedown's own
+        # cost to bound. `step_perf_build_check` only starts the next watch
+        # after this wait, so a short budget here would leak WebKit's tail
+        # into that window and fail it for a reason that has nothing to do
+        # with typing.
+        self._schedule(8000, self.step_perf_build_check)
         return False
 
-    def step_perf_typing(self):
+    def step_perf_build_check(self):
         controller = self._controller_for(self._perf_tab.get_view())
+        build_worst = self._stop_latency_watch()
+        # Relative, not absolute: the open window above already includes
+        # xed's own cost of loading a large document into a syntax-
+        # highlighted GtkSourceBuffer, which this watcher cannot separate
+        # from xedown's own cost -- an absolute bound here could fail on a
+        # slow machine for a reason that has nothing to do with xedown.
+        # Comparing against this run's own open-window measurement instead
+        # is self-calibrating (both are subject to the same machine speed)
+        # and doubles as proof the watcher can detect a real stall at all,
+        # which the two "does-not-stall" bounds elsewhere in this scenario
+        # cannot demonstrate on their own.
+        margin = self._perf_open_worst + 0.25
         record(
-            "perf-large-preview-built-on-request", self._preview_visible_for(controller)
+            "perf-large-build-stalls-the-loop",
+            build_worst > margin,
+            f"open worst {self._perf_open_worst * 1000:.0f}ms, "
+            f"build worst {build_worst * 1000:.0f}ms",
+        )
+        record(
+            "perf-large-preview-built-on-request",
+            self._preview_visible_for(controller),
         )
         # Live refresh must be off for this tab regardless of the setting.
         record(
@@ -4416,17 +4463,17 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "the size guard did not override auto-refresh",
         )
         self._start_latency_watch()
-        # An *insert*, deliberately, not `set_text`. Rewriting a 400k
-        # buffer wholesale stalls the main loop all by itself, which is
-        # the very thing the tick gap below measures -- the assertion
-        # would then fail for a reason that has nothing to do with
-        # rendering. This types the way a reader types.
+        # An *insert*, deliberately, not `set_text`. Rewriting the buffer
+        # wholesale stalls the main loop all by itself, which is the very
+        # thing the tick gap below measures -- the assertion would then
+        # fail for a reason that has nothing to do with rendering. This
+        # types the way a reader types.
         document = self._perf_tab.get_document()
         document.insert(document.get_end_iter(), "\n\nmore\n", -1)
-        self._schedule(2000, self.step_perf_check)
+        self._schedule(2000, self.step_perf_typing_check)
         return False
 
-    def step_perf_check(self):
+    def step_perf_typing_check(self):
         worst = self._stop_latency_watch()
         record(
             "perf-large-typing-does-not-stall-the-loop",
@@ -4435,6 +4482,16 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         )
         controller = self._controller_for(self._perf_tab.get_view())
         record("perf-large-preview-marked-stale", controller.state.preview_stale)
+        # The insert above left the buffer modified and never saved; xed
+        # would otherwise raise its own "save changes?" dialog on close,
+        # which nothing in this probe can dismiss (`_guard` only turns an
+        # *exception* into a FAIL -- a modal dialog blocks the loop, it
+        # does not raise) and which would hang the harness to its own
+        # `SEQUENCE_TIMEOUT_SECONDS`, leaving the dialog stranded on the
+        # user's desktop. Same remedy `_reconcile_without_saving` uses
+        # above: mark the buffer clean by hand rather than asking xed to
+        # save or discard content this probe put there on purpose.
+        self._perf_tab.get_document().set_modified(False)
         self.window.close_tab(self._perf_tab)
         self._schedule(800, self.step_perf_torn_down)
         return False
