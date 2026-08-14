@@ -204,7 +204,10 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
   link. Open the file by its real path, or use *File → Revert*.
 - xedown supports selected GitHub-flavored Markdown features (tables, task
   lists, strikethrough, fenced code, footnotes, and lists that interrupt a
-  paragraph), not full GFM compatibility.
+  paragraph), not full GFM compatibility. Every known difference from
+  GitHub's own rendering is listed in
+  [docs/markdown-compatibility.md](docs/markdown-compatibility.md), which was
+  written by diffing xedown against cmark-gfm over a corpus of real READMEs.
 - xed 3.8.9 itself can crash when you close a window after moving a tab
   between windows. This happens with xedown uninstalled and is not something
   the plugin can fix or avoid; save before dragging tabs between windows.

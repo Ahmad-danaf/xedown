@@ -231,6 +231,16 @@ explained inline below.
 | 130 | Add `![huge](data:image/png;base64,iVBORw0KGgoAAAAASUhEUgAAdTAAAHUw)` — a 24-byte PNG header declaring 30000×30000 pixels — to any document and view it in Preview | `Image is too large to display safely (30000×30000 pixels) — "huge"`: a placeholder, not an attempted decode. This applies to every image xedown can measure, inline or remote, and no setting turns it off |
 | 131 | Add `![huge2](data:image/png,%89PNG%0D%0A%1A%0A%00%00%00%0DIHDR%00%00u0%00%00u0%08%00%00%00%00)` — the same header, percent-encoded instead of base64 — and refresh | The same placeholder, naming the same 30000×30000. The cap is on the image, not on the spelling: a percent-encoded `data:` URL is an ordinary form browsers render, and it used to slip past the measurement entirely |
 | 132 | Clean up: delete the scratch document(s) rows 124–131 used | Nothing from these rows is left behind |
+| 133 | In `tests/fixtures/showcase.md`, find *A collapsible section*. Click **Show the long version**, then click it again. Then <kbd>Tab</kbd> to the same line and press <kbd>Enter</kbd> | It starts closed, showing one line with a disclosure triangle. The first click opens it onto the list and the fence inside; the second closes it again. <kbd>Tab</kbd> reaches it with a visible focus ring and <kbd>Enter</kbd> does the same thing the click does. Before this release the section could not close at all: everything inside was permanently on screen and the summary was a stray line of text above it |
+| 134 | In the same file, look at *A centred block* just below, in each of the four themes, light and dark | The line is centred in the content column in all eight combinations. A theme changes its colour and its spacing, never its alignment |
+| 135 | Copy `tests/fixtures/rtl.md` to a scratch file, add the line `<p align="left">هذا السطر محاذاته إلى اليسار.</p>` to it, and open it in Preview | That one paragraph sits against the **left** edge of the content column while every other paragraph on the page stays against the right — and the Arabic inside it still reads right to left, with its full stop on the left. Delete the scratch file afterwards |
+
+Rows 133–135 are here because a structural assertion cannot see any of it: a
+tree diff sees a `<details>` element whether or not it opens, and sees
+`align="left"` whether it lands left, right, or nowhere. Row 135 is the one
+that matters most — `left` has to stay physically left in a right-to-left
+document rather than following the page — and it needs an eye on a real screen
+to check.
 
 Rows 116–123 use a scratch document of your own rather than a fixture: rows 119
 and 120 deliberately break an image reference, and `tests/fixtures/` documents

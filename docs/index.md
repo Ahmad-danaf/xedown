@@ -9,6 +9,11 @@
   scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
   says, in an isolated display)
 - Known issues — [known-issues.md](known-issues.md)
+- Markdown compatibility — [markdown-compatibility.md](markdown-compatibility.md),
+  every known difference from GitHub's own rendering and why each one is the
+  way it is, measured by diffing xedown against cmark-gfm over a corpus of 31
+  real READMEs that `scripts/fetch-corpus.sh` reproduces from pinned commit
+  SHAs
 - Security — [../SECURITY.md](../SECURITY.md), the network boundary around
   remote images and the properties that are enforced and tested, not merely
   intended

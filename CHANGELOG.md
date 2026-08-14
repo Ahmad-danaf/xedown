@@ -6,6 +6,85 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+A Markdown compatibility pass, measured by diffing xedown's rendering against
+cmark-gfm — the parser GitHub itself uses — over 31 real README files.
+Documents you already have will render differently, and closer to the way
+their authors saw them.
+
+### Added
+
+- **A collapsible section now collapses.** `<details>` and `<summary>` used to
+  be discarded, so every collapsed section was permanently open and its
+  summary label became a stray line of text. They render as the author wrote
+  them, opening and closing by click and by keyboard.
+- **`<kbd>`, definition lists (`<dl>`/`<dt>`/`<dd>`), `<abbr>` and a table's
+  `<caption>` render** instead of being unwrapped to bare text, and each is
+  styled in all four themes. All are inert: no URI, no scripting surface,
+  which is the rule the element allowlist is chosen by.
+- **Markdown inside a block-level HTML element is parsed when the element
+  opts in with `markdown="1"`.** Without the attribute it is still shown
+  literally, as before — see the known issues below.
+
+### Fixed
+
+- **A centred header block is centred again.** `align` on a `<p>`, `<div>`,
+  heading or `<img>` used to be dropped, which turned the banner-and-badge
+  block at the top of a README into a ragged left-aligned stack. 59
+  occurrences across 10 of the 31 corpus READMEs. Only the four alignment
+  keywords are accepted, and only on elements where alignment means
+  something.
+- **A table keeps its column alignment.** `|:-:|--:|` produced no alignment
+  at all before: centred labels left-aligned, numeric columns left-aligned.
+  8326 cells across the corpus now align the way the author wrote them,
+  which also matters in right-to-left documents, where an explicit
+  `align="left"` is the difference between a column reading correctly and
+  reading backwards.
+- **An ordered list starts at the number the author wrote.** A list beginning
+  `7.` rendered as 1, 2, so prose referring to "step 7" pointed at the wrong
+  line.
+- **A fenced code block whose info string is not a bare word opens a fence.**
+  ```` ```rust,no_run ```` was not recognised at all, which left its closing
+  fence to open a new block and turned the rest of the document into one
+  monospaced run — 62% of tokio's README, in the worst case found.
+- **A fenced code block indented one to three spaces is recognised.** It used
+  to degrade to an inline code span with its language marker showing as body
+  text above the command.
+- **A sublist indented two spaces nests.** Two spaces is what CommonMark asks
+  for and what most READMEs use; it used to flatten into the parent list, so a
+  category and the projects under it became siblings. 138 sublists across 10
+  corpus documents were lost this way.
+- **A block indented past a list item's continuation column is no longer
+  escaped into view.** A blockquote written inside a list item showed its `>`
+  marker as literal text instead of rendering as a quotation.
+- **An ordered list written `1)` is a list.** It rendered as one run-on
+  paragraph with the markers visible.
+- **A backslash at the end of a line is a hard line break**, rather than a
+  visible backslash and no break.
+- **`#NoSpace` and `####### Seven` are paragraphs, not headings.** A line of
+  prose was promoted to the largest heading on the page, its `#` eaten, and it
+  gained an entry in the document outline; seven hashes rendered as an `<h6>`
+  carrying a leftover `#`.
+- **A relative link keeps its `#fragment`.** `[FAQ](FAQ.md#posix)` resolved to
+  a file literally named `FAQ.md#posix`, so the link was dead — and dead
+  quietly, opening an error or an empty tab rather than the section asked for.
+
+### Known issues
+
+- Markdown inside block-level HTML is parsed only for an element carrying
+  `markdown="1"`; GitHub parses it unconditionally. This is the largest
+  remaining difference: 463 code spans and 175 links render as their own
+  source across two corpus documents.
+- Two blockquotes separated by a blank line merge into one; a nested list
+  inside a blockquote is flattened; a fenced block indented inside a list item
+  escapes the item; a table whose header row omits its outer pipes while the
+  delimiter row keeps them is not recognised as a table.
+
+  Every known difference from GitHub's rendering, with what to write instead,
+  is in
+  [docs/markdown-compatibility.md](docs/markdown-compatibility.md).
+
 ## [0.3.0] - 2026-08-13
 
 Remote images — blocked by default, offered per document, and available
