@@ -19,20 +19,32 @@ the compatibility pass used, which `scripts/fetch-corpus.sh` rebuilds from
 pinned commit SHAs.
 
 Every number below was taken on one machine — an i7-8750H laptop under the
-`powersave` governor — and is the **best of several repeats across several
+`powersave` governor — and is the **best of several repeats across four
 passes**. Best-of, not mean, because a benchmark on a desktop competes with
 whatever else is running and the minimum is the run least disturbed by
-something that is not the code under test. Even so, run-to-run spread on this
-machine reaches a few percent at the largest sizes; treat the last digit as
-noise and the shape of the curve as the finding. Absolute times will differ on
-your hardware. The *ratios* are what the limits were derived from, and they
-held across every pass.
+something that is not the code under test. Absolute times will differ on your
+hardware; the *ratios* are what the limits were derived from, and those held
+across every pass.
 
-`fragment` is the number that matters throughout: it is what the debounced
-edit path runs. Wrapping it in the full page — inlined CSS, JavaScript and the
-highlight.js bundle — adds a further 3–18%, measured in the same pass
-(prose at 1M characters: 458 ms fragment, 532 ms page; tables at 1M:
-3,812 ms and 3,974 ms).
+**What that merge guarantees, and what it does not.** Each cell is minimised
+independently, so the four columns of one row may come from four different
+passes. That makes every individual figure a sound lower bound on its own
+layer, and it is why the µs/char columns are stable. It does **not** make a row
+internally coherent, so **arithmetic between two columns of one row is not
+always valid**. Three of the 49 merged rows have a whole-page time *below*
+their own `fragment` time — `headings-duplicate` (−11%), system-design-primer
+(−4%) and build-your-own-x (−2%) — which cannot happen in a single sample,
+because `render_document` calls `render_fragment`. Those are two minima drawn
+from different passes, not a measurement of anything. Read each column as a
+lower bound; where a difference *between* layers is quoted below, it is taken
+within a single pass and says so.
+
+`fragment` is the number that matters throughout: it is what the debounced edit
+path runs. Wrapping it in the full self-contained page — inlined CSS,
+JavaScript and the highlight.js bundle — is the `page` column of the
+size-scaling table below. Taken within a single pass, that wrap costs about
+**15–19% on prose and 2–3% on tables**: much the same absolute cost in both,
+against a fragment time that differs eightfold.
 
 **The `parse` and `sanitize` columns do not sum to `fragment`, and are
 indicative rather than a decomposition.** `sanitize` times a bare
@@ -86,16 +98,20 @@ difference; the 2× is arithmetic.
 
 Two shapes, the cheapest and an expensive one, across four sizes.
 
-| Shape | Characters | parse | sanitize | **fragment** | µs/char |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| prose | 101,057 | 40 | 4 | **43** | 0.43 |
-| prose | 252,878 | 107 | 9 | **109** | 0.43 |
-| prose | 507,054 | 202 | 19 | **227** | 0.45 |
-| prose | 1,015,030 | 412 | 37 | **469** | 0.46 |
-| tables | 108,093 | 263 | 68 | **349** | 3.23 |
-| tables | 276,843 | 655 | 173 | **856** | 3.09 |
-| tables | 559,797 | 1,360 | 402 | **1,960** | 3.50 |
-| tables | 1,163,925 | 3,072 | 875 | **3,963** | 3.40 |
+| Shape | Characters | parse | sanitize | **fragment** | page | µs/char |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| prose | 101,057 | 40 | 4 | **43** | 52 | 0.43 |
+| prose | 252,878 | 107 | 9 | **109** | 129 | 0.43 |
+| prose | 507,054 | 202 | 19 | **227** | 264 | 0.45 |
+| prose | 1,015,030 | 412 | 37 | **469** | 552 | 0.46 |
+| tables | 108,093 | 263 | 68 | **349** | 355 | 3.23 |
+| tables | 276,843 | 655 | 173 | **856** | 880 | 3.09 |
+| tables | 559,797 | 1,360 | 402 | **1,960** | 2,018 | 3.50 |
+| tables | 1,163,925 | 3,072 | 875 | **3,963** | 4,081 | 3.40 |
+
+Seven of those eight rows have their `fragment` and `page` minima from the same
+pass, so the difference between the two columns is readable here; the caveat
+above is why that had to be checked rather than assumed.
 
 Cost is close to linear in characters within a shape — the µs/char column
 barely moves across a 10× size range. What changes is the constant, and
@@ -191,9 +207,10 @@ is public-apis at 636 ms for 232,413 characters, and the largest, awesome-go at
 404,874 characters, costs only 514 ms. Extrapolating the corpus's central rate
 of 1.60 µs/char would put a second near **623,000 characters**.
 
-The limit is placed against the worst plausible *shape* instead, because this
-one guards work the reader did not ask for and cannot decline. The tables shape
-was swept directly across the crossing:
+It is calibrated against the most expensive shape **real documents actually
+exhibit** instead. Dense tables are that shape — public-apis, the corpus's
+worst document per character, is a wall of them — and the synthetic tables
+shape was swept directly across the crossing to place the number:
 
 | Characters | **fragment** | µs/char |
 | ---: | ---: | ---: |
@@ -204,16 +221,50 @@ was swept directly across the crossing:
 | 389,379 | **1,309 ms** | 3.36 |
 | 445,593 | **1,497 ms** | 3.36 |
 
-Interpolating between the 276,843 and 333,111 rows puts 1,000 ms at about
-**305,000 characters**, so the limit sits about **14% below** it. The gap
-between 305,000 and 623,000 is precisely the shape spread a character count
-cannot see.
+That is one pass at repeat 7, kept together so the curve is internally
+consistent; the merged size table above gives 856 ms for the same generated
+276,843-character document, a 4% disagreement that is the run-to-run spread of
+this machine. Interpolating between the 276,843 and 333,111 rows puts 1,000 ms
+at about **305,000 characters** — so the limit sits about **14% below** it, and
+every real-document rate measured is cheaper still: at the corpus's worst
+per-character rate, 262,144 characters would cost 718 ms.
 
-Within that range the choice turns out not to matter much: the *same two* of
-the 31 corpus documents — awesome-selfhosted and awesome-go — defer at either
-number, and neither takes much more than half a second to render anyway
-(496 ms and 514 ms). That is the price of a guard that cannot see shape, and
-it is two clicks.
+Anywhere between 262,144 and 305,000 the choice turns out not to matter: the
+*same two* of the 31 corpus documents — awesome-selfhosted and awesome-go —
+defer at either end, and neither takes much more than half a second to render
+anyway (496 ms and 514 ms).
+
+### What this limit knowingly does not cover
+
+The repeated-headings shape at the top of this file costs **6.46 µs/char** —
+roughly double dense tables. At that rate a document of 262,144 characters
+costs about **1.6 seconds**, not one, and the 1,000 ms crossing arrives near
+**155,000 characters**. A very large changelog is the document that would hit
+this. **That residual is accepted, not overlooked**, and the reasoning is worth
+stating because the alternative looks superficially safer:
+
+- **It is a stress shape, not a population.** The generator repeats each of
+  four headings 1,389 times inside 100,000 characters. Nothing in the corpus is
+  within two orders of magnitude of that: the worst genuinely repeated heading
+  text is system-design-primer's "Sources and further reading", **16 times**,
+  and the largest slug collision of any kind is the 42 empty slugs in
+  programming-jp, where `toc.slugify` strips Japanese headings to nothing. The
+  shape exists in `tests/perf/generate.py` to make a quadratic cliff visible,
+  and it did exactly that — see the note under the shape table.
+- **Calibrating on it would cost more than it saves.** A threshold near 155,000
+  would sit almost on top of `LIVE_REFRESH_MAX_CHARS` at 131,072, collapsing
+  two deliberately distinct behaviours into one narrow band, and it would
+  defer **four of the 31 corpus documents — which render in 317 to 636 ms**.
+  Interrupting a third-of-a-second render with a button is a worse failure than
+  letting a 1.6-second one through, because it fires on documents that were
+  never a problem.
+
+So the honest claim is the narrower one: this limit keeps an *unrequested*
+render under about a second for every shape real documents were measured to
+have, and a pathologically heading-dense document of exactly threshold size
+costs about 1.6 seconds instead. If dense-heading documents ever stop being
+pathological, this is the number to revisit — and the section on rendering off
+the main thread is the better answer to it than a lower threshold.
 
 **What changes above it:** a tab that would have opened in Preview mode opens
 in **Markdown** mode instead, with a chip in the mode bar reading
@@ -226,9 +277,15 @@ the mode bar is a request, and requests are honoured at any size.
 131,072 and 262,144 are 128 × 1024 and 256 × 1024. They were not fitted to a
 measurement and then dressed up; they are round numbers that measurement was
 asked to license, and it does — each sits inside the ±25% band the plan set,
-and each sits on the conservative side of its crossing. A crossing measured at
-155,800 is not evidence for a threshold of 155,800; it is evidence that a
-threshold of 131,072 is not in the wrong place.
+measured against the shapes named above. A crossing measured at 155,800 is not
+evidence for a threshold of 155,800; it is evidence that a threshold of 131,072
+is not in the wrong place.
+
+Neither is conservative against *every* shape, and the preceding two sections
+say against which ones they are not: tables exceed the debounce interval well
+below 131,072, and a heading-dense document exceeds a second well below
+262,144. A single number cannot be conservative against a 15× spread without
+being wrong for almost everything.
 
 The two are ordered — `DEFER_INITIAL_MIN_CHARS > LIVE_REFRESH_MAX_CHARS` — so
 the states nest: a document big enough to defer is certainly big enough to stop
@@ -256,10 +313,15 @@ considerably sooner than the numbers above suggest: at 3.3 µs/char, tables
 exceed the debounce interval at around 76,000 characters — well under the
 131,072 the guard uses. Prose does not exceed it until about 555,000.
 
-The guard is a **floor under the worst case, not a predictor**. It is used
-anyway because a size is the only thing knowable *before* paying the render,
-and the render is the cost being avoided. Where it is wrong, it is wrong in the
-direction of an unnecessary button rather than a frozen editor.
+The guard is a **rough floor, not a predictor**. It is used anyway because a
+size is the only thing knowable *before* paying the render, and the render is
+the cost being avoided. It errs both ways, and the two sections above name
+which documents fall on each side: mostly it is early, costing an unnecessary
+button on a document that would have rendered fine; on the heading-dense
+extreme it is late, and the freeze is longer than the rule it enforces. A
+single number set against a 15× spread in cost per character cannot do better
+than that, which is why the real fix is the last section of this file rather
+than a better constant.
 
 ## Memory is not the constraint
 
