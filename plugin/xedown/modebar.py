@@ -29,6 +29,10 @@ _STYLE = b"""
   color: alpha(currentColor, 0.6);
   padding: 0 .5em;
 }
+.xedown-modebar .xedown-large-notice {
+  color: alpha(currentColor, 0.6);
+  padding: 0 .5em;
+}
 """
 
 _provider_installed = False
@@ -64,6 +68,7 @@ class ModeBar(Gtk.Box):
         "mode-selected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "refresh-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
         "load-images-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "build-preview-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self):
@@ -144,6 +149,25 @@ class ModeBar(Gtk.Box):
         self._remote_label.get_style_context().add_class("xedown-remote-notice")
         self._name(self._remote_label, a11y.NAMES["remote_images_notice"])
         self.pack_end(self._remote_label, False, False, 0)
+
+        # Packed inward of the remote-images chip, so a document that is
+        # both large and has blocked images reads outward as
+        # "<size> [Preview] <count> remote images [Load]". Same shape as
+        # that chip deliberately -- a quiet label plus an action, not a
+        # warning bar. A large document is an ordinary thing to open.
+        self._large_button = Gtk.Button(label="Preview")
+        self._large_button.set_no_show_all(True)
+        self._name(self._large_button, a11y.NAMES["build_preview"])
+        self._large_button.connect(
+            "clicked", lambda _b: self.emit("build-preview-requested")
+        )
+        self.pack_end(self._large_button, False, False, 0)
+
+        self._large_label = Gtk.Label()
+        self._large_label.set_no_show_all(True)
+        self._large_label.get_style_context().add_class("xedown-large-notice")
+        self._name(self._large_label, a11y.NAMES["large_document_notice"])
+        self.pack_end(self._large_label, False, False, 0)
 
         self.set_mode(Mode.PREVIEW)
 
@@ -286,6 +310,35 @@ class ModeBar(Gtk.Box):
             )
         self._remote_label.set_visible(showing)
         self._remote_button.set_visible(showing)
+
+    def set_large_document(self, size_label):
+        """Offer to build a deferred preview, or hide the offer.
+
+        `size_label` is already-formatted text from
+        `perflimits.describe_bytes`; the bar holds no policy about what
+        counts as large, exactly as it holds none about which images were
+        blocked. Falsy hides the chip.
+
+        The size goes into the accessible name as well as the visible
+        label, for the same reason the remote-images chip's count does:
+        the chip appearing is what makes it mean anything, and a screen
+        reader gets no other signal that it did.
+        """
+        showing = bool(size_label)
+        if showing:
+            words = f"Large document ({size_label})"
+            self._large_label.set_text(words)
+            accessible = self._large_label.get_accessible()
+            if accessible is not None:
+                accessible.set_name(
+                    f"{a11y.NAMES['large_document_notice']}: {size_label}"
+                )
+            self._large_button.set_tooltip_text(
+                "Build the preview. A document this large takes a moment to "
+                "render, and the editor will not respond while it does."
+            )
+        self._large_label.set_visible(showing)
+        self._large_button.set_visible(showing)
 
     def _on_refresh_clicked(self, _button):
         self.emit("refresh-requested")

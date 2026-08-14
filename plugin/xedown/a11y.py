@@ -31,6 +31,8 @@ NAMES = {
     "stale": "Preview is out of date",
     "remote_images_notice": "Remote images not loaded",
     "load_images": "Load remote images for this document",
+    "large_document_notice": "Large document, preview not built",
+    "build_preview": "Build the preview for this large document",
     "preview": "Markdown preview",
     "search_entry": "Find in preview",
     "search_case": "Match case",
