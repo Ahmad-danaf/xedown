@@ -110,7 +110,8 @@ def _memory(records):
     *first* render in a process also pays Python-Markdown's lazy import
     of its extension modules and every regex they compile, which is
     around 4 MB that no later render pays again -- measured: an empty
-    document peaks at 4.7 MB cold and 0.70 MB warm. Leaving that in
+    document peaks at 4.9 MB cold and 0.74 MB warm -- both in the decimal
+    MB this table prints, so they read against it directly. Leaving that in
     would put the whole table's floor six times too high and turn every
     "above the floor" figure into nonsense.
     """
@@ -125,8 +126,14 @@ def _memory(records):
     if corpus.available():
         for name in ("public-apis.md", "awesome-go.md"):
             text = corpus.read(name)
-            if text is not None:
-                cases.append((f"{name[:-3]} (corpus)", text))
+            if text is None:
+                # Said out loud, not dropped. A corpus that is present but
+                # missing one document is a fetch that half worked, and a
+                # table quietly one row short is worse than a corpus that
+                # is plainly absent -- that case at least announces itself.
+                print(f"  {name} not in the corpus - that row skipped")
+                continue
+            cases.append((f"{name[:-3]} (corpus)", text))
     else:
         print("  corpus rows skipped - run scripts/fetch-corpus.sh to populate it")
     cases += [
@@ -141,7 +148,12 @@ def _memory(records):
             floor = peak
         above = peak - floor
         ratio = f"{above / len(text):.0f}x" if text else "-"
-        above_mb = f"{above / _MB:.1f} MB" if text else "-"
+        # `or 0.0` is the negative-zero guard, not a default: a row landing
+        # a few bytes under the floor rounds to -0.0, which is falsy, and
+        # "-0.0 MB" reads as a measurement error rather than as "at the
+        # floor". A deficit large enough to round to -0.1 is truthy and
+        # still prints, because that one would be worth seeing.
+        above_mb = f"{round(above / _MB, 1) or 0.0:.1f} MB" if text else "-"
         print(
             f"{label:<24}{len(text):>10}{peak / _MB:>10.2f}MB"
             f"{above_mb:>14}{ratio:>10}"

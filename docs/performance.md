@@ -414,7 +414,7 @@ allocation is deterministic where wall clock is not. It does need a warm
 interpreter, and `--memory` discards one render before it starts measuring —
 the *first* render in a process also pays Python-Markdown's lazy import of its
 extension modules and every regex they compile, which is an empty document
-peaking at 4.7 MB cold against 0.74 MB warm.
+peaking at 4.9 MB cold against 0.74 MB warm.
 
 There is a fixed floor of about **0.74 MB** — the self-contained page inlines
 its CSS, its JavaScript and the highlight.js bundle, which is most of it, and
