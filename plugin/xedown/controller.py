@@ -95,6 +95,14 @@ class TabController:
         # measured, so nothing is withheld from a tab that has not loaded.
         self._size_allows_live_refresh = True
         self._preview_deferred = False
+        # The chip's label, computed once at the moment `_preview_deferred`
+        # is set (`_build_if_markdown`) and never touched again while it
+        # stays true. `_apply_size_guard` runs on every keystroke, so it
+        # only ever reads this rather than re-measuring the buffer -- see
+        # that method's docstring. A label that goes stale after someone
+        # pastes megabytes into an already-deferred document is accepted:
+        # it is a size hint offered once, not a live readout.
+        self._deferred_size_label = None
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
@@ -438,6 +446,11 @@ class TabController:
             and perflimits.classify(self._document_char_count()).defer_initial
         ):
             self._preview_deferred = True
+            # Computed once, here, rather than by `_apply_size_guard` on
+            # every keystroke -- see `_deferred_size_label`'s own comment.
+            self._deferred_size_label = perflimits.describe_bytes(
+                len(self._render_text().encode("utf-8"))
+            )
             initial = Mode.SOURCE
         self._apply_size_guard()
         self.set_mode(initial, initial=True)
@@ -499,11 +512,24 @@ class TabController:
         the switch: if the user tabbed to a mode button and activated it,
         that focus is what makes Orca announce the toggle's own state
         change, and this must not add a second announcement on top of it.
+
+        This is also the one place that clears `_preview_deferred`, because
+        it is where every route into Preview converges -- the mode bar's own
+        Preview segment (`_on_mode_selected`), Ctrl+Shift+M (`toggle()`), and
+        the chip's own button (`_on_build_preview_requested`) all end up
+        here rather than each having to remember to touch the flag
+        themselves. The build-time call from `_build_if_markdown` cannot
+        undo its own deferral by accident: when it defers, it passes
+        `Mode.SOURCE`, never `Mode.PREVIEW`, to this method, so the guard
+        below (`mode is Mode.PREVIEW`) never sees that call.
         """
         if not self._built:
             return
         if mode is self.state.mode and not initial:
             return
+        if mode is Mode.PREVIEW and self._preview_deferred:
+            self._preview_deferred = False
+            self._apply_size_guard()
         announce = not initial and not self.modebar.has_focus_inside()
         self._remember_scroll(self.state.mode)
         self.state.mode = mode
@@ -631,20 +657,20 @@ class TabController:
         opened.
 
         Counted in characters: that is what the parser processes, and the
-        count is free. Bytes appear only in the chip's label, and only
-        when the chip is actually being shown -- that branch copies the
-        buffer, which is why it is behind `_preview_deferred` rather than
-        computed every time.
+        count is free. The chip's label is *not* recomputed here -- it is
+        `self._deferred_size_label`, set once in `_build_if_markdown` at the
+        moment deferral happens. This method runs from `_on_buffer_changed`,
+        i.e. on every keystroke while a document stays deferred, so it must
+        never touch the buffer itself: `perflimits.describe_bytes`'s own
+        docstring says that label is "built once, when the chip appears --
+        never on the per-keystroke path", and this is that path.
         """
         decision = perflimits.classify(self._document_char_count())
         self._size_allows_live_refresh = decision.live_refresh
         if self.modebar is not None:
-            label = None
-            if self._preview_deferred:
-                label = perflimits.describe_bytes(
-                    len(self._render_text().encode("utf-8"))
-                )
-            self.modebar.set_large_document(label)
+            self.modebar.set_large_document(
+                self._deferred_size_label if self._preview_deferred else None
+            )
         return decision
 
     def _live_refresh_allowed(self):
@@ -1698,15 +1724,15 @@ class TabController:
     def _on_build_preview_requested(self, _bar):
         """The reader asked for the deferred preview. Give it to them.
 
-        Clearing the flag before the switch is what hides the chip: the
-        offer has been taken, and `_apply_size_guard` reads the flag. The
+        No special-casing of the flag here: `set_mode` is the funnel every
+        route into Preview goes through (this button, the mode bar's own
+        Preview segment, Ctrl+Shift+M), and clearing `_preview_deferred` --
+        which is what hides the chip -- is its job, not this handler's. The
         size guard on *live refresh* is untouched -- a document big enough
         to defer is big enough to keep off the keystroke path, and
         `_live_refresh_allowed` still says so.
         """
-        self._preview_deferred = False
         self.set_mode(Mode.PREVIEW)
-        self._apply_size_guard()
 
     def _on_image_error(self, source):
         """The page says an image did not load. Say why, when xedown knows.
