@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import traceback
 
 import gi
@@ -271,6 +272,22 @@ def _long_markdown():
         + paragraphs
         + "\n\n```python\n42    100\n```\n"
     )
+
+
+def _large_markdown(chars):
+    """A document big enough to trip `perflimits`, built the same way the
+    performance harness builds one -- deterministic, and prose rather than
+    tables so the size, not the shape, is what is being tested."""
+    unit = "Some ordinary prose about a topic, at a workaday length. " * 3
+    out = []
+    total = 0
+    index = 0
+    while total < chars:
+        block = f"{unit}Paragraph {index}.\n\n"
+        out.append(block)
+        total += len(block)
+        index += 1
+    return "".join(out)
 
 
 class XedownProbe(GObject.Object, Xed.WindowActivatable):
@@ -4319,6 +4336,115 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         dest = getattr(self, "_move_dest_window", None)
         if dest is not None:
             dest.close()
+        self._schedule(500, self.step_perf_setup)
+        return False
+
+    # --- performance: does a render stall the main loop? ------------------
+
+    def _start_latency_watch(self):
+        """Record the gap between successive 20 ms ticks.
+
+        A synchronous render blocks the loop, so the tick that should have
+        fired during it fires late instead, and the gap is roughly the
+        render's duration. This is the only way to observe a freeze from
+        inside the process it freezes.
+        """
+        self._ticks = []
+        self._last_tick = time.monotonic()
+
+        def tick():
+            now = time.monotonic()
+            self._ticks.append(now - self._last_tick)
+            self._last_tick = now
+            return True
+
+        self._tick_source = GLib.timeout_add(20, tick)
+
+    def _stop_latency_watch(self):
+        if getattr(self, "_tick_source", None):
+            GLib.source_remove(self._tick_source)
+            self._tick_source = 0
+        return max(self._ticks) if self._ticks else 0.0
+
+    def step_perf_setup(self):
+        """Open a document above DEFER_INITIAL_MIN_CHARS in Preview mode."""
+        path = os.path.join(self._tmpdir, "large.md")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(_large_markdown(400_000))
+        self._perf_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._perf_view = self._perf_tab.get_view()
+        self._start_latency_watch()
+        self._schedule(3000, self.step_perf_deferred_check)
+        return False
+
+    def step_perf_deferred_check(self):
+        """Nothing should have rendered, so nothing should have stalled."""
+        worst = self._stop_latency_watch()
+        controller = self._controller_for(self._perf_tab.get_view())
+        record("perf-large-controller-built", controller is not None)
+        mode = controller.state.mode if controller is not None else None
+        record("perf-large-opens-in-source", mode is Mode.SOURCE, f"mode={mode}")
+        # The guard's whole purpose: an unrequested render never happened,
+        # so the loop was never blocked. 250 ms is generous -- an actual
+        # 400k render measures around 700 ms.
+        record(
+            "perf-large-open-does-not-stall-the-loop",
+            worst < 0.25,
+            f"worst tick gap {worst * 1000:.0f}ms",
+        )
+        self._schedule(500, self.step_perf_build)
+        return False
+
+    def step_perf_build(self):
+        """Take the offer, then confirm typing does not re-render."""
+        controller = self._controller_for(self._perf_tab.get_view())
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(4000, self.step_perf_typing)
+        return False
+
+    def step_perf_typing(self):
+        controller = self._controller_for(self._perf_tab.get_view())
+        record(
+            "perf-large-preview-built-on-request", self._preview_visible_for(controller)
+        )
+        # Live refresh must be off for this tab regardless of the setting.
+        record(
+            "perf-large-live-refresh-suppressed",
+            not controller._live_refresh_allowed(),
+            "the size guard did not override auto-refresh",
+        )
+        self._start_latency_watch()
+        # An *insert*, deliberately, not `set_text`. Rewriting a 400k
+        # buffer wholesale stalls the main loop all by itself, which is
+        # the very thing the tick gap below measures -- the assertion
+        # would then fail for a reason that has nothing to do with
+        # rendering. This types the way a reader types.
+        document = self._perf_tab.get_document()
+        document.insert(document.get_end_iter(), "\n\nmore\n", -1)
+        self._schedule(2000, self.step_perf_check)
+        return False
+
+    def step_perf_check(self):
+        worst = self._stop_latency_watch()
+        record(
+            "perf-large-typing-does-not-stall-the-loop",
+            worst < 0.25,
+            f"worst tick gap {worst * 1000:.0f}ms",
+        )
+        controller = self._controller_for(self._perf_tab.get_view())
+        record("perf-large-preview-marked-stale", controller.state.preview_stale)
+        self.window.close_tab(self._perf_tab)
+        self._schedule(800, self.step_perf_torn_down)
+        return False
+
+    def step_perf_torn_down(self):
+        view = getattr(self, "_perf_view", None)
+        record(
+            "perf-large-tab-released",
+            view is None or not hasattr(view, "_xedown_controller"),
+        )
         self._schedule(500, self.step_done)
         return False
 
