@@ -69,7 +69,7 @@ LIVE_REFRESH_MAX_CHARS = 128 * 1024
 #
 # What that knowingly does not cover: the repeated-headings shape costs
 # 6.46 us/char, so a document of this size shaped like a very large
-# changelog costs about 1.6 s rather than 1 s, and crosses a second near
+# changelog costs about 1.7 s rather than 1 s, and crosses a second near
 # 155,000 characters. The residual is accepted rather than calibrated
 # away. That shape is a stress fixture, not a population -- it repeats
 # each of four headings 1,389 times in 100k characters, where the corpus's

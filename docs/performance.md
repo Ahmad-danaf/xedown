@@ -3,10 +3,11 @@
 xedown renders Markdown **synchronously, on the GTK main thread**. Nothing
 yields while a render runs, so the freeze you feel is exactly the render time
 in the tables below. That single fact is why this file exists, why there are
-two size limits, and what the last section is about.
+two size limits, and what *The known next steps* is about.
 
 This file publishes what rendering costs, how the two limits were derived from
-that cost, and — as plainly as the numbers allow — what the limits cannot see.
+that cost, and — as plainly as the numbers allow — what the limits cannot see
+and which renders they do not govern at all.
 
 ## How this was measured
 
@@ -87,6 +88,12 @@ reading and **646 ms** after — the cost went from quadratic in the number of
 repeated headings to linear, and `tests/unit/test_toc_unique.py` pins the
 operation count so it cannot come back unnoticed.
 
+Nor was that cliff only reachable from a synthetic document: programming-jp,
+a real README in the corpus, collides **42** slugs because `toc.slugify`
+strips a Japanese heading to the empty string — see *What this limit knowingly
+does not cover* below. This shape made the cliff large enough to measure; a
+CJK README is what walks it in ordinary use.
+
 What is left is heading *density*. `### Fixed` is a third the length of
 `## Section N of the document`, so the repeated-headings document packs
 **5,556 headings into 100,008 characters** against **2,778 in 107,232** —
@@ -166,9 +173,13 @@ Both live in `plugin/xedown/perflimits.py`. Both are constants rather than
 settings, for the same reason `imagelimits.MAX_PIXELS` is: they are a floor
 under a failure mode, not a preference.
 
-Both are consulted on every buffer change, not only when a file opens, so a
-document crosses either limit by being typed into or pasted over just as
-readily as by being opened.
+They are not consulted in the same places. The **first** is re-evaluated on
+every buffer change, so a document crosses it by being typed into or pasted
+over just as readily as by being opened. The **second** is asked once, when the
+tab decides which mode to open in — pasting half a megabyte into a tab that is
+already showing a preview does not retroactively defer anything, because there
+is nothing left to defer. *Which renders the limits govern, and which they do
+not*, below, is the full list.
 
 ### 131,072 characters — the preview stops following your typing
 
@@ -238,7 +249,7 @@ anyway (496 ms and 514 ms).
 
 The repeated-headings shape at the top of this file costs **6.46 µs/char** —
 roughly double dense tables. At that rate a document of 262,144 characters
-costs about **1.6 seconds**, not one, and the 1,000 ms crossing arrives near
+costs about **1.7 seconds**, not one, and the 1,000 ms crossing arrives near
 **155,000 characters**. A very large changelog is the document that would hit
 this. **That residual is accepted, not overlooked**, and the reasoning is worth
 stating because the alternative looks superficially safer:
@@ -248,21 +259,25 @@ stating because the alternative looks superficially safer:
   within two orders of magnitude of that: the worst genuinely repeated heading
   text is system-design-primer's "Sources and further reading", **16 times**,
   and the largest slug collision of any kind is the 42 empty slugs in
-  programming-jp, where `toc.slugify` strips Japanese headings to nothing. The
-  shape exists in `tests/perf/generate.py` to make a quadratic cliff visible,
-  and it did exactly that — see the note under the shape table.
+  programming-jp, where `toc.slugify` strips Japanese headings to nothing.
+  **That last figure is the real justification for the anchor fix**: a
+  published CJK README walks the duplicate-anchor path 42 times just by being
+  written in Japanese, so the quadratic cliff was reachable from a document
+  someone actually has, not only from a synthetic changelog. The shape exists
+  in `tests/perf/generate.py` to make that cliff big enough to see, and it did
+  exactly that — see the note under the shape table.
 - **Calibrating on it would cost more than it saves.** A threshold near 155,000
   would sit almost on top of `LIVE_REFRESH_MAX_CHARS` at 131,072, collapsing
   two deliberately distinct behaviours into one narrow band, and it would
   defer **four of the 31 corpus documents — which render in 317 to 636 ms**.
   Interrupting a third-of-a-second render with a button is a worse failure than
-  letting a 1.6-second one through, because it fires on documents that were
+  letting a 1.7-second one through, because it fires on documents that were
   never a problem.
 
 So the honest claim is the narrower one: this limit keeps an *unrequested*
 render under about a second for every shape real documents were measured to
 have, and a pathologically heading-dense document of exactly threshold size
-costs about 1.6 seconds instead. If dense-heading documents ever stop being
+costs about 1.7 seconds instead. If dense-heading documents ever stop being
 pathological, this is the number to revisit — and the section on rendering off
 the main thread is the better answer to it than a lower threshold.
 
@@ -292,6 +307,61 @@ the states nest: a document big enough to defer is certainly big enough to stop
 live refresh. `tests/unit/test_perflimits.py` pins that relationship, and the
 behaviour at each exact boundary, without pinning either literal value.
 
+### Which renders the limits govern, and which they do not
+
+**The two limits govern two triggers: typing, and opening a tab.** Every other
+route into a render is exactly what it was before this release, and renders the
+whole document synchronously at any size. That is the honest scope of the
+feature, and the rest of this section is the list.
+
+Governed:
+
+- **Typing.** `_on_buffer_changed` re-applies the guard on every buffer change,
+  and `LIVE_REFRESH_MAX_CHARS` is what suppresses the debounced re-render above
+  that size — which is why the guard also catches a document that crosses a
+  threshold by being pasted into rather than opened.
+- **Opening a tab.** `_build_if_markdown` consults `DEFER_INITIAL_MIN_CHARS`
+  and opens in Markdown mode instead of building; `_on_document_loaded` takes
+  the same decision again when xed's asynchronous file read lands after the
+  build rather than before it.
+
+Not governed — each of these still renders in full:
+
+- **Save.** A stale preview in Preview mode re-renders on
+  <kbd>Ctrl</kbd>+<kbd>S</kbd> (`_on_document_saved`). This is the reachable
+  one, and it compounds with the first limit rather than being covered by it:
+  above 131,072 characters live refresh is off, so the preview is stale
+  whenever you have typed, and every save then pays a whole render. At the size
+  of public-apis — 232,413 characters — that is the 636 ms in the corpus table
+  above, on each save.
+- **Revert, and an accepted external reload**, once Preview has shown the
+  reader real content (`_on_document_loaded`'s ordinary branch, which
+  re-applies the guard to *live refresh* and then reloads the page regardless).
+- **An external change the watcher picks up** (`_on_file_settled`'s `UPDATE`
+  branch; `watch_external_changes` defaults to on).
+- **Two cache-reconciliation renders**: `_on_file_settled` retiring a
+  `_disk_text` that turned out to match the buffer, and `_on_modified_changed`
+  correcting a preview that is known to be showing the file rather than the
+  buffer.
+
+None of this is a regression. Every one of them predates the limits, and before
+them the typing path re-rendered on every keystroke anyway, so nothing about
+this release made any of them slower. But it is why the README and the
+changelog say the preview stops following your *typing* rather than promising
+that a large document can no longer freeze the editor: the guard makes a large
+document quiet, not free.
+
+**And the guard measures the buffer, not the text that is rendered.**
+`_apply_size_guard` counts `GtkTextBuffer.get_char_count()`, which is O(1) and
+is the whole reason it can run per keystroke; `_render_text()` returns
+`_disk_text` instead when the file changed underneath an unmodified buffer. The
+two differ only inside that window, and the difference cannot move the reader
+or misreport staleness — that was traced. It is named here because it is the
+structural reason the `UPDATE` branch above is invisible to the limits: the
+guard is not consulted on that path, and on that path it would be measuring the
+wrong text if it were. Gating these paths is recorded as future work under
+*The known next steps* below.
+
 ## Why the limit is counted in characters, not bytes
 
 Python-Markdown operates on `str`. Cost tracks **characters**, and
@@ -320,38 +390,73 @@ which documents fall on each side: mostly it is early, costing an unnecessary
 button on a document that would have rendered fine; on the heading-dense
 extreme it is late, and the freeze is longer than the rule it enforces. A
 single number set against a 15× spread in cost per character cannot do better
-than that, which is why the real fix is the last section of this file rather
-than a better constant.
+than that, which is why the real fix is *Render off the main thread* below
+rather than a better constant.
 
 ## Memory is not the constraint
 
-Peak Python allocation during a full `render_document`, by `tracemalloc`:
+Peak Python allocation during a full `render_document`, by `tracemalloc` —
+`run_bench --memory`, whose output this table is. **MB here is 10⁶ bytes**, not
+a mebibyte; the mode-bar chip's own size label is the other way round, and says
+so in `perflimits.describe_bytes`.
 
 | Case | Characters | Peak | Above the floor | × characters |
 | --- | ---: | ---: | ---: | ---: |
 | empty document | 0 | 0.74 MB | — | — |
-| prose | 1,015,030 | 8.0 MB | 7.3 MB | 7× |
-| public-apis (corpus) | 232,413 | 11.8 MB | 11.1 MB | 48× |
-| awesome-go (corpus) | 404,874 | 9.6 MB | 8.9 MB | 22× |
-| tables | 1,163,925 | 54.3 MB | 53.6 MB | 46× |
-| headings, repeated | 1,000,008 | 124.7 MB | 124.0 MB | 124× |
+| prose | 1,015,030 | 7.97 MB | 7.2 MB | 7× |
+| public-apis (corpus) | 232,413 | 11.87 MB | 11.1 MB | 48× |
+| awesome-go (corpus) | 404,874 | 9.57 MB | 8.8 MB | 22× |
+| tables | 1,163,925 | 54.14 MB | 53.4 MB | 46× |
+| headings, repeated | 1,000,008 | 124.71 MB | 124.0 MB | 124× |
+
+Unlike the timing tables, this one is a single pass and needs no repeats: peak
+allocation is deterministic where wall clock is not. It does need a warm
+interpreter, and `--memory` discards one render before it starts measuring —
+the *first* render in a process also pays Python-Markdown's lazy import of its
+extension modules and every regex they compile, which is an empty document
+peaking at 4.7 MB cold against 0.74 MB warm.
 
 There is a fixed floor of about **0.74 MB** — the self-contained page inlines
-its CSS, its JavaScript and the highlight.js bundle, which is most of it — and
-above that the marginal cost is tens of times the document size, varying by
-shape the same way time does.
+its CSS, its JavaScript and the highlight.js bundle, which is most of it, and
+`vendoring.read_vendor_file` re-reads that bundle on every render, so the floor
+is a genuine per-render cost rather than a one-off. Above it the marginal cost
+is tens of times the document size, varying by shape the same way time does.
 
 The absolute numbers are what matter, and they are small: **the heaviest
-document in the entire corpus peaks at 11.8 MB**, and it takes a synthetic
+document in the entire corpus peaks at 11.9 MB**, and it takes a synthetic
 megabyte of the most pathological shape available to reach 125 MB. Nothing here
 approaches a constraint on a machine that can run a web engine. Time is the
 scarce resource; memory is not, and no limit in xedown is set by it.
 
-## The known next step: render off the main thread
+## The known next steps
 
 Everything above follows from one design decision: **the render is synchronous
 on the GTK main thread**, so freeze time equals render time and the only lever
 available is to render less often.
+
+### Gate the render paths the limits do not govern
+
+*Which renders the limits govern* above lists them: save, revert and an
+accepted external reload, the watcher's `UPDATE` branch, and two
+cache-reconciliation renders. Each still renders a document of any size
+synchronously, and save is the one a reader meets — every
+<kbd>Ctrl</kbd>+<kbd>S</kbd> on a large document in Preview pays a full render
+precisely because the first limit turned live refresh off.
+
+Deferring those to the same Refresh button the typing path already uses is a
+small change to make and a hard one to justify late: it would alter four
+behaviours whose only exercise is an integration scenario a human has to run on
+a live desktop, and it would trade a freeze the reader asked for by saving
+against a preview that silently stops following a revert — which is not
+obviously the better trade. It is deliberately
+not a release-branch change. Nothing is missing on the measurement side —
+`perflimits.classify` is pure and takes a character count, so gating a path
+costs one call — and the one thing to get right is named in the same section:
+the guard counts the buffer, while `_disk_text` is what the `UPDATE` branch
+actually renders, so that path has to be measured against the text it will
+render rather than against `get_char_count()`.
+
+### Render off the main thread
 
 Moving the render to a worker thread would remove the ceiling rather than
 manage it. The parse-and-sanitize pipeline is pure — `renderer`, `sanitizer`
@@ -377,12 +482,26 @@ buying back, and a deferral chip is a poor substitute for simply rendering.
 scripts/fetch-corpus.sh                                          # 31 READMEs, pinned SHAs
 .venv/bin/python -m tests.perf.run_bench --all --repeat 5
 .venv/bin/python -m tests.perf.run_bench --corpus --repeat 9 --json after.json
+.venv/bin/python -m tests.perf.run_bench --memory
 ```
 
-`--shapes`, `--sizes`, `--images-on-disk` and `--corpus` run the four
-populations individually; `--json` writes every row for comparison against a
-later run. The corpus is not committed — an absent corpus is a skip with an
-instruction, not an error and not a download.
+`--shapes`, `--sizes`, `--images-on-disk`, `--corpus` and `--memory` run the
+five populations individually, and `--all` runs all five; `--json` writes every
+row for comparison against a later run. The corpus is not committed — an absent
+corpus is a skip with an instruction, not an error and not a download, and
+`--memory` still prints its four synthetic rows without it.
+
+One table here is **not** behind a flag. The tables sweep across the 1,000 ms
+crossing — the six-row table under *262,144 characters — an unrequested preview
+is not built* — uses sizes that are not in `generate.SIZES`, and
+`generate.SIZES` is the only thing `--sizes` sweeps. Those rows come from a
+loop written by hand, kept in one pass so the curve is internally consistent:
+
+```python
+from tests.perf import generate, measure
+for target in (100_000, 200_000, 250_000, 300_000, 350_000, 400_000):
+    print(measure.time_layers(generate.build("tables", target), repeat=7))
+```
 
 `tests/perf/` is deliberately outside the unit-test run. Wall-clock assertions
 flake on a shared runner and get deleted within a month; the permanent guard

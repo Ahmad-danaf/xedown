@@ -14,10 +14,11 @@ Documents you already have will render differently, and closer to the way
 their authors saw them.
 
 Alongside it, a performance pass over the same corpus: one quadratic cliff
-removed, and two size limits so that a very large document can no longer
-freeze the editor on work nobody asked for. What rendering costs, and how
-both limits were measured, is now published in
-[docs/performance.md](docs/performance.md).
+removed, and two size limits so that a very large document is no longer
+re-rendered on every keystroke, or built into a preview nobody asked for.
+What rendering costs, how both limits were measured, and which renders they
+govern — typing and opening a file, and not saving or reverting — is now
+published in [docs/performance.md](docs/performance.md).
 
 ### Added
 
@@ -40,9 +41,14 @@ both limits were measured, is now published in
   written to your settings. Past about 262,000 the tab opens in **Markdown**
   mode instead of building a preview nobody asked for, with a chip naming the
   document's size beside a **Preview** button that builds it on request.
-  Choosing Preview yourself always works, at any size. Neither limit is a
-  setting; both were measured against the 31-README corpus, and
-  [docs/performance.md](docs/performance.md) shows the curve they came from.
+  Choosing Preview yourself always works, at any size. Those two moments are
+  all the limits cover: saving, reverting or accepting a change made outside
+  xed still re-renders the whole document while a preview is showing, and on a
+  large document saving does so on every <kbd>Ctrl</kbd>+<kbd>S</kbd>, since
+  live refresh being off is what left the preview out of date. Neither limit
+  is a setting; both were measured against the 31-README corpus, and
+  [docs/performance.md](docs/performance.md) shows the curve they came from
+  and lists the paths they do not govern.
 
 ### Fixed
 
@@ -93,7 +99,11 @@ both limits were measured, is now published in
   version, cost far more than its size suggested. A 100,000-character document
   of 5,556 repeated headings rendered in 4,443 ms; it now renders in 646 ms,
   and the per-heading cost is within 11% of a document whose headings are all
-  distinct. The anchors themselves are byte-identical to what they were.
+  distinct. It is not only a synthetic shape that reaches this: a Japanese
+  README collides 42 anchors in the corpus, because a heading written in
+  Japanese is stripped to an empty anchor and every one of them then has to be
+  told apart from all the others. The anchors themselves are byte-identical to
+  what they were.
 
 ### Known issues
 
