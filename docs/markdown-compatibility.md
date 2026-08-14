@@ -256,8 +256,12 @@ a second list — with the right numbers, because `<ol start>` now survives, but
 visibly as two lists rather than one.
 
 **Why:** the fence is lifted out of the document and replaced by a placeholder
-at column 0 before the list is parsed, which closes the list around it. This
-predates the compatibility pass and was not made worse by it.
+at column 0 before the list is parsed, which closes the list around it. That
+predates the compatibility pass and was not made worse by it — but only for
+the loose shape above, where a blank line already separates `item` from the
+fence. A *tight* item, with no blank line before the fence, used to keep the
+block inside the `<li>` as garbled inline code instead; this pass fixed the
+code and, as a side effect, now splits the list here too.
 
 **What it costs:** one list item in the corpus, plus seven ordered lists across
 three documents that split into pieces. The code block itself renders
