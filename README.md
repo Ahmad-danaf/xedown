@@ -202,6 +202,17 @@ stop being highlighted after 2000 matches (the count then reads `2000+`).
 - **A document opened through a symbolic link never follows changes to its
   file.** A file monitor on a link watches the link, and nothing writes to the
   link. Open the file by its real path, or use *File → Revert*.
+- **A very large document stops rendering by itself.** xedown renders on the
+  same thread as the editor, so a big document freezes the cursor for as long
+  as the render takes. Past about 131,000 characters the preview no longer
+  follows your typing and a **Refresh** button appears in the mode bar
+  (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> does the same); past about
+  262,000 the tab opens in Markdown mode instead, with a chip naming the size
+  and a **Preview** button that builds it on request. Choosing Preview
+  yourself always works, at any size. Neither limit is a setting — see
+  [docs/performance.md](docs/performance.md) for what rendering costs, how
+  both numbers were measured, and why a table-heavy document reaches its
+  practical limit sooner than the character count suggests.
 - xedown supports selected GitHub-flavored Markdown features (tables, task
   lists, strikethrough, fenced code, footnotes, and lists that interrupt a
   paragraph), not full GFM compatibility. Every known difference from

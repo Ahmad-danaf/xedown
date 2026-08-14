@@ -8,9 +8,10 @@ failure mode, not a preference.
 
 Why this exists at all: xedown renders synchronously on the GTK main
 thread, so freeze time equals render time. Measured on the pipeline as
-shipped, prose costs 174 ms at 100k characters, 903 ms at 500k and
-1,817 ms at 1M. Nothing yields during that, so a large document without a
-guard is an editor that stops responding.
+shipped, prose costs 43 ms at 100k characters, 227 ms at 500k and 469 ms
+at 1M; the same sizes in tables cost 349 ms, 1,960 ms and 3,963 ms.
+Nothing yields during that, so a large document without a guard is an
+editor that stops responding.
 
     COUNTED IN CHARACTERS, NOT BYTES.
 
@@ -22,26 +23,49 @@ runs per keystroke. `describe_bytes` below is the one place bytes appear:
 the human-readable label on the chip, built once when the chip appears.
 
 Shape matters more than size and this cannot see shape -- at 100k
-characters the spread from prose to tables is 5x. A byte or character
-count is used anyway because it is the only thing knowable *before*
-paying the render, which is the cost being avoided. The consequence is
-published rather than hidden: see `docs/performance.md`.
+characters the spread from prose to tables is 8x, and to the densest
+shape measured 15x. A byte or character count is used anyway because it
+is the only thing knowable *before* paying the render, which is the cost
+being avoided. The consequence is published rather than hidden: see
+`docs/performance.md`.
 """
 
 from typing import NamedTuple
 
-# The point at which a typical document's render exceeds the debounce
+# The point at which a *typical* document's render exceeds the debounce
 # interval. `settings.REFRESH_DELAY_MS` defaults to 250 ms; past this size
 # a reader typing continuously leaves the editor busy more often than
-# idle, and the debounce stops being a debounce. Corpus documents measure
-# 245 ms at 110k characters and 293 ms at 152k, which brackets the
-# crossing here.
+# idle, and the debounce stops being a debounce.
+#
+# Re-derived from the 31-document corpus (`--corpus`, best of 17 across
+# three passes). Nothing under this size crosses 250 ms: the largest
+# document below it, system-design-primer at 109,682 characters, renders
+# in 179 ms, and the slowest per character below it, programming-jp at
+# 98,280, in 206 ms. Fitting the corpus's own rate -- 1.60 us/char, least
+# squares through the origin over all 31 -- puts 250 ms at about 155,800
+# characters, so this sits 16% under the crossing. Left on the low side
+# deliberately: the cost of being early here is a visible Refresh button,
+# and "typical" is a median over a population whose spread is 3x.
 LIVE_REFRESH_MAX_CHARS = 128 * 1024
 
-# The point at which an *unrequested* render costs about a second. The
-# slowest real corpus document measures 874 ms at 233k characters. Above
+# The point at which an *unrequested* render costs about a second. Above
 # this, a tab whose saved mode is Preview shows its source and offers the
 # preview instead of building one nobody asked for.
+#
+# The corpus cannot supply this crossing, which is the honest state of it:
+# no real README measured reaches a second. The slowest is public-apis at
+# 636 ms for 232,413 characters, and the largest, awesome-go at 404,874
+# characters, costs only 514 ms. Extrapolating the corpus's central rate
+# would put a second near 623,000 characters.
+#
+# It is placed against the worst plausible *shape* instead, because this
+# guard covers work the reader did not ask for and cannot decline: the
+# tables shape crosses 1,000 ms at about 305,000 characters (measured
+# directly across the crossing -- 889 ms at 276,843, 1,099 ms at 333,111),
+# and this sits 14% under that. The difference between 305,000 and
+# 623,000 is the shape spread a character count cannot see. In practice
+# the choice within that range is immaterial: the same two of 31 corpus
+# documents defer at either number.
 DEFER_INITIAL_MIN_CHARS = 256 * 1024
 
 

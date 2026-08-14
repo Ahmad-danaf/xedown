@@ -13,6 +13,12 @@ cmark-gfm — the parser GitHub itself uses — over 31 real README files.
 Documents you already have will render differently, and closer to the way
 their authors saw them.
 
+Alongside it, a performance pass over the same corpus: one quadratic cliff
+removed, and two size limits so that a very large document can no longer
+freeze the editor on work nobody asked for. What rendering costs, and how
+both limits were measured, is now published in
+[docs/performance.md](docs/performance.md).
+
 ### Added
 
 - **A collapsible section now collapses.** `<details>` and `<summary>` used to
@@ -26,6 +32,17 @@ their authors saw them.
 - **Markdown inside a block-level HTML element is parsed when the element
   opts in with `markdown="1"`.** Without the attribute it is still shown
   literally, as before — see the known issues below.
+- **A very large document no longer renders on every keystroke, or on open.**
+  xedown renders on the same thread as the editor, so a big document freezes
+  the cursor for as long as the render takes. Past about 131,000 characters
+  the preview stops following your typing and a **Refresh** button appears in
+  the mode bar — this overrides `auto_refresh` for that tab only, and is never
+  written to your settings. Past about 262,000 the tab opens in **Markdown**
+  mode instead of building a preview nobody asked for, with a chip naming the
+  document's size beside a **Preview** button that builds it on request.
+  Choosing Preview yourself always works, at any size. Neither limit is a
+  setting; both were measured against the 31-README corpus, and
+  [docs/performance.md](docs/performance.md) shows the curve they came from.
 
 ### Fixed
 
@@ -69,6 +86,14 @@ their authors saw them.
 - **A relative link keeps its `#fragment`.** `[FAQ](FAQ.md#posix)` resolved to
   a file literally named `FAQ.md#posix`, so the link was dead — and dead
   quietly, opening an error or an empty tab rather than the section asked for.
+- **Repeated headings no longer make a document disproportionately slow.**
+  Giving each heading a unique anchor compared every new heading against every
+  anchor already issued, which is quadratic — so a changelog-shaped document,
+  where the same few headings (`### Fixed`, `### Added`) repeat under every
+  version, cost far more than its size suggested. A 100,000-character document
+  of 5,556 repeated headings rendered in 4,443 ms; it now renders in 646 ms,
+  and the per-heading cost is within 11% of a document whose headings are all
+  distinct. The anchors themselves are byte-identical to what they were.
 
 ### Known issues
 

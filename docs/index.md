@@ -14,6 +14,11 @@
   way it is, measured by diffing xedown against cmark-gfm over a corpus of 31
   real READMEs that `scripts/fetch-corpus.sh` reproduces from pinned commit
   SHAs
+- Performance — [performance.md](performance.md), what rendering costs by
+  document shape and size, the two size limits that keep a very large document
+  from freezing the editor and how each was measured against the same corpus,
+  and why the limits are counted in characters rather than bytes.
+  `tests/perf/run_bench.py` reproduces every table
 - Security — [../SECURITY.md](../SECURITY.md), the network boundary around
   remote images and the properties that are enforced and tested, not merely
   intended

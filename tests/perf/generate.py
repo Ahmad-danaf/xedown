@@ -1,9 +1,11 @@
 """Deterministic synthetic documents, by shape and size.
 
-Shape matters more than size: at 100 KB the spread between prose and
-tables is 5x, and duplicated headings are 80x. A generator that varied
-its output per run could not detect a regression, so nothing here is
-random -- repetition and a counter are the only variation.
+Shape matters more than size: at 100k characters the spread between
+prose and tables is 8x, and duplicated headings -- the densest shape
+here, and the one that used to expose a quadratic anchor cliff -- are
+15x. A generator that varied its output per run could not detect a
+regression, so nothing here is random -- repetition and a counter are the
+only variation.
 
 Sizes are in *characters*, not bytes, because Python-Markdown operates on
 `str` and that is what the cost tracks. For the ASCII shapes here the two
