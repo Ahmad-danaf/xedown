@@ -234,16 +234,18 @@ explained inline below.
 | 133 | In `tests/fixtures/showcase.md`, find *A collapsible section*. Click **Show the long version**, then click it again. Then <kbd>Tab</kbd> to the same line and press <kbd>Enter</kbd> | It starts closed, showing one line with a disclosure triangle. The first click opens it onto the list and the fence inside; the second closes it again. <kbd>Tab</kbd> reaches it with a visible focus ring and <kbd>Enter</kbd> does the same thing the click does. Before this release the section could not close at all: everything inside was permanently on screen and the summary was a stray line of text above it |
 | 134 | In the same file, look at *A centred block* just below, in each of the four themes, light and dark | The line is centred in the content column in all eight combinations. A theme changes its colour and its spacing, never its alignment |
 | 135 | Copy `tests/fixtures/rtl.md` to a scratch file, add the line `<p align="left">هذا السطر محاذاته إلى اليسار.</p>` to it, and open it in Preview | That one paragraph sits against the **left** edge of the content column while every other paragraph on the page stays against the right — and the Arabic inside it still reads right to left, with its full stop on the left. Delete the scratch file afterwards |
-
 | 136 | Copy a document well past the defer threshold to a scratch file — `cp tests/compat/corpus/awesome-go.md /tmp/big.md` after `scripts/fetch-corpus.sh`, or any Markdown file over about 400,000 characters — and open it with Preview as the default mode | It opens in **Markdown** mode, not Preview, showing the source immediately. The mode bar carries a chip reading `Large document (396 KB)` next to a **Preview** button. Nothing was rendered: the window is responsive from the moment it appears, with no pause before the text draws. Click **Preview** and the preview builds — the editor does freeze for about a second while it does, which is the point: you asked for it, and the button's tooltip says so |
 | 137 | Switch that document back to Markdown mode, type a few words, then switch to Preview | Nothing re-renders while you type — no lag, no flicker. In Preview the mode bar shows a **Refresh** button marked stale rather than updating by itself, and the preview keeps showing the older text until you click it or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>. This holds even with `"auto_refresh": true`, which is the intended override — the size guard beats the preference, for this tab only. Delete `/tmp/big.md` afterwards |
 
 Rows 136 and 137 are the two size limits seen from the reader's side; what
 rendering costs and how both numbers were derived is in
 [performance.md](performance.md). The integration probe asserts the structure —
-that the tab opened without rendering, and that a keystroke does not trigger a
-re-render — but only an eye on a real screen confirms the thing the limits
-exist for, which is that the editor never stops responding.
+that the tab opened without rendering, that the chip is on the bar offering the
+preview, and that a keystroke does not trigger a re-render — but only an eye on
+a real screen confirms the thing the limits exist for, which is that the editor
+stays responsive through the two moments they cover. They cover only those two:
+pressing <kbd>Ctrl</kbd>+<kbd>S</kbd> in row 137 renders the whole document and
+freezes the editor while it does, which is expected, not a failure of the row.
 
 Rows 133–135 are here because a structural assertion cannot see any of it: a
 tree diff sees a `<details>` element whether or not it opens, and sees
