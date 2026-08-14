@@ -23,6 +23,20 @@ def available():
     return CORPUS_DIR.is_dir() and any(CORPUS_DIR.glob("*.md"))
 
 
+def read(name):
+    """One named corpus document's text, or None if it is not there.
+
+    For the measurements that name a specific document rather than
+    sweeping the whole corpus -- the memory table's two real-README rows.
+    Absent is None, not an error, for the same reason `available()`
+    exists: nothing here fetches anything.
+    """
+    path = CORPUS_DIR / name
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
 def measure_corpus(repeat=1):
     """Every corpus document, slowest first. Empty if the corpus is absent."""
     if not available():

@@ -18,7 +18,9 @@
   document shape and size, the two size limits that keep a very large document
   from freezing the editor and how each was measured against the same corpus,
   and why the limits are counted in characters rather than bytes.
-  `tests/perf/run_bench.py` reproduces every table
+  `tests/perf/run_bench.py --all` reproduces every table except the tables
+  sweep across the one-second crossing, whose loop is written out in that
+  file's *Reproducing any of this* section
 - Security — [../SECURITY.md](../SECURITY.md), the network boundary around
   remote images and the properties that are enforced and tested, not merely
   intended

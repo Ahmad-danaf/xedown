@@ -11,6 +11,7 @@ least disturbed by something that is not the code under test.
 """
 
 import time
+import tracemalloc
 from typing import NamedTuple
 
 from xedown import renderer
@@ -62,3 +63,28 @@ def time_layers(text, base_dir=None, repeat=3):
             lambda: renderer.render_document(text, base_dir=base_dir), repeat
         ),
     )
+
+
+def peak_render_bytes(text, base_dir=None):
+    """Peak Python allocation during one full `render_document`.
+
+    `tracemalloc` zeroes its counters at `start()`, so the peak returned
+    is this render's own, not the process's high-water mark. It counts
+    Python allocations only -- nothing WebKit or GTK does afterwards with
+    the page this produces is visible here, and the page is never handed
+    to either.
+
+    Taken once rather than best-of-n, and deliberately never merged with
+    the timing columns: `tracemalloc` traces every allocation, which
+    multiplies the render's own wall-clock cost several times over, so a
+    time measured under it would be a measurement of the tracer. Peak
+    allocation, unlike wall clock, is deterministic enough that one pass
+    is the whole answer.
+    """
+    tracemalloc.start()
+    try:
+        renderer.render_document(text, base_dir=base_dir)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak

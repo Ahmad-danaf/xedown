@@ -1,6 +1,6 @@
 """The measurement helper reports per-layer times, not one number."""
 
-from tests.perf import generate, measure
+from tests.perf import corpus, generate, measure
 
 
 def test_reports_every_layer():
@@ -30,3 +30,27 @@ def test_an_empty_document_still_measures():
     timing = measure.time_layers("", repeat=1)
     assert timing.chars == 0
     assert timing.document_ms > 0.0
+
+
+def test_peak_memory_is_measured_and_grows_with_the_document():
+    # Not a wall-clock assertion, which is why it is allowed here at all:
+    # peak allocation is deterministic where a duration is not.
+    #
+    # The warm-up is load-bearing. The *first* render in a process also
+    # pays Python-Markdown's lazy import of its extension modules and
+    # every regex they compile -- around 4 MB nothing later pays again --
+    # so without it whichever call ran first would dominate both figures
+    # and the comparison would mean nothing. `run_bench --memory`
+    # discards a render for exactly this reason.
+    measure.peak_render_bytes("warm up, discard")
+    floor = measure.peak_render_bytes("")
+    loaded = measure.peak_render_bytes(generate.build("prose", 50_000))
+    assert floor > 0
+    assert loaded > floor
+
+
+def test_a_named_corpus_document_that_is_not_there_is_none():
+    # Not an error and not a download: the corpus is uncommitted, so
+    # every entry point into it has to answer "absent" cleanly. CI never
+    # has one at all.
+    assert corpus.read("no-such-readme.md") is None

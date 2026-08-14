@@ -3,6 +3,7 @@
     .venv/bin/python -m tests.perf.run_bench --shapes
     .venv/bin/python -m tests.perf.run_bench --sizes
     .venv/bin/python -m tests.perf.run_bench --corpus
+    .venv/bin/python -m tests.perf.run_bench --memory
     .venv/bin/python -m tests.perf.run_bench --all --json out.json
 
 Wall-clock assertions do not belong in CI -- they flake on a shared
@@ -75,6 +76,87 @@ def _images_on_disk(records, repeat):
         records.append({"kind": "images-on-disk", "files": count, **timing._asdict()})
 
 
+# Decimal, not 1024 * 1024, and the one place in the tree that differs:
+# `perflimits.describe_bytes` deliberately calls a mebibyte "MB" because
+# that is what a file manager shows the reader. Nothing here is shown to a
+# reader -- it is a published measurement, so it uses the unit the symbol
+# actually means, and `docs/performance.md` says so above the table.
+_MB = 1_000_000
+
+_MEMORY_HEAD = (
+    f"{'case':<24}{'chars':>10}{'peak':>12}{'above floor':>14}{'x chars':>10}"
+)
+
+
+def _memory(records):
+    """Peak allocation during a full render, by `tracemalloc`.
+
+    A separate pass rather than a fifth column on the timing tables,
+    because it cannot share their runs: tracing every allocation costs
+    several times the render itself, so a time taken under it measures
+    the tracer. `--repeat` does not apply here either -- peak allocation
+    is deterministic where wall clock is not.
+
+    The first case is an empty document, which is the fixed floor every
+    other row is quoted against: the self-contained page inlines its CSS,
+    its JavaScript and the highlight.js bundle whatever the document
+    says, and `read_vendor_file` re-reads that bundle on every render, so
+    the floor is a real per-render cost rather than a one-off. The two
+    corpus rows are skipped, with the same instruction the corpus pass
+    prints, when the corpus is absent -- the four synthetic rows still
+    run.
+
+    One render is discarded before any of them, and it has to be. The
+    *first* render in a process also pays Python-Markdown's lazy import
+    of its extension modules and every regex they compile, which is
+    around 4 MB that no later render pays again -- measured: an empty
+    document peaks at 4.7 MB cold and 0.70 MB warm. Leaving that in
+    would put the whole table's floor six times too high and turn every
+    "above the floor" figure into nonsense.
+    """
+    print("\n=== peak memory during render_document (tracemalloc) ===")
+    print(_MEMORY_HEAD)
+    measure.peak_render_bytes("warm up the interpreter, discard the result")
+    biggest = generate.SIZES[-1]
+    cases = [
+        ("empty document", ""),
+        ("prose", generate.build("prose", biggest)),
+    ]
+    if corpus.available():
+        for name in ("public-apis.md", "awesome-go.md"):
+            text = corpus.read(name)
+            if text is not None:
+                cases.append((f"{name[:-3]} (corpus)", text))
+    else:
+        print("  corpus rows skipped - run scripts/fetch-corpus.sh to populate it")
+    cases += [
+        ("tables", generate.build("tables", biggest)),
+        ("headings, repeated", generate.build("headings-duplicate", biggest)),
+    ]
+
+    floor = None
+    for label, text in cases:
+        peak = measure.peak_render_bytes(text)
+        if floor is None:
+            floor = peak
+        above = peak - floor
+        ratio = f"{above / len(text):.0f}x" if text else "-"
+        above_mb = f"{above / _MB:.1f} MB" if text else "-"
+        print(
+            f"{label:<24}{len(text):>10}{peak / _MB:>10.2f}MB"
+            f"{above_mb:>14}{ratio:>10}"
+        )
+        records.append(
+            {
+                "kind": "memory",
+                "case": label,
+                "chars": len(text),
+                "peak_bytes": peak,
+                "above_floor_bytes": above,
+            }
+        )
+
+
 def _corpus(records, repeat):
     print("\n=== real corpus ===")
     if not corpus.available():
@@ -95,17 +177,26 @@ def main(argv=None):
     parser.add_argument("--sizes", action="store_true")
     parser.add_argument("--images-on-disk", action="store_true")
     parser.add_argument("--corpus", action="store_true")
+    parser.add_argument("--memory", action="store_true")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--repeat", type=int, default=3)
     parser.add_argument("--json", type=pathlib.Path, default=None)
     args = parser.parse_args(argv)
 
     selected = any(
-        (args.shapes, args.sizes, args.images_on_disk, args.corpus, args.all)
+        (
+            args.shapes,
+            args.sizes,
+            args.images_on_disk,
+            args.corpus,
+            args.memory,
+            args.all,
+        )
     )
     if not selected:
         parser.error(
-            "choose at least one of --shapes --sizes --images-on-disk " "--corpus --all"
+            "choose at least one of --shapes --sizes --images-on-disk "
+            "--corpus --memory --all"
         )
 
     records = []
@@ -117,6 +208,10 @@ def main(argv=None):
         _images_on_disk(records, args.repeat)
     if args.corpus or args.all:
         _corpus(records, args.repeat)
+    # Last, and outside `--repeat`: see `_memory`. Included in `--all` so
+    # that "run_bench reproduces every table" stays true of one command.
+    if args.memory or args.all:
+        _memory(records)
 
     if args.json is not None:
         args.json.write_text(json.dumps(records, indent=2), encoding="utf-8")
