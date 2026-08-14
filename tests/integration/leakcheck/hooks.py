@@ -185,10 +185,25 @@ def release_object(label):
     _LEDGER.release(OBJECT, label)
 
 
-def audit():
-    """Findings as of now. Collects first, so Python-side cycles do not count."""
+def checkpoint():
+    """The ledger's "now", for scoping a later audit. See `Ledger.mark()`.
+
+    A scenario calls this before creating the tab/window it means to tear
+    down, then passes the result to `audit(since=...)` so a still-open tab
+    or window elsewhere in the process -- entirely legitimate -- is not
+    reported as a leak of the thing this scenario actually acquired.
+    """
+    return _LEDGER.mark()
+
+
+def audit(since=None):
+    """Findings as of now. Collects first, so Python-side cycles do not count.
+
+    `since`, if given, restricts the audit to resources acquired at or
+    after that checkpoint -- see `checkpoint()`.
+    """
     gc.collect()
-    return _LEDGER.findings()
+    return _LEDGER.findings(since=since)
 
 
 def format_findings(findings):

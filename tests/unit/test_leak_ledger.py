@@ -102,3 +102,45 @@ def test_clear_empties_everything():
     lg.clear()
     assert lg.outstanding() == ()
     assert lg.findings() == ()
+
+
+def test_mark_on_an_empty_ledger_works():
+    lg = _ledger()
+    assert lg.mark() == 0
+
+
+def test_a_record_before_the_mark_is_excluded_from_findings_since():
+    # A scenario's own long-lived setup, or something else entirely still
+    # open in the process, must not be reported as a leak of the thing
+    # torn down after the mark.
+    lg = _ledger()
+    lg.record(led.HANDLER, 1, "before", "o", lambda: True)
+    mark = lg.mark()
+    assert lg.findings(since=mark) == ()
+
+
+def test_a_record_after_the_mark_is_included_in_findings_since():
+    lg = _ledger()
+    lg.record(led.HANDLER, 1, "before", "o", lambda: True)
+    mark = lg.mark()
+    lg.record(led.HANDLER, 2, "after", "o", lambda: True)
+    findings = lg.findings(since=mark)
+    assert [f.label for f in findings] == ["after"]
+
+
+def test_findings_with_no_argument_still_reports_everything():
+    lg = _ledger()
+    lg.record(led.HANDLER, 1, "before", "o", lambda: True)
+    _ = lg.mark()
+    lg.record(led.HANDLER, 2, "after", "o", lambda: True)
+    labels = sorted(f.label for f in lg.findings())
+    assert labels == ["after", "before"]
+
+
+def test_outstanding_since_filters_the_same_way_as_findings_since():
+    lg = _ledger()
+    lg.record(led.HANDLER, 1, "before", "o", lambda: False)
+    mark = lg.mark()
+    lg.record(led.HANDLER, 2, "after", "o", lambda: False)
+    labels = [r.label for r in lg.outstanding(since=mark)]
+    assert labels == ["after"]

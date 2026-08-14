@@ -24,6 +24,7 @@ class Record(NamedTuple):
     key: object
     label: str
     origin: str
+    seq: int
 
 
 class Finding(NamedTuple):
@@ -34,16 +35,29 @@ class Finding(NamedTuple):
 
 
 class Ledger:
-    """Bookkeeping for one process. Not thread-safe; nothing here is."""
+    """Bookkeeping for one process. Not thread-safe; nothing here is.
+
+    Records carry a monotonic sequence number, so a caller can `mark()`
+    "now" before doing the thing it wants to audit and later scope
+    `findings()`/`outstanding()` to only what happened since -- without
+    that, every audit reports every still-live resource ever acquired in
+    the process, including ones a different, still-open scenario legitimately
+    holds.
+    """
 
     def __init__(self):
         self._records = {}
         self._live = {}
+        self._seq = 0
 
     def record(self, kind, key, label, origin, is_live):
         """Note an acquisition. `is_live()` answers whether its owner still exists."""
         index = (kind, key)
-        self._records[index] = Record(kind=kind, key=key, label=label, origin=origin)
+        seq = self._seq
+        self._seq += 1
+        self._records[index] = Record(
+            kind=kind, key=key, label=label, origin=origin, seq=seq
+        )
         self._live[index] = is_live
 
     def release(self, kind, key):
@@ -58,24 +72,43 @@ class Ledger:
         self._records.pop(index, None)
         self._live.pop(index, None)
 
-    def outstanding(self):
+    def mark(self):
+        """The sequence number the next `record()` call will receive.
+
+        A caller takes this before doing the thing it wants to audit, then
+        passes it as `since=` to `findings()`/`outstanding()` so resources
+        acquired earlier -- by a scenario's own setup, or by something else
+        entirely still open in the process -- are not reported as leaks of
+        the thing just torn down.
+        """
+        return self._seq
+
+    def outstanding(self, since=None):
         """Every unreleased record, whether or not its owner still lives.
 
         The raw view, for diagnosing a confusing audit. `findings` is the
-        one that applies the rule.
+        one that applies the rule. `since`, if given, restricts this to
+        records with `seq >= since` -- see `mark()`.
         """
-        return tuple(self._records.values())
+        if since is None:
+            return tuple(self._records.values())
+        return tuple(r for r in self._records.values() if r.seq >= since)
 
-    def findings(self):
+    def findings(self, since=None):
         """Unreleased records whose owner is still alive. The rule.
 
         A liveness probe that raises counts as dead. A weakref into a
         half-finalised GObject can raise rather than answer, and an audit
         must never crash the thing it is auditing -- a false negative here
         costs one missed finding, a crash costs the whole run.
+
+        `since`, if given, restricts this to records with `seq >= since` --
+        see `mark()`.
         """
         out = []
         for index, record in self._records.items():
+            if since is not None and record.seq < since:
+                continue
             try:
                 alive = bool(self._live[index]())
             except Exception:  # noqa: BLE001 - an audit must not crash the probe
