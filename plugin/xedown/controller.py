@@ -525,11 +525,15 @@ class TabController:
         got a marker of its own -- Task 4's version of this same claim was
         inferred by subtracting a misattributed utterance from a
         contaminated window, not measured cleanly), which is the gap this
-        checks for. `self.modebar.has_focus_inside()` is read first, ahead
-        of every state change below, because it is only meaningful *before*
-        the switch: if the user tabbed to a mode button and activated it,
-        that focus is what makes Orca announce the toggle's own state
-        change, and this must not add a second announcement on top of it.
+        checks for. `self.modebar.has_focus_inside()` is read ahead of every
+        state change that could move focus, because it is only meaningful
+        *before* the switch: if the user tabbed to a mode button and
+        activated it, that focus is what makes Orca announce the toggle's own
+        state change, and this must not add a second announcement on top of
+        it. Exactly one thing runs earlier -- the deferral-clear block just
+        below -- and it is safe there because `has_focus_inside` inspects
+        only the two mode toggle buttons, and retiring the chip touches
+        neither of them.
 
         This is also the one place that clears `_preview_deferred`, because
         it is where every route into Preview converges -- the mode bar's own
@@ -547,6 +551,13 @@ class TabController:
             return
         if mode is Mode.PREVIEW and self._preview_deferred:
             self._preview_deferred = False
+            # Cleared with the flag it belongs to, rather than relying on
+            # deferral being once-only per tab. It is once-only today --
+            # both places that set the flag run at most once -- so a stale
+            # label is currently unreachable, but that is an invariant two
+            # files away from here, and the cost of not depending on it is
+            # this line.
+            self._deferred_size_label = None
             self._apply_size_guard()
         announce = not initial and not self.modebar.has_focus_inside()
         self._remember_scroll(self.state.mode)
@@ -671,9 +682,15 @@ class TabController:
 
         Called from the build path, from `_on_document_loaded` (both its
         ordinary reload branch and the build/load race branch), and from
-        every buffer change, because a document can cross a threshold by
-        being typed into or pasted over -- the guard is about the text
-        right now, not the file that was opened.
+        every buffer change, because a document can cross the live-refresh
+        threshold by being typed into or pasted over -- the guard is about
+        the text right now, not the file that was opened.
+
+        `decision.live_refresh` is the only half acted on here.
+        `defer_initial` is read at the two places that can still choose a
+        mode -- `_build_if_markdown` and `_on_document_loaded`'s race
+        branch -- and nowhere else, because pasting into a tab that is
+        already showing a preview has no initial build left to defer.
 
         Counted in characters: that is what the parser processes, and the
         count is free. The chip's label is *not* recomputed here -- it is
@@ -1714,11 +1731,24 @@ class TabController:
             self._refresh_body_now()
             refreshed = True
 
-        if settings.REMEMBER_MODE_PER_FILE in changed and store.get(
-            settings.REMEMBER_MODE_PER_FILE
+        if (
+            settings.REMEMBER_MODE_PER_FILE in changed
+            and store.get(settings.REMEMBER_MODE_PER_FILE)
+            and not self._preview_deferred
         ):
             # Switched on: make it true of the tabs already open, not only of
             # ones opened later.
+            #
+            # Except for a tab whose preview is still deferred. Its mode is
+            # `Mode.SOURCE` because the size guard put it there, not because
+            # the reader chose it, and filing that as a remembered choice is
+            # permanent: `_initial_mode` would return SOURCE next time, so
+            # `_build_if_markdown`'s `initial is Mode.PREVIEW` guard would be
+            # False, the deferral would never fire, and the chip offering the
+            # preview would never appear for that file again. Withdrawing the
+            # offer for good is not what toggling a setting off and on asks
+            # for. The moment the reader takes the offer, `set_mode` clears
+            # the flag and files PREVIEW through the ordinary path.
             self._remember_mode(self.state.mode)
         self._update_refresh_cue()
 
