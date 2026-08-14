@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Fetch the compatibility-audit corpus. Dev-only: needs the network, and
-# nothing it writes is committed (see .gitignore).
+# Fetch the compatibility-audit corpus. Dev-only: needs the network. The
+# fetched .md files are not committed (see .gitignore); MANIFEST.json is.
 #
-# Each entry is pinned to a commit SHA rather than a branch, and the SHA is
-# recorded in MANIFEST.json, so re-running this months later produces the
-# same bytes and the audit stays reproducible.
+# ENTRIES below names each project by a branch ref, which is not by itself
+# reproducible -- a branch moves. What actually pins the corpus is that an
+# entry already recorded in the committed MANIFEST.json has its SHA reused
+# outright rather than the ref being re-resolved, so re-running this months
+# later fetches the exact same bytes for every entry that has run before.
+# Only a name with no manifest record yet resolves its ref fresh.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,8 +68,36 @@ if [ "$SHA_METHOD" = "curl" ]; then
   echo "   install and log in to 'gh' to avoid rate-limit failures)" >&2
 fi
 
+# MANIFEST.json itself is committed (see .gitignore) precisely so this
+# lookup has something to consult: an entry already recorded there pins a
+# SHA that re-resolving the ref would not reproduce once a branch has
+# moved on, so it is preferred outright and never re-resolved. Only an
+# entry with no recorded SHA -- new to ENTRIES -- falls back to asking
+# GitHub what the ref currently points at.
+declare -A KNOWN_SHA
+if [ -f "$MANIFEST" ]; then
+  while IFS=$'\t' read -r known_name known_sha; do
+    KNOWN_SHA["$known_name"]="$known_sha"
+  done < <(python3 -c '
+import json, sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        entries = json.load(handle)
+except (OSError, json.JSONDecodeError):
+    entries = []
+
+for entry in entries:
+    print(entry["name"] + "\t" + entry["sha"])
+' "$MANIFEST")
+fi
+
 resolve_sha() {
-  local repo="$1" ref="$2"
+  local name="$1" repo="$2" ref="$3"
+  if [ -n "${KNOWN_SHA[$name]:-}" ]; then
+    echo "${KNOWN_SHA[$name]}"
+    return
+  fi
   if [ "$SHA_METHOD" = "gh" ]; then
     gh api "repos/$repo/commits/$ref" --jq '.sha' 2>/dev/null || true
   else
@@ -76,7 +107,14 @@ resolve_sha() {
   fi
 }
 
-printf '[\n' > "$MANIFEST"
+# Written to a temp file and moved into place only once the whole loop has
+# finished, so a run interrupted partway (network drop, Ctrl-C) never
+# leaves the committed manifest truncated or missing entries the working
+# tree's .md files still match.
+TMP_MANIFEST="$(mktemp "$CORPUS/manifest.XXXXXX.tmp")"
+trap 'rm -f "$TMP_MANIFEST"' EXIT
+
+printf '[\n' > "$TMP_MANIFEST"
 first=1
 
 for entry in "${ENTRIES[@]}"; do
@@ -84,7 +122,7 @@ for entry in "${ENTRIES[@]}"; do
 
   # Resolve the ref to an immutable SHA so the manifest pins bytes, not a
   # moving branch.
-  sha="$(resolve_sha "$repo" "$ref")"
+  sha="$(resolve_sha "$name" "$repo" "$ref")"
   if [ -z "$sha" ]; then
     echo "SKIP $name: could not resolve $repo@$ref" >&2
     continue
@@ -97,14 +135,16 @@ for entry in "${ENTRIES[@]}"; do
   fi
 
   bytes="$(wc -c < "$CORPUS/$name.md" | tr -d ' ')"
-  [ "$first" -eq 1 ] || printf ',\n' >> "$MANIFEST"
+  [ "$first" -eq 1 ] || printf ',\n' >> "$TMP_MANIFEST"
   first=0
   printf '  {"name": "%s", "stratum": "%s", "url": "%s", "sha": "%s", "bytes": %s}' \
-    "$name" "$stratum" "$url" "$sha" "$bytes" >> "$MANIFEST"
+    "$name" "$stratum" "$url" "$sha" "$bytes" >> "$TMP_MANIFEST"
   echo "OK   $name  ($bytes bytes)"
 done
 
-printf '\n]\n' >> "$MANIFEST"
+printf '\n]\n' >> "$TMP_MANIFEST"
+mv "$TMP_MANIFEST" "$MANIFEST"
+trap - EXIT
 echo
 echo "Corpus written to $CORPUS"
 echo "Manifest: $MANIFEST"
