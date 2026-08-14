@@ -104,15 +104,20 @@ class TabController:
         # someone pastes megabytes into an already-deferred document is
         # accepted: it is a size hint offered once, not a live readout.
         self._deferred_size_label = None
-        # True once this tab's own initial file load has been accounted
-        # for -- by `_build_if_markdown` if it won the race against xed's
-        # asynchronous read, or by `_on_document_loaded` finding the build
-        # already done if it lost. `GLib.idle_add(self._build_if_markdown)`
-        # in `activate()` and that read have no ordering guarantee against
-        # each other, and this is what lets `_on_document_loaded` tell "the
-        # load the build raced" apart from a later, genuine revert or
-        # externally-accepted reload -- see that method's docstring.
-        self._seen_initial_load = False
+        # Set by `_build_if_markdown`, to True exactly when it measured an
+        # empty buffer -- the signature of losing its race against xed's
+        # own asynchronous file read, not merely "this is the tab's first
+        # `loaded` event". A document built via New -> Save As never gets
+        # a `loaded` event of its own at all (`_on_document_saved` queues
+        # the build directly), so *its* first `loaded` is a genuine later
+        # revert; answering "was this the first `loaded`" instead of "did
+        # the build see nothing" treated that revert as a raced initial
+        # open and could switch a reader out of a Preview they were
+        # actively reading. `_on_document_loaded` consumes this -- sets it
+        # back to False -- the first time it checks it, win or lose, so
+        # only the one `loaded` immediately following an empty-buffer
+        # build is ever treated specially; see that method's docstring.
+        self._awaiting_initial_content = False
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
@@ -446,15 +451,19 @@ class TabController:
         if self._watch_external:
             self._start_watch()
         initial = self._initial_mode()
+        char_count = self._document_char_count()
+        # Recorded before the decision below, not derived from it: this is
+        # what `_on_document_loaded` reads to tell a raced initial load
+        # apart from a later revert -- see `_awaiting_initial_content`'s
+        # own comment in `__init__` for why "was the buffer empty" is the
+        # right question and "was this the first `loaded` event" was not.
+        self._awaiting_initial_content = char_count == 0
         # A document large enough that building its preview costs about a
         # second opens in Markdown mode instead, with the chip offering the
         # preview. The reader then pays that second knowingly. Only the
         # *initial* build is deferred: choosing Preview from the mode bar
         # afterwards is a request, and requests are honoured at any size.
-        if (
-            initial is Mode.PREVIEW
-            and perflimits.classify(self._document_char_count()).defer_initial
-        ):
+        if initial is Mode.PREVIEW and perflimits.classify(char_count).defer_initial:
             self._preview_deferred = True
             # Computed once, here, rather than by `_apply_size_guard` on
             # every keystroke -- see `_deferred_size_label`'s own comment.
@@ -1460,26 +1469,33 @@ class TabController:
         change — all of which genuinely replace the buffer contents, so
         (unlike a save) this always warrants a full reload when visible.
 
-        Also fires once for the tab's own *initial* file load, and that
-        firing can land in either branch below: xed's file read is
-        asynchronous, and nothing orders it against `activate()`'s own
+        Also fires for the tab's own *initial* file load, and that firing
+        can land in either branch below: xed's file read is asynchronous,
+        and nothing orders it against `activate()`'s own
         `GLib.idle_add(self._build_if_markdown)`. If the load wins, this
         runs first and hits `not self._built`, which just re-queues the
         build -- by the time it runs, the buffer already holds the real
         text, so `_build_if_markdown`'s own deferral decision is correct
-        unaided. If the *build* wins instead, `_build_if_markdown` reads
-        an empty buffer, `perflimits.classify(0)` comes back unconstrained,
-        and a document large enough to defer opens straight into an
-        unrequested Preview render of nothing -- and this is the load
-        landing afterwards, on an already-built tab, carrying the content
-        that decision should have seen. `_seen_initial_load` is what
-        tells that apart from every later firing (a revert, an
-        externally-accepted reload): those always find it already True,
-        because the tab's one initial load was already accounted for,
-        either here or by the branch above.
+        unaided, and `_awaiting_initial_content` comes out False. If the
+        *build* wins instead, `_build_if_markdown` reads an empty buffer,
+        `perflimits.classify(0)` comes back unconstrained, and a document
+        large enough to defer opens straight into an unrequested Preview
+        render of nothing -- and this is that same load landing
+        afterwards, on an already-built tab, carrying the content that
+        decision should have seen.
+
+        `_awaiting_initial_content` (set by `_build_if_markdown`, consumed
+        below) is deliberately not "was this the first `loaded` event
+        this tab has seen" -- a document built via New -> Save As never
+        gets a `loaded` event of its own at all, so *its* first one is a
+        genuine later revert, and answering that question wrongly used to
+        switch a reader out of a Preview they were actively reading. "Did
+        the build measure an empty buffer" is the question that survives
+        that lifecycle: such a document has content by the time
+        `_on_document_saved` gets it built, so the flag comes out False
+        and every `loaded` after that is treated as the plain revert it
+        is.
         """
-        first_load = not self._seen_initial_load
-        self._seen_initial_load = True
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
@@ -1490,8 +1506,16 @@ class TabController:
         # tab's existing path -- there is no Save-As-style path change for
         # the watch to follow.
         self.state.preview_stale = True
+        # Consumed here, win or lose: only the one `loaded` immediately
+        # following an empty-buffer build is ever a candidate for this --
+        # a later revert of a document that has since grown real content
+        # (typed, or reverted once already) must fall through to the
+        # ordinary reload below, exactly as it did before this guard
+        # existed.
+        awaiting_initial_content = self._awaiting_initial_content
+        self._awaiting_initial_content = False
         if (
-            first_load
+            awaiting_initial_content
             and self.state.mode is Mode.PREVIEW
             and perflimits.classify(self._document_char_count()).defer_initial
         ):
