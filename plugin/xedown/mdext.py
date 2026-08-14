@@ -20,6 +20,54 @@ _TASK_MARKER = re.compile(r"^\[([ xX])\]\s+")
 
 _STRIKETHROUGH_PATTERN = r"(~{2})(.+?)~{2}"
 
+# Mirrors `markdown.extensions.toc.IDCOUNT_RE` exactly. Duplicated rather
+# than imported because this helper is pure -- it must be importable and
+# testable without resolving the vendored package -- and pinned against
+# drift by `test_the_vendored_function_still_behaves_as_characterised`.
+_IDCOUNT_RE = re.compile(r"^(.*)_([0-9]+)$")
+
+
+def unique_id(candidate, used, memo):
+    """`toc.unique`'s answer, without its quadratic walk.
+
+    The vendored function resolves a slug collision by restarting its
+    `_1, _2, _3...` probe from the beginning every time, so the nth
+    duplicate of one slug costs n steps -- 1,529 ms for 1600 identical
+    headings against 212 ms for 1600 distinct ones. The shape that hits
+    it is a changelog, with `### Fixed` under every released version.
+
+    `memo` maps an input string to the last id returned for it, and is
+    what makes this linear. Resuming there is safe, and gives byte-identical
+    output, because of an invariant the vendored loop establishes: it
+    advances from one candidate to the next only when the current one is
+    already in `used`, and adds its answer on the way out. So after a call
+    for `s` returns `s_k`, every one of `s, s_1, ... s_k` is in `used`, and
+    resuming a later call at `s_k` skips only values already proven
+    occupied. It can never skip a *free* value, which is the only way the
+    answer could differ.
+
+    Byte-identical output is a requirement, not a nicety: anchors are part
+    of the rendered document's contract and in-page links resolve against
+    them. `tests/unit/test_toc_unique.py` differential-tests this against
+    the vendored function and pins that function's behaviour, so a
+    re-vendor that changes it fails loudly instead of leaving a
+    replacement that quietly no longer matches.
+
+    Single-threaded by construction -- rendering happens on the GTK main
+    thread -- so `memo` needs no locking. It is created per document.
+    """
+    identifier = memo.get(candidate, candidate)
+    while identifier in used or not identifier:
+        match = _IDCOUNT_RE.match(identifier)
+        if match:
+            identifier = f"{match.group(1)}_{int(match.group(2)) + 1}"
+        else:
+            identifier = f"{identifier}_1"
+    used.add(identifier)
+    memo[candidate] = identifier
+    return identifier
+
+
 # A backslash immediately followed by a newline is a hard line break in
 # CommonMark, the same as two trailing spaces (the vendored `linebreak`
 # pattern, `LINE_BREAK_RE = r'  \n'`, already handles that spelling). The
@@ -842,6 +890,48 @@ def make_extensions(markdown_module):
                 ListInterruptProcessor(md.parser), "xedown_list_interrupt", 12
             )
 
+    # The heading-anchor cliff. `toc.unique` is a module-level function
+    # called from `TocTreeprocessor.run`, and `run` is forty lines of
+    # vendored logic -- subclassing it would copy that logic into xedown,
+    # where the next re-vendor would silently make the copy wrong. So the
+    # treeprocessor already registered under "toc" keeps its own `run`, and
+    # only the collision resolver is swapped, for the duration of one call.
+    #
+    # This is a replacement registered from xedown's own code, which is the
+    # sanctioned route; the vendored file is untouched. See `unique_id`
+    # above for why the answer is byte-identical.
+    toc_module = importlib.import_module(f"{markdown_module.__name__}.extensions.toc")
+
+    class FastTocExtension(Extension):
+        def extendMarkdown(self, md):
+            # `Registry` implements `__contains__` and `__getitem__` but
+            # NOT `.get` -- checked against the vendored `util.Registry`.
+            if "toc" not in md.treeprocessors:
+                # `markdown.extensions.toc` is not loaded. Nothing to speed
+                # up, and nothing to break. `test_toc_unique.py` asserts the
+                # normal case, so this cannot go unnoticed.
+                return
+            processor = md.treeprocessors["toc"]
+            original_run = processor.run
+            if getattr(original_run, "_xedown_fast_toc", False):
+                return
+
+            def run(doc):
+                memo = {}
+
+                def fast_unique(candidate, used):
+                    return unique_id(candidate, used, memo)
+
+                previous = toc_module.unique
+                toc_module.unique = fast_unique
+                try:
+                    return original_run(doc)
+                finally:
+                    toc_module.unique = previous
+
+            run._xedown_fast_toc = True
+            processor.run = run
+
     return [
         TaskListExtension(),
         StrikethroughExtension(),
@@ -851,4 +941,5 @@ def make_extensions(markdown_module):
         FencedCodeOverrideExtension(),
         ListIndentationExtension(),
         ListInterruptExtension(),
+        FastTocExtension(),
     ]
