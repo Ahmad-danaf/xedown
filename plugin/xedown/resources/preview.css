@@ -394,8 +394,24 @@ img:not([width]):not([height]) { max-height: 80vh; width: auto; }
 
 /* First use of :is() in this stylesheet. WebKitGTK has supported it since
    2.30; the development machine runs 2.52.3. Written out longhand it
-   would be nine selectors repeated four times. */
-[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th) {
+   would be nine selectors repeated four times.
+
+   `:not([align])` is load-bearing -- do not simplify it away. Without it
+   this selector is specificity (0,1,1): the `[align]` on the ancestor plus
+   the highest-specificity element in the :is() list, a type selector.
+   That outranks a cell's own `[align="left"]` above, which is only
+   (0,1,0), so a `<td align="left">` inside `<div align="center">` would
+   compute centred -- silently overriding the column alignment
+   Python-Markdown writes on every aligned table cell. `:not([align])`
+   excludes an element that carries its own alignment from this rule
+   entirely, so it falls through to the plain `[align="left"]` rule
+   instead of losing to it on specificity. A `<p>` with no align of its
+   own is unaffected and still inherits from the centred ancestor.
+   Nothing in this test suite renders CSS, so there is no automated check
+   that this actually paints correctly in a browser -- test_v01_parity.py
+   only pins the selector string verbatim. Change this selector only after
+   checking computed `text-align` in a real WebKitGTK view. */
+[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align]) {
   text-align: inherit;
 }
 

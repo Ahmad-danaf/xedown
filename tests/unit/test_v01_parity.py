@@ -113,7 +113,7 @@ ADDITIONS = {
     '[align="center"]',
     '[align="right"]',
     '[align="justify"]',
-    "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th)",
+    "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align])",
     # `details`, `summary`, `dl`/`dt`/`dd`, `caption` and `abbr` are all
     # absent from sanitizer.ALLOWED_ELEMENTS until brief 7, so none of these
     # selectors can match anything a v0.1 page produced either.
