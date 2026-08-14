@@ -96,13 +96,23 @@ class TabController:
         self._size_allows_live_refresh = True
         self._preview_deferred = False
         # The chip's label, computed once at the moment `_preview_deferred`
-        # is set (`_build_if_markdown`) and never touched again while it
-        # stays true. `_apply_size_guard` runs on every keystroke, so it
-        # only ever reads this rather than re-measuring the buffer -- see
-        # that method's docstring. A label that goes stale after someone
-        # pastes megabytes into an already-deferred document is accepted:
-        # it is a size hint offered once, not a live readout.
+        # is set -- by `_build_if_markdown`, or by `_on_document_loaded` on
+        # the build/load race described below -- and never touched again
+        # while it stays true. `_apply_size_guard` runs on every keystroke,
+        # so it only ever reads this rather than re-measuring the buffer --
+        # see that method's docstring. A label that goes stale after
+        # someone pastes megabytes into an already-deferred document is
+        # accepted: it is a size hint offered once, not a live readout.
         self._deferred_size_label = None
+        # True once this tab's own initial file load has been accounted
+        # for -- by `_build_if_markdown` if it won the race against xed's
+        # asynchronous read, or by `_on_document_loaded` finding the build
+        # already done if it lost. `GLib.idle_add(self._build_if_markdown)`
+        # in `activate()` and that read have no ordering guarantee against
+        # each other, and this is what lets `_on_document_loaded` tell "the
+        # load the build raced" apart from a later, genuine revert or
+        # externally-accepted reload -- see that method's docstring.
+        self._seen_initial_load = False
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
@@ -651,19 +661,20 @@ class TabController:
     def _apply_size_guard(self):
         """Ask `perflimits` about the document as it stands, and show the chip.
 
-        Called from the build path and from every buffer change, because a
-        document can cross a threshold by being typed into or pasted over
-        -- the guard is about the text right now, not the file that was
-        opened.
+        Called from the build path, from `_on_document_loaded` (both its
+        ordinary reload branch and the build/load race branch), and from
+        every buffer change, because a document can cross a threshold by
+        being typed into or pasted over -- the guard is about the text
+        right now, not the file that was opened.
 
         Counted in characters: that is what the parser processes, and the
         count is free. The chip's label is *not* recomputed here -- it is
-        `self._deferred_size_label`, set once in `_build_if_markdown` at the
-        moment deferral happens. This method runs from `_on_buffer_changed`,
-        i.e. on every keystroke while a document stays deferred, so it must
-        never touch the buffer itself: `perflimits.describe_bytes`'s own
-        docstring says that label is "built once, when the chip appears --
-        never on the per-keystroke path", and this is that path.
+        `self._deferred_size_label`, set once, at the moment deferral
+        happens. This method runs from `_on_buffer_changed`, i.e. on every
+        keystroke while a document stays deferred, so it must never touch
+        the buffer itself: `perflimits.describe_bytes`'s own docstring says
+        that label is "built once, when the chip appears -- never on the
+        per-keystroke path", and this is that path.
         """
         decision = perflimits.classify(self._document_char_count())
         self._size_allows_live_refresh = decision.live_refresh
@@ -1447,7 +1458,28 @@ class TabController:
     def _on_document_loaded(self, *_args):
         """Fires after xed reverts or reloads — including after an external
         change — all of which genuinely replace the buffer contents, so
-        (unlike a save) this always warrants a full reload when visible."""
+        (unlike a save) this always warrants a full reload when visible.
+
+        Also fires once for the tab's own *initial* file load, and that
+        firing can land in either branch below: xed's file read is
+        asynchronous, and nothing orders it against `activate()`'s own
+        `GLib.idle_add(self._build_if_markdown)`. If the load wins, this
+        runs first and hits `not self._built`, which just re-queues the
+        build -- by the time it runs, the buffer already holds the real
+        text, so `_build_if_markdown`'s own deferral decision is correct
+        unaided. If the *build* wins instead, `_build_if_markdown` reads
+        an empty buffer, `perflimits.classify(0)` comes back unconstrained,
+        and a document large enough to defer opens straight into an
+        unrequested Preview render of nothing -- and this is the load
+        landing afterwards, on an already-built tab, carrying the content
+        that decision should have seen. `_seen_initial_load` is what
+        tells that apart from every later firing (a revert, an
+        externally-accepted reload): those always find it already True,
+        because the tab's one initial load was already accounted for,
+        either here or by the branch above.
+        """
+        first_load = not self._seen_initial_load
+        self._seen_initial_load = True
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
@@ -1458,6 +1490,28 @@ class TabController:
         # tab's existing path -- there is no Save-As-style path change for
         # the watch to follow.
         self.state.preview_stale = True
+        if (
+            first_load
+            and self.state.mode is Mode.PREVIEW
+            and perflimits.classify(self._document_char_count()).defer_initial
+        ):
+            # The race described above, resolved the same way
+            # `_build_if_markdown` would have resolved it outright: this
+            # tab has shown nothing but an empty page so far, so there is
+            # no real preview to pull the reader out of, only the one
+            # `_build_if_markdown` would have deferred to begin with.
+            # `initial=True` matches that build-time call for the same
+            # reasons it uses it -- no stolen focus, no scroll restore, and
+            # no write to the remembered mode for a choice the reader
+            # never made.
+            self._preview_deferred = True
+            self._deferred_size_label = perflimits.describe_bytes(
+                len(self._render_text().encode("utf-8"))
+            )
+            self._apply_size_guard()
+            self.set_mode(Mode.SOURCE, initial=True)
+            return
+        self._apply_size_guard()
         if self.state.mode is Mode.PREVIEW:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
 
