@@ -107,7 +107,7 @@ It must stay its own size. Nothing here should stretch it.
 
 ## A collapsible section
 
-<details>
+<details markdown="1">
 <summary>Show the long version</summary>
 
 Everything inside stays hidden until the reader asks for it, which is why
