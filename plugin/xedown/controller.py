@@ -116,6 +116,11 @@ class TabController:
         # revert. Both fail the same way in the end: they infer "has the
         # reader seen a preview" from something else (event order, a
         # buffer's state at one instant) instead of asking it directly.
+        # A fourth attempt failed the same way one level down: it asked
+        # the *buffer* how long the document was, when what the reader was
+        # shown is `_render_text()` -- and those two diverge for as long as
+        # `_disk_text` holds an external change the buffer has not taken.
+        # The two render calls now hand in the text they rendered.
         # See `_note_preview_shown`'s own docstring for where this is set.
         self._preview_has_shown_content = False
         self._refresh_delay_ms = 250
@@ -701,7 +706,7 @@ class TabController:
         """
         return self._auto_refresh and self._size_allows_live_refresh
 
-    def _note_preview_shown(self):
+    def _note_preview_shown(self, text):
         """Record that Preview has now shown the reader real content.
 
         Called from the two, and only the two, places that ever put
@@ -712,17 +717,31 @@ class TabController:
         why this, rather than tracking build/load ordering, is the
         question `_on_document_loaded` actually needs answered.
 
-        Guarded on mode and content here rather than trusted from the
-        caller: every call site already only calls in while `self.state.
-        mode is Mode.PREVIEW` (checked immediately before the call, or --
+        `text` is the document text those two just rendered, handed in
+        rather than re-derived here, and that is the whole point of the
+        argument: the buffer is *not* that text. `_render_text` returns
+        `_disk_text` whenever the buffer is clean and the file on disk has
+        moved on, which is the ordinary state under
+        `WATCH_EXTERNAL_CHANGES` (on by default, and forbidden from
+        writing into the buffer) -- so a reader can be looking at 300k
+        characters of externally-written content that
+        `GtkTextBuffer.get_char_count` truthfully reports as zero. Asking
+        the buffer here left the flag False over exactly that preview, and
+        the reader's next Reload -- the natural way to bring the buffer
+        back in step -- read as "never showed anything" and switched them
+        out of it. An empty string still sets nothing: a blank page is not
+        a preview of anything, which is exactly the state a raced or
+        genuinely-empty initial build leaves this in.
+
+        Mode is still checked here rather than trusted from the caller:
+        every call site already only calls in while `self.state.mode is
+        Mode.PREVIEW` (checked immediately before the call, or --
         `_reload_preview` from `set_mode`'s own Preview branch -- true by
         construction, since `self.state.mode = mode` runs first), but
         re-checking is free and makes this method correct on its own
-        terms rather than on trust. An empty buffer sets nothing: a blank
-        page is not a preview of anything, which is exactly the state a
-        raced or genuinely-empty initial build leaves this in.
+        terms rather than on trust.
         """
-        if self.state.mode is Mode.PREVIEW and self._document_char_count() > 0:
+        if text and self.state.mode is Mode.PREVIEW:
             self._preview_has_shown_content = True
 
     def _on_refresh_requested(self, _bar):
@@ -1351,7 +1370,9 @@ class TabController:
             )
             return
         self.preview.update_body(fragment, resolved)
-        self._note_preview_shown()
+        # `text`, not the buffer: under an external change they are two
+        # different strings. See `_note_preview_shown`.
+        self._note_preview_shown(text)
         # After the swap, never before: the counting happens as the body is
         # built, so a render that raised part-way through would leave a
         # partial count describing a page nobody will see. Nothing is needed
@@ -1371,6 +1392,10 @@ class TabController:
         # tell the two branches apart a second time.
         stats = images.RenderStats()
         if error is not None:
+            # No document text went into this page, and that is what the
+            # empty string says to `_note_preview_shown` below: an error
+            # page has shown the reader nothing of their document.
+            text = ""
             html = errors.error_page(
                 "Cannot render this document",
                 errors.render_failure_detail(error),
@@ -1378,8 +1403,9 @@ class TabController:
                 ui_direction=self._ui_direction,
             )
         else:
+            text = self._render_text()
             html = renderer.render_document(
-                self._render_text(),
+                text,
                 base_dir=self._base_dir(),
                 dark=self._dark,
                 style=self._style,
@@ -1403,7 +1429,11 @@ class TabController:
         # and returned an error page of its own.
         self._page_is_document = not errors.is_error_page(html)
         if self._page_is_document:
-            self._note_preview_shown()
+            # Both guards earn their place: `text` is empty for the error
+            # branch above, and `_page_is_document` also catches the page
+            # `render_document` turns into an error internally, where
+            # `text` was real but nothing of it reached the reader.
+            self._note_preview_shown(text)
         # Unconditional, because `stats.rendered` already carries the same
         # distinction the line above reads out of the HTML: it is False for
         # both error-page routes -- the caller's own, and the one
