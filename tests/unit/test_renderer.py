@@ -779,3 +779,130 @@ def test_a_damaged_inline_image_produces_a_page_not_an_exception():
     assert "xedown-image-error" in page
     assert "Cannot render this document" not in page
     assert "0×0" not in page
+
+
+# --- md_in_html: markdown="1" opts a single element into Markdown parsing ---
+#
+# Task 17 (F4 follow-up). `markdown.extensions.md_in_html` is loaded in
+# `vendoring.MARKDOWN_EXTENSIONS`, but it requires a per-element opt-in
+# (`attrs.get('markdown', '0')` in `vendor/markdown/extensions/md_in_html.py`)
+# -- there is no unconditional mode. GitHub parses block HTML unconditionally;
+# xedown does not, and this extension does not change that. F4's general case
+# (465 literal code spans / 177 literal links across the audit corpus) is a
+# documented known limitation, not something this fixes. What this pins is
+# the narrower, real thing the extension *does* do -- and proves the
+# sanitizer still holds now that an opted-in element's content is parsed
+# into real markup instead of staying literal text.
+
+
+def test_markdown_inside_an_opted_in_div_is_parsed():
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n**bold** and [a link](https://example.com)\n\n</div>\n'
+    )
+    assert "<strong>bold</strong>" in html
+    assert '<a href="https://example.com">a link</a>' in html
+
+
+def test_markdown_inside_a_plain_div_is_not_parsed():
+    # Deliberate known-limitation pin, not a bug. Without markdown="1",
+    # md_in_html leaves the div's content as literal raw HTML, so the
+    # Markdown syntax inside it is untouched source text -- this is F4's
+    # general case (GitHub parses unconditionally, xedown does not), parked
+    # by the controller ruling for task 17. If this assertion ever starts
+    # failing because the content got parsed, that is the general case
+    # being fixed on purpose -- update this comment, don't just delete the
+    # test to make it pass.
+    html = renderer.render_fragment(
+        "<div>\n\n**bold** and [a link](https://example.com)\n\n</div>\n"
+    )
+    assert "<strong>" not in html
+    assert "**bold**" in html
+    assert "<a href=" not in html
+    assert "[a link](https://example.com)" in html
+
+
+def test_the_markdown_attribute_itself_never_reaches_the_page():
+    # markdown="1" is the opt-in signal md_in_html consumes before the
+    # sanitizer ever sees the element. It is not in
+    # sanitizer.ALLOWED_ATTRIBUTES and must not leak through even on the
+    # element it opted in.
+    html = renderer.render_fragment('<div markdown="1">\n\ntext\n\n</div>\n')
+    assert "markdown=" not in html
+
+
+def test_a_javascript_link_inside_an_opted_in_div_is_still_refused():
+    # The sharpest case this extension introduces: before md_in_html this
+    # bracket-paren text was inert literal source. Now it is parsed into a
+    # real <a href>, and the href scheme allowlist must still refuse it.
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n[x](javascript:alert(1))\n\n</div>\n'
+    )
+    assert "javascript:" not in html
+    assert "href=" not in html
+
+
+def test_a_script_tag_inside_an_opted_in_div_is_discarded():
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n<script>alert(1)</script>\n\n</div>\n'
+    )
+    assert "<script" not in html
+    assert "alert" not in html
+
+
+def test_an_svg_onload_inside_an_opted_in_summary_is_discarded():
+    html = renderer.render_fragment(
+        '<details markdown="1">\n'
+        '<summary markdown="1"><svg onload=alert(1)></svg>hi</summary>\n\n'
+        "<script>alert(1)</script>\n\n"
+        "</details>\n"
+    )
+    assert "<details>" in html
+    assert "<summary>hi</summary>" in html
+    assert "onload" not in html
+    assert "<svg" not in html
+    assert "<script" not in html
+    assert "alert" not in html
+
+
+def test_raw_html_nested_inside_parsed_markdown_inside_raw_html_stays_raw():
+    # The inner <div> carries no markdown="1" of its own, so it is not
+    # opted in even though it sits inside an opted-in ancestor -- its
+    # content stays literal raw HTML, same rule as
+    # test_markdown_inside_a_plain_div_is_not_parsed. Markdown syntax
+    # outside the inner div but inside the outer one is still parsed.
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n'
+        "<div>\n\nliteral **not parsed** here\n\n</div>\n\n"
+        "**parsed** outside the inner raw div\n\n"
+        "</div>\n"
+    )
+    assert "**not parsed**" in html
+    assert "<strong>parsed</strong>" in html
+
+
+def test_a_data_image_inside_an_opted_in_div_still_uses_the_decode_limit_path():
+    # Same oversized-PNG shape as
+    # test_an_oversized_inline_image_produces_a_page_not_an_exception, just
+    # wrapped in a markdown="1" element -- proving the image pipeline (and
+    # its shared imagelimits decode cap) does not depend on how the <img>
+    # reached the sanitizer.
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", 20000, 20000, 8, 0, 0, 0, 0)
+    )
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    page = renderer.render_document(f'<div markdown="1">\n\n![x]({uri})\n\n</div>\n')
+    assert "xedown-image-error" in page
+    assert "20000" in page
+    assert "Cannot render this document" not in page
