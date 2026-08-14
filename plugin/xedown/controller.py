@@ -104,20 +104,20 @@ class TabController:
         # someone pastes megabytes into an already-deferred document is
         # accepted: it is a size hint offered once, not a live readout.
         self._deferred_size_label = None
-        # Set by `_build_if_markdown`, to True exactly when it measured an
-        # empty buffer -- the signature of losing its race against xed's
-        # own asynchronous file read, not merely "this is the tab's first
-        # `loaded` event". A document built via New -> Save As never gets
-        # a `loaded` event of its own at all (`_on_document_saved` queues
-        # the build directly), so *its* first `loaded` is a genuine later
-        # revert; answering "was this the first `loaded`" instead of "did
-        # the build see nothing" treated that revert as a raced initial
-        # open and could switch a reader out of a Preview they were
-        # actively reading. `_on_document_loaded` consumes this -- sets it
-        # back to False -- the first time it checks it, win or lose, so
-        # only the one `loaded` immediately following an empty-buffer
-        # build is ever treated specially; see that method's docstring.
-        self._awaiting_initial_content = False
+        # Whether Preview has ever actually shown this reader real,
+        # non-empty content -- set once, by `_note_preview_shown`, and
+        # never cleared again. This is the question `_on_document_loaded`
+        # needs answered before it may ever switch a reader out of
+        # Preview on its own: two earlier, narrower discriminators here
+        # ("was this the tab's first `loaded` event", then "did the build
+        # measure an empty buffer") each closed one lifecycle and missed
+        # another -- a document built via New -> Save As, and a genuinely
+        # empty file that gets typed into for an hour before its first
+        # revert. Both fail the same way in the end: they infer "has the
+        # reader seen a preview" from something else (event order, a
+        # buffer's state at one instant) instead of asking it directly.
+        # See `_note_preview_shown`'s own docstring for where this is set.
+        self._preview_has_shown_content = False
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
@@ -452,12 +452,6 @@ class TabController:
             self._start_watch()
         initial = self._initial_mode()
         char_count = self._document_char_count()
-        # Recorded before the decision below, not derived from it: this is
-        # what `_on_document_loaded` reads to tell a raced initial load
-        # apart from a later revert -- see `_awaiting_initial_content`'s
-        # own comment in `__init__` for why "was the buffer empty" is the
-        # right question and "was this the first `loaded` event" was not.
-        self._awaiting_initial_content = char_count == 0
         # A document large enough that building its preview costs about a
         # second opens in Markdown mode instead, with the chip offering the
         # preview. The reader then pays that second knowingly. Only the
@@ -706,6 +700,30 @@ class TabController:
         in.
         """
         return self._auto_refresh and self._size_allows_live_refresh
+
+    def _note_preview_shown(self):
+        """Record that Preview has now shown the reader real content.
+
+        Called from the two, and only the two, places that ever put
+        rendered Markdown in front of the reader: `_reload_preview` (a
+        full page) and `_refresh_body_now` (a body swap in place). Once
+        `self._preview_has_shown_content` is True it stays True for the
+        rest of this tab's life -- see its own comment in `__init__` for
+        why this, rather than tracking build/load ordering, is the
+        question `_on_document_loaded` actually needs answered.
+
+        Guarded on mode and content here rather than trusted from the
+        caller: every call site already only calls in while `self.state.
+        mode is Mode.PREVIEW` (checked immediately before the call, or --
+        `_reload_preview` from `set_mode`'s own Preview branch -- true by
+        construction, since `self.state.mode = mode` runs first), but
+        re-checking is free and makes this method correct on its own
+        terms rather than on trust. An empty buffer sets nothing: a blank
+        page is not a preview of anything, which is exactly the state a
+        raced or genuinely-empty initial build leaves this in.
+        """
+        if self.state.mode is Mode.PREVIEW and self._document_char_count() > 0:
+            self._preview_has_shown_content = True
 
     def _on_refresh_requested(self, _bar):
         self.refresh_now()
@@ -1333,6 +1351,7 @@ class TabController:
             )
             return
         self.preview.update_body(fragment, resolved)
+        self._note_preview_shown()
         # After the swap, never before: the counting happens as the body is
         # built, so a render that raised part-way through would leave a
         # partial count describing a page nobody will see. Nothing is needed
@@ -1383,6 +1402,8 @@ class TabController:
         # `error is None` is true even when it caught something internally
         # and returned an error page of its own.
         self._page_is_document = not errors.is_error_page(html)
+        if self._page_is_document:
+            self._note_preview_shown()
         # Unconditional, because `stats.rendered` already carries the same
         # distinction the line above reads out of the HTML: it is False for
         # both error-page routes -- the caller's own, and the one
@@ -1476,25 +1497,24 @@ class TabController:
         runs first and hits `not self._built`, which just re-queues the
         build -- by the time it runs, the buffer already holds the real
         text, so `_build_if_markdown`'s own deferral decision is correct
-        unaided, and `_awaiting_initial_content` comes out False. If the
-        *build* wins instead, `_build_if_markdown` reads an empty buffer,
-        `perflimits.classify(0)` comes back unconstrained, and a document
-        large enough to defer opens straight into an unrequested Preview
-        render of nothing -- and this is that same load landing
-        afterwards, on an already-built tab, carrying the content that
-        decision should have seen.
+        unaided. If the *build* wins instead, `_build_if_markdown` reads
+        an empty buffer, `perflimits.classify(0)` comes back unconstrained,
+        and a document large enough to defer opens straight into an
+        unrequested Preview render of nothing -- and this is that same
+        load landing afterwards, on an already-built tab, carrying the
+        content that decision should have seen.
 
-        `_awaiting_initial_content` (set by `_build_if_markdown`, consumed
-        below) is deliberately not "was this the first `loaded` event
-        this tab has seen" -- a document built via New -> Save As never
-        gets a `loaded` event of its own at all, so *its* first one is a
-        genuine later revert, and answering that question wrongly used to
-        switch a reader out of a Preview they were actively reading. "Did
-        the build measure an empty buffer" is the question that survives
-        that lifecycle: such a document has content by the time
-        `_on_document_saved` gets it built, so the flag comes out False
-        and every `loaded` after that is treated as the plain revert it
-        is.
+        `self._preview_has_shown_content` is what tells that apart from an
+        ordinary revert or externally-accepted reload of a tab the reader
+        has actually been looking at: two narrower attempts at this same
+        question preceded it (was this the tab's first `loaded` event; did
+        the build measure an empty buffer) and each was found to have a
+        surviving lifecycle where a *later*, genuine revert still got
+        treated as part of opening -- New -> Save As for the first, a
+        genuinely empty file typed into for an hour before its first
+        revert for the second. Asking "has Preview ever actually shown
+        real content" instead of inferring it from build/load ordering
+        closes both at once: see `_note_preview_shown`'s own docstring.
         """
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
@@ -1506,16 +1526,8 @@ class TabController:
         # tab's existing path -- there is no Save-As-style path change for
         # the watch to follow.
         self.state.preview_stale = True
-        # Consumed here, win or lose: only the one `loaded` immediately
-        # following an empty-buffer build is ever a candidate for this --
-        # a later revert of a document that has since grown real content
-        # (typed, or reverted once already) must fall through to the
-        # ordinary reload below, exactly as it did before this guard
-        # existed.
-        awaiting_initial_content = self._awaiting_initial_content
-        self._awaiting_initial_content = False
         if (
-            awaiting_initial_content
+            not self._preview_has_shown_content
             and self.state.mode is Mode.PREVIEW
             and perflimits.classify(self._document_char_count()).defer_initial
         ):
