@@ -18,6 +18,7 @@ from . import (
     images,
     imagescheme,
     modestore,
+    perflimits,
     remoteimages,
     renderer,
     settings,
@@ -90,6 +91,10 @@ class TabController:
         self._image_display = images.DISPLAY_PLACEHOLDER
         self._copy_buttons = True
         self._auto_refresh = True
+        # Set by `_apply_size_guard`. `True` until a document has been
+        # measured, so nothing is withheld from a tab that has not loaded.
+        self._size_allows_live_refresh = True
+        self._preview_deferred = False
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
@@ -376,6 +381,9 @@ class TabController:
         self._connect(
             self.modebar, "load-images-requested", self._on_load_images_requested
         )
+        self._connect(
+            self.modebar, "build-preview-requested", self._on_build_preview_requested
+        )
 
         # Before the WebView exists, because the handler is installed on the
         # default web context and a page can ask for a `xedown-image:` URL
@@ -419,7 +427,20 @@ class TabController:
         # After `_built`, because `_on_file_settled` refuses to act before it.
         if self._watch_external:
             self._start_watch()
-        self.set_mode(self._initial_mode(), initial=True)
+        initial = self._initial_mode()
+        # A document large enough that building its preview costs about a
+        # second opens in Markdown mode instead, with the chip offering the
+        # preview. The reader then pays that second knowingly. Only the
+        # *initial* build is deferred: choosing Preview from the mode bar
+        # afterwards is a request, and requests are honoured at any size.
+        if (
+            initial is Mode.PREVIEW
+            and perflimits.classify(self._document_char_count()).defer_initial
+        ):
+            self._preview_deferred = True
+            initial = Mode.SOURCE
+        self._apply_size_guard()
+        self.set_mode(initial, initial=True)
         return False
 
     # --- mode switching ----------------------------------------------------
@@ -579,9 +600,66 @@ class TabController:
         if self.modebar is None:
             return
         self.modebar.set_refresh_visible(
-            not self._auto_refresh and self.state.mode is Mode.PREVIEW
+            not self._live_refresh_allowed() and self.state.mode is Mode.PREVIEW
         )
         self.modebar.set_stale(self.state.preview_stale)
+
+    def _document_char_count(self):
+        """How long the document is, without copying it.
+
+        `GtkTextBuffer.get_char_count` is O(1); `_render_text()` copies the
+        whole buffer into a Python string. This is consulted on every
+        keystroke, so the difference matters -- fetching a megabyte per
+        keypress to decide whether a megabyte is too big to render would
+        be its own performance bug, in the guard meant to prevent one.
+
+        Defensive about the buffer being unavailable during teardown, and
+        answers 0 there: an unmeasurable document is unconstrained, which
+        is what `perflimits.classify` does with 0 anyway.
+        """
+        try:
+            return int(self.document.get_char_count())
+        except Exception:  # noqa: BLE001 - a guard must not raise into a render
+            return 0
+
+    def _apply_size_guard(self):
+        """Ask `perflimits` about the document as it stands, and show the chip.
+
+        Called from the build path and from every buffer change, because a
+        document can cross a threshold by being typed into or pasted over
+        -- the guard is about the text right now, not the file that was
+        opened.
+
+        Counted in characters: that is what the parser processes, and the
+        count is free. Bytes appear only in the chip's label, and only
+        when the chip is actually being shown -- that branch copies the
+        buffer, which is why it is behind `_preview_deferred` rather than
+        computed every time.
+        """
+        decision = perflimits.classify(self._document_char_count())
+        self._size_allows_live_refresh = decision.live_refresh
+        if self.modebar is not None:
+            label = None
+            if self._preview_deferred:
+                label = perflimits.describe_bytes(
+                    len(self._render_text().encode("utf-8"))
+                )
+            self.modebar.set_large_document(label)
+        return decision
+
+    def _live_refresh_allowed(self):
+        """Both the reader's preference and the size guard must agree.
+
+        The guard overrides `AUTO_REFRESH` rather than consulting it: a
+        reader who turned live refresh on expressed a preference about
+        ordinary documents, not a request to have the editor freeze on a
+        large one. The override is derived and per-tab, so it neither
+        writes to the settings store nor persists -- the same reader
+        opening a small document in the next tab gets live refresh as
+        configured, and the refresh cue already says which state a tab is
+        in.
+        """
+        return self._auto_refresh and self._size_allows_live_refresh
 
     def _on_refresh_requested(self, _bar):
         self.refresh_now()
@@ -1153,9 +1231,10 @@ class TabController:
     # --- content updates ---------------------------------------------------
 
     def _on_buffer_changed(self, *_args):
+        self._apply_size_guard()
         self.state.preview_stale = True
         self._update_refresh_cue()
-        if self.state.mode is not Mode.PREVIEW or not self._auto_refresh:
+        if self.state.mode is not Mode.PREVIEW or not self._live_refresh_allowed():
             # No hidden rendering while the user types in source mode, and
             # nothing at all when the user has asked for manual refresh.
             return
@@ -1473,7 +1552,7 @@ class TabController:
                 self._style.content_width_rem, self._style.text_size_px
             )
 
-        if not self._auto_refresh:
+        if not self._live_refresh_allowed():
             # A timer already in flight would render after the user asked for
             # manual refresh only.
             self._cancel_refresh()
@@ -1615,6 +1694,19 @@ class TabController:
             self._reload_preview(restore_scroll=self._current_preview_scroll())
         else:
             self._update_refresh_cue()
+
+    def _on_build_preview_requested(self, _bar):
+        """The reader asked for the deferred preview. Give it to them.
+
+        Clearing the flag before the switch is what hides the chip: the
+        offer has been taken, and `_apply_size_guard` reads the flag. The
+        size guard on *live refresh* is untouched -- a document big enough
+        to defer is big enough to keep off the keystroke path, and
+        `_live_refresh_allowed` still says so.
+        """
+        self._preview_deferred = False
+        self.set_mode(Mode.PREVIEW)
+        self._apply_size_guard()
 
     def _on_image_error(self, source):
         """The page says an image did not load. Say why, when xedown knows.

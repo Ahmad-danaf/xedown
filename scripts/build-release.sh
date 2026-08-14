@@ -111,6 +111,7 @@ REQUIRED=(
   "xedown/modebar.py"
   "xedown/modestore.py"
   "xedown/pageready.py"
+  "xedown/perflimits.py"
   "xedown/prefs.py"
   "xedown/prefswindow.py"
   "xedown/preview.py"
