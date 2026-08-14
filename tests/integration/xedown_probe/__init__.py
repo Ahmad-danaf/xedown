@@ -4395,6 +4395,24 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record("perf-large-controller-built", controller is not None)
         mode = controller.state.mode if controller is not None else None
         record("perf-large-opens-in-source", mode is Mode.SOURCE, f"mode={mode}")
+        # The chip is the feature's only visible artifact: without it the
+        # reader is looking at a plain Markdown tab with no way to tell that
+        # a preview was offered at all, and every other assertion in this
+        # scenario would still pass. Both halves are checked -- the label,
+        # because it is what says *why* the tab opened this way, and the
+        # button, because `step_perf_build` below is about to click it.
+        bar = controller.modebar if controller is not None else None
+        label = bar._large_label.get_text() if bar is not None else ""
+        record(
+            "perf-large-chip-offers-the-preview",
+            bar is not None
+            and bar._large_label.get_visible()
+            and bar._large_button.get_visible()
+            and label.startswith("Large document ("),
+            f"label={label!r} "
+            f"label visible={bar is not None and bar._large_label.get_visible()!r} "
+            f"button visible={bar is not None and bar._large_button.get_visible()!r}",
+        )
         # The guard's whole purpose: an unrequested render never happened,
         # so the loop was never blocked. 250 ms is generous -- a real
         # render at this size measures around 700 ms (step_perf_build_check
@@ -4409,7 +4427,16 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         return False
 
     def step_perf_build(self):
-        """Take the offer.
+        """Take the offer, through the chip's own button.
+
+        A real click on the real button, not `controller.set_mode` --
+        `Gtk.Button.clicked()` emits "clicked" exactly as a pointer click
+        would, so this is the only exercise anywhere of the chip's
+        `build-preview-requested` signal and of
+        `_on_build_preview_requested` behind it. Calling `set_mode`
+        directly would step over both and assert nothing about the one
+        control this feature adds. Same route `step_remote_permit` takes
+        to the remote-images chip, for the same reason.
 
         The render this triggers is the scenario's positive control:
         unlike the quiet open and typing windows, this one is *supposed*
@@ -4419,7 +4446,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         """
         controller = self._controller_for(self._perf_tab.get_view())
         self._start_latency_watch()
-        controller.set_mode(Mode.PREVIEW)
+        controller.modebar._large_button.clicked()
         # Generous headroom, not a tuned figure: this covers both the
         # ~700-900 ms synchronous Python render (markdown -> sanitize ->
         # renderer, all on this thread, per perflimits.py) and WebKit's own
@@ -4455,6 +4482,16 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         record(
             "perf-large-preview-built-on-request",
             self._preview_visible_for(controller),
+        )
+        # The offer is retired once taken, and both halves of the chip go:
+        # `set_mode` clears `_preview_deferred` and `_deferred_size_label`
+        # together, and the `_apply_size_guard` it then runs hides them.
+        # Free to check here -- no extra wait, and it is the other end of
+        # `perf-large-chip-offers-the-preview` above.
+        record(
+            "perf-large-chip-retired-after-build",
+            not controller.modebar._large_button.get_visible()
+            and not controller.modebar._large_label.get_visible(),
         )
         # Live refresh must be off for this tab regardless of the setting.
         record(

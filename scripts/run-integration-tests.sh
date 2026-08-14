@@ -37,9 +37,19 @@ XED_PID=""
 # a live run of that suite, racing the graceful-close request below against
 # steps the probe had not reached yet. 240 keeps a comfortable margin over
 # the new total rather than trimming it close again.
+#
+# The performance scenario then added another 15.3 s of scheduled delay, over
+# half of it one 8 s wait for WebKit to finish laying out a very large page.
+# The probe's own `_schedule` delays now sum to ~173.7 s, plus 2.5 s before
+# the first step, which left only ~64 s for every step's actual work -- and
+# this budget has already been overrun once. Raised to 300 rather than
+# trimming that 8 s wait: the wait is what keeps WebKit's out-of-process
+# paint tail out of the typing-latency window measured immediately after it,
+# nobody has yet run the scenario on live hardware to say what a safe trim
+# would be, and a timeout costs nothing on a run that passes.
 # How long to then wait for a *graceful* shutdown, once requested, before
 # escalating to SIGTERM/SIGKILL.
-SEQUENCE_TIMEOUT_SECONDS=240
+SEQUENCE_TIMEOUT_SECONDS=300
 SHUTDOWN_GRACE_SECONDS=10
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
