@@ -4656,17 +4656,42 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             not findings,
             leakhooks.format_findings(findings),
         )
+        # A second, independent checkpoint for a second, independent
+        # teardown. `_id_tab2` is a controller built fresh against the
+        # RENAMED path -- its own `_start_watch`, its own modestore lookup
+        # keyed on `after.md` rather than `before.md` -- which is a
+        # different code path from `_id_tab`'s teardown just audited above,
+        # and nothing else in this workstream reopens a renamed file and
+        # closes it again. Taken here, before `_id_tab2` exists, for the
+        # same reason as the first checkpoint above: one taken after the
+        # tab it means to audit already exists could only ever pass.
+        self._id_checkpoint2 = leakhooks.checkpoint()
         self._id_tab2 = self.window.create_tab_from_location(
             Gio.File.new_for_path(self._id_renamed), None, 0, False, True
         )
+        self._id_view2 = self._id_tab2.get_view()
         self._schedule(2500, self.step_identity_reopen_check)
         return False
 
     def step_identity_reopen_check(self):
-        controller = self._controller_for(self._id_tab2.get_view())
+        controller = self._controller_for(self._id_view2)
         record("identity-reopens-cleanly", controller is not None)
         record("identity-reopened-preview-live", self._preview_visible_for(controller))
         self.window.close_tab(self._id_tab2)
+        self._schedule(1200, self.step_identity_reopen_teardown_check)
+        return False
+
+    def step_identity_reopen_teardown_check(self):
+        record(
+            "identity-reopened-controller-released-on-close",
+            not hasattr(self._id_view2, "_xedown_controller"),
+        )
+        findings = leakhooks.audit(since=self._id_checkpoint2)
+        record(
+            "identity-reopened-no-leaks-after-close",
+            not findings,
+            leakhooks.format_findings(findings),
+        )
         self._schedule(800, self.step_done)
         return False
 

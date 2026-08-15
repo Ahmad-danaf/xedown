@@ -49,10 +49,11 @@ XED_PID=""
 # would be, and a timeout costs nothing on a run that passes.
 #
 # The document-identity sequence (rename and Save As under an open document,
-# then close and reopen) added a further 15.2 s of scheduled delay --
-# 173.7 s -> ~188.9 s, ~191.4 s including the 2.5 s before the first step --
-# which still leaves ~108.6 s of headroom under the 300 s ceiling below, so
-# the ceiling itself did not need to move.
+# then close and reopen -- each of the two teardowns it drives audited
+# separately) added a further 16.4 s of scheduled delay -- 173.7 s ->
+# ~190.1 s, ~192.6 s including the 2.5 s before the first step -- which
+# still leaves ~107.4 s of headroom under the 300 s ceiling below, so the
+# ceiling itself did not need to move.
 # How long to then wait for a *graceful* shutdown, once requested, before
 # escalating to SIGTERM/SIGKILL.
 SEQUENCE_TIMEOUT_SECONDS=300
