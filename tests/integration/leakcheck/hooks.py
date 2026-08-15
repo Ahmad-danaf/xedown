@@ -18,6 +18,7 @@ radius of a bug in this file, which runs inside the process it audits.
 """
 
 import gc
+import os
 import sys
 import traceback
 import weakref
@@ -34,25 +35,52 @@ _LEDGER = Ledger()
 _ORIGINALS = {}
 
 
+def _plugin_frame(filename):
+    """Whether `filename` sits inside a directory literally named `xedown`.
+
+    That path component names only the plugin: `plugin/xedown/...` in the
+    repo, `~/.local/share/xed/plugins/xedown/...` once installed -- and both
+    harness scripts only ever run copies from the latter (`cp -r` into
+    `$HOME/.local/share/xed/plugins`, confirmed by reading both), never the
+    checkout in place. A substring test on "xedown" also matches the probe
+    packages (`xedown_probe/`, `xedown_shutdown_probe/`), which is exactly
+    what made `_origin()` mis-attribute handlers non-xedown code connects
+    during `create_tab_from_location` to the probe instead of recognising
+    that no xedown frame is on the stack at all.
+
+    This file's own directory, `leakcheck/`, does not contain the `xedown`
+    component at the harnesses' real install path, so no separate exclusion
+    should be needed there the way the old substring test carried one. It
+    gets one anyway, explicitly: a checkout cloned into a directory that
+    happens to be named `xedown` (true of this very repo's clone on this
+    machine) would put that component on every path under it, including
+    this file's own -- harmless today only because `_origin()` slices off
+    this module's own frames before this function ever sees them, which is
+    a fact about call depth, not about paths. Excluding this directory by
+    name keeps that true even if a future call site changes the depth.
+    """
+    sep = os.sep
+    if f"{sep}leakcheck{sep}" in filename:
+        return False
+    return f"{sep}xedown{sep}" in filename
+
+
 def _origin():
-    """The xedown frame that acquired this, not our own wrapper frames.
+    """The plugin frame that acquired this, or None if there is not one.
 
     Full stacks are unreadable in a probe report, and the frames inside
-    this file are never the answer. The first frame from the plugin is.
+    this file are never the answer. The first frame that is actually
+    inside the plugin package is -- and if no such frame is on the stack,
+    the resource was not acquired by xedown at all, so there is no origin
+    to name. Callers that wrap a `gi` entry point treat `None` as "skip
+    recording this", not as license to guess at a fallback frame the way
+    this used to.
     """
     stack = traceback.extract_stack()
     for frame in reversed(stack[:-2]):
-        if "xedown" in frame.filename and "leakcheck" not in frame.filename:
+        if _plugin_frame(frame.filename):
             return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
-    # No xedown frame anywhere: name the wrapper's own caller instead.
-    # Length-checked rather than indexed blind -- `stack[-3]` assumes there
-    # IS a caller below the wrapper, and a connect() or timeout_add() made
-    # from the outermost frame of a script leaves a stack only two deep. An
-    # IndexError raised here would come straight out of `GObject.connect`.
-    if len(stack) >= 3:
-        frame = stack[-3]
-        return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}"
-    return "unknown origin"
+    return None
 
 
 def _auditor_failed(what, exc):
@@ -129,11 +157,20 @@ def _wrap_connect(name):
         # The handler id is returned either way, so the caller never
         # notices.
         try:
+            origin = _origin()
+            if origin is None:
+                # No xedown frame on the stack: something other than the
+                # plugin made this connection (e.g. non-xedown code wiring
+                # up a signal during `create_tab_from_location`). The tool
+                # audits xedown, so a handler it never connected is not its
+                # leak to report -- recording it here is what used to blame
+                # the probe for connections it never made either.
+                return handler_id
             _LEDGER.record(
                 HANDLER,
                 handler_id,
                 f"{detailed_signal} on {type(self).__name__}",
-                _origin(),
+                origin,
                 _handler_liveness(reference, handler_id),
             )
         except Exception as exc:  # noqa: BLE001 - an auditor must not break its host
@@ -178,8 +215,6 @@ def _wrap_source(name):
             return original(*args, **kwargs)
 
         callback = args[index]
-        holder = {}
-        label = f"{name} source"
         # Captured once, here, at the moment the source is ARMED -- and
         # reused verbatim if `wrapped` below re-records it. That stack is
         # the actionable one; re-deriving the origin from inside the
@@ -189,7 +224,19 @@ def _wrap_source(name):
             origin = _origin()
         except Exception as exc:  # noqa: BLE001 - an auditor must not break its host
             _auditor_failed(f"{name} origin", exc)
-            origin = "unknown origin"
+            origin = None
+
+        if origin is None:
+            # No xedown frame armed this timer, so it is not xedown's
+            # resource to track -- run it unwrapped rather than recording a
+            # leak that was never the plugin's to begin with. This is the
+            # only place a source can skip the ledger entirely; once
+            # `wrapped` below is installed, its release-before-invoke
+            # ordering is unconditional, same as always.
+            return original(*args, **kwargs)
+
+        holder = {}
+        label = f"{name} source"
 
         def wrapped(*cb_args, **cb_kwargs):
             # Released BEFORE the callback runs; re-recorded only if the
