@@ -29,6 +29,16 @@ runner's one allowlisted xed-core assertion honest.
 
 import os
 import sys
+
+# Before every other import that could reach xedown: the wrap has to see
+# the plugin's first connection, and `install()` is a no-op once xedown is
+# already loaded. This file's own xedown import sits inside a function
+# body, so module-import time is early enough -- checked, not assumed.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from leakcheck import hooks as leakhooks
+
+leakhooks.install()
+
 import traceback
 
 import gi
@@ -129,6 +139,12 @@ def _check_live_preview(label, tabs):
             missing.append(f"{index}:preview-not-visible")
         elif controller.frame.get_visible():
             missing.append(f"{index}:source-frame-still-visible")
+        else:
+            leakhooks.watch_object(controller.preview.widget, f"webview:{index}")
+            # The spec's "stale document state" bullet, made concrete. A
+            # DocumentState still reachable after teardown means the
+            # controller is too, and with it the view and its buffer.
+            leakhooks.watch_object(controller.state, f"docstate:{index}")
     _record(f"{label}-previews-live", not missing, ", ".join(missing))
 
 
@@ -137,6 +153,32 @@ def _check_torn_down(label, views):
         return
     leaked = [i for i, view in enumerate(views) if hasattr(view, CONTROLLER_ATTRIBUTE)]
     _record(f"{label}-controllers-released", not leaked, f"leaked: {leaked!r}")
+    for index, _view in enumerate(views):
+        leakhooks.release_object(f"webview:{index}")
+        leakhooks.release_object(f"docstate:{index}")
+
+
+def _audit(label, since=None):
+    """Assert nothing outlived the teardown just performed.
+
+    Skipped in control mode, where there is no plugin to have leaked.
+    `hooks.audit()` collects garbage first, so a Python-side cycle that the
+    collector can break is not reported as a leak.
+
+    `since`, if given, is a checkpoint from `leakhooks.checkpoint()` taken
+    before the scenario built the thing it is about to tear down -- without
+    it, every audit reports every still-live resource in the process,
+    including ones a different, still-open tab or window legitimately
+    holds. See tests/unit/test_leak_ledger.py.
+    """
+    if CONTROL:
+        return
+    findings = leakhooks.audit(since=since)
+    _record(
+        f"{label}-no-leaks",
+        not findings,
+        leakhooks.format_findings(findings),
+    )
 
 
 # --- scenarios ----------------------------------------------------------
@@ -151,6 +193,10 @@ def _scenario_close_tab(probe):
     """One Markdown tab, previewing, closed by hand. Then shutdown."""
 
     def open_it():
+        # Before this scenario's own tab exists, so the audit below is
+        # scoped to what THIS scenario acquires -- not the runner's own
+        # tab, already open in this window before the probe did anything.
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tab"] = _open_tab(probe.window, "close-tab.md", "# Close me\n\nBody.\n")
         _state["view"] = _state["tab"].get_view()
 
@@ -160,18 +206,33 @@ def _scenario_close_tab(probe):
 
     def verify_gone():
         _check_torn_down("close-tab", [_state["view"]])
+        # Before the remaining-tab check below: that check calls
+        # `_check_live_preview` too, which would `watch_object` the
+        # survivor's WebView under the same "webview:0" label -- a fresh,
+        # legitimately-alive, never-released record the audit would
+        # otherwise report as this scenario's own leak.
+        _audit("close-tab", since=_state["checkpoint"])
         _check_live_preview("close-tab-remaining", [probe.window.get_active_tab()])
 
     return [(2500, open_it), (2000, verify_then_close), (1200, verify_gone)]
 
 
 def _scenario_close_many_tabs(probe):
-    """Four Markdown tabs opened, all previewing, then all closed."""
+    """Twelve Markdown tabs opened, all previewing, then all closed.
+
+    The spec's "10+ tabs" requirement. Delays are widened over the original
+    four-tab version, not shortened anywhere: twelve WebViews take longer to
+    build, and twelve controllers take longer to tear down, than four.
+    """
 
     def open_them():
+        # Before any of this scenario's own tabs exist, so the audit below
+        # is scoped to what THIS scenario acquires -- not the runner's own
+        # tab, already open in this window before the probe did anything.
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tabs"] = [
             _open_tab(probe.window, f"many-{i}.md", f"# Tab {i}\n\nBody {i}.\n")
-            for i in range(4)
+            for i in range(12)
         ]
         _state["views"] = [tab.get_view() for tab in _state["tabs"]]
 
@@ -179,7 +240,7 @@ def _scenario_close_many_tabs(probe):
         _check_live_preview("close-many", _state["tabs"])
 
     def close_them():
-        # One at a time, the way a user clicks four close buttons -- not a
+        # One at a time, the way a user clicks twelve close buttons -- not a
         # single close_all_tabs(), which takes a different code path in xed
         # and would not exercise the per-tab teardown this is aimed at.
         for tab in _state["tabs"]:
@@ -187,12 +248,13 @@ def _scenario_close_many_tabs(probe):
 
     def verify_gone():
         _check_torn_down("close-many", _state["views"])
+        _audit("close-many", since=_state["checkpoint"])
 
     return [
         (2500, open_them),
-        (3000, verify),
+        (9000, verify),
         (500, close_them),
-        (1500, verify_gone),
+        (4500, verify_gone),
     ]
 
 

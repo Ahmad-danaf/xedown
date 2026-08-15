@@ -134,7 +134,8 @@ cleanup() {
     fi
   fi
   rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" \
-         "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
+         "$PLUGIN_DIR/xedown_shutdown_probe.plugin" \
+         "$PLUGIN_DIR/leakcheck"
 
   # A control run deliberately uninstalls xedown for its scenarios. Put it
   # back unconditionally: active-plugins still lists xedown (it is restored
@@ -233,9 +234,16 @@ else
   rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
   cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 fi
-rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
+rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" "$PLUGIN_DIR/xedown_shutdown_probe.plugin" \
+       "$PLUGIN_DIR/leakcheck"
 cp -r "$ROOT/tests/integration/xedown_shutdown_probe" \
       "$ROOT/tests/integration/xedown_shutdown_probe.plugin" "$PLUGIN_DIR/"
+# The probe imports `leakcheck` at module level (before xedown), and it is
+# copied into $PLUGIN_DIR alongside the probe rather than shipped inside it,
+# for the same reason the probe itself lives outside plugin/: it is loaded
+# from here, not from the repo -- see cleanup() above for the matching
+# removal on exit.
+cp -r "$ROOT/tests/integration/leakcheck" "$PLUGIN_DIR/"
 
 SAVED_PLUGINS="$(gsettings get org.x.editor.plugins active-plugins)"
 
