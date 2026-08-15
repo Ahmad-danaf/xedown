@@ -47,6 +47,12 @@ XED_PID=""
 # paint tail out of the typing-latency window measured immediately after it,
 # nobody has yet run the scenario on live hardware to say what a safe trim
 # would be, and a timeout costs nothing on a run that passes.
+#
+# The document-identity sequence (rename and Save As under an open document,
+# then close and reopen) added a further 15.2 s of scheduled delay --
+# 173.7 s -> ~188.9 s, ~191.4 s including the 2.5 s before the first step --
+# which still leaves ~108.6 s of headroom under the 300 s ceiling below, so
+# the ceiling itself did not need to move.
 # How long to then wait for a *graceful* shutdown, once requested, before
 # escalating to SIGTERM/SIGKILL.
 SEQUENCE_TIMEOUT_SECONDS=300
@@ -99,7 +105,8 @@ cleanup() {
       restore_failed=1
     fi
   fi
-  rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin"
+  rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin" \
+         "$PLUGIN_DIR/leakcheck"
 
   # Leave a working plugin installed on exit -- but never at the cost of
   # deleting a working one to make room for nothing. Preference order:
@@ -182,6 +189,12 @@ rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
 cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 cp -r "$ROOT/tests/integration/xedown_probe" \
       "$ROOT/tests/integration/xedown_probe.plugin" "$PLUGIN_DIR/"
+# The probe imports `leakcheck` at module level (before xedown), and it is
+# copied into $PLUGIN_DIR alongside the probe rather than shipped inside it,
+# for the same reason the probe itself lives outside plugin/: it is loaded
+# from here, not from the repo -- see cleanup() above for the matching
+# removal on exit.
+cp -r "$ROOT/tests/integration/leakcheck" "$PLUGIN_DIR/"
 
 printf '# Sample\n\nText with **bold**.\n\n- [ ] task\n' > "$SAMPLE"
 

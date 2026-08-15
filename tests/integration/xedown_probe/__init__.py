@@ -13,9 +13,21 @@ Every step is wrapped by `_guard`, which turns an uncaught exception into a
 FAIL line rather than silently ending the sequence.
 """
 
-import json
 import os
 import sys
+
+# Before every other import that could reach xedown: the wrap has to see
+# the plugin's first connection, and `install()` is a no-op once xedown is
+# already loaded. This probe defers its own xedown imports to
+# `_lazy_imports()` (see the comment on `TabController` below), so
+# module-import time is early enough -- verified, not assumed. Same
+# reasoning, same pattern, as `xedown_shutdown_probe`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from leakcheck import hooks as leakhooks
+
+leakhooks.install()
+
+import json
 import tempfile
 import time
 import traceback
@@ -4539,7 +4551,123 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             "perf-large-tab-released",
             view is None or not hasattr(view, "_xedown_controller"),
         )
-        self._schedule(500, self.step_done)
+        self._schedule(500, self.step_identity_setup)
+        return False
+
+    # --- document identity: rename, save-as, close, reopen ----------------
+    #
+    # `_remembered_path`, the file watch and the modestore key can each go
+    # stale independently of one another when the file underneath an open
+    # document changes identity. A rename on disk (this section) and a Save
+    # As (the next step) are deliberately different hazards: a rename is
+    # what the file watcher sees with nothing telling xed about it, while
+    # Save As is xed itself moving the document's own notion of its path.
+    #
+    # `leakhooks.checkpoint()` is taken before the tab this sequence tears
+    # down is even created, and passed as `since=` to the one audit below --
+    # this probe is one long-lived process that has already opened many
+    # other, entirely legitimate tabs by the time this sequence runs, and an
+    # unscoped audit would report every one of them.
+
+    def step_identity_setup(self):
+        self._id_dir = tempfile.mkdtemp(dir=self._tmpdir, prefix="identity-")
+        self._id_path = os.path.join(self._id_dir, "before.md")
+        with open(self._id_path, "w", encoding="utf-8") as handle:
+            handle.write("# Identity\n\nOriginal body.\n")
+        self._id_checkpoint = leakhooks.checkpoint()
+        self._id_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._id_path), None, 0, False, True
+        )
+        self._id_view = self._id_tab.get_view()
+        self._schedule(2500, self.step_identity_edit)
+        return False
+
+    def step_identity_edit(self):
+        controller = self._controller_for(self._id_view)
+        record("identity-controller-built", controller is not None)
+        record("identity-preview-visible", self._preview_visible_for(controller))
+        document = self._id_tab.get_document()
+        document.set_text("# Identity\n\nEdited body.\n")
+        self._schedule(1200, self.step_identity_save)
+        return False
+
+    def step_identity_save(self):
+        Xed.commands_save_document(self.window, self._id_tab.get_document())
+        self._schedule(1500, self.step_identity_rename)
+        return False
+
+    def step_identity_rename(self):
+        """Rename on disk underneath the open document.
+
+        xed keeps pointing at the old path, which no longer exists. What
+        must not happen is a crash, an error page, or a stale watch that
+        fires on a file that is gone.
+        """
+        self._id_renamed = os.path.join(self._id_dir, "after.md")
+        os.rename(self._id_path, self._id_renamed)
+        self._schedule(2500, self.step_identity_rename_check)
+        return False
+
+    def step_identity_rename_check(self):
+        controller = self._controller_for(self._id_view)
+        record("identity-survives-rename", controller is not None)
+        record(
+            "identity-no-error-page-after-rename",
+            controller is not None and controller._page_is_document,
+        )
+        self._schedule(500, self.step_identity_save_as)
+        return False
+
+    def step_identity_save_as(self):
+        """Save As to the renamed path, which is what a reader would do."""
+        document = self._id_tab.get_document()
+        document.set_location(Gio.File.new_for_path(self._id_renamed))
+        Xed.commands_save_document(self.window, document)
+        self._schedule(2000, self.step_identity_save_as_check)
+        return False
+
+    def step_identity_save_as_check(self):
+        controller = self._controller_for(self._id_view)
+        record(
+            "identity-remembered-path-followed-save-as",
+            controller is not None and controller._remembered_path == self._id_renamed,
+            f"controller remembers {controller and controller._remembered_path}",
+        )
+        record(
+            "identity-preview-still-live-after-save-as",
+            self._preview_visible_for(controller),
+        )
+        self._schedule(500, self.step_identity_close)
+        return False
+
+    def step_identity_close(self):
+        self.window.close_tab(self._id_tab)
+        self._schedule(1200, self.step_identity_reopen)
+        return False
+
+    def step_identity_reopen(self):
+        record(
+            "identity-controller-released-on-close",
+            not hasattr(self._id_view, "_xedown_controller"),
+        )
+        findings = leakhooks.audit(since=self._id_checkpoint)
+        record(
+            "identity-no-leaks-after-close",
+            not findings,
+            leakhooks.format_findings(findings),
+        )
+        self._id_tab2 = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._id_renamed), None, 0, False, True
+        )
+        self._schedule(2500, self.step_identity_reopen_check)
+        return False
+
+    def step_identity_reopen_check(self):
+        controller = self._controller_for(self._id_tab2.get_view())
+        record("identity-reopens-cleanly", controller is not None)
+        record("identity-reopened-preview-live", self._preview_visible_for(controller))
+        self.window.close_tab(self._id_tab2)
+        self._schedule(800, self.step_done)
         return False
 
     def step_done(self):
