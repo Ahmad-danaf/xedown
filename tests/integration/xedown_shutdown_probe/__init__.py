@@ -797,6 +797,97 @@ def _scenario_re_enable(probe):
     ]
 
 
+PHASE = os.environ.get("XEDOWN_SHUTDOWN_PHASE", "")
+
+
+def _scenario_restart(probe):
+    """Close xed, start it again, and check what did and did not survive.
+
+    Phase 1 leaves two documents in different modes and grants remote
+    images to one of them. Phase 2 relaunches against the same config
+    directory and checks the modes came back and the grant did not.
+
+    The grant assertion is a REGRESSION GUARD, not a bug hunt.
+    `controller._remote_unblocked` is a plain instance field, so it already
+    dies with the controller and today's behaviour is correct. It is
+    asserted because that correctness is currently accidental: nothing
+    records it as a requirement, and a change that moved the grant into the
+    settings store would be a real security regression with no test to
+    catch it.
+
+    No `leakhooks._audit` anywhere in this scenario, for the same reason
+    `move-tab` has none: documents 'a' and 'b' are left open for the whole
+    of whichever phase is running -- nothing here is ever torn down -- so
+    there is no checkpoint placement that both (a) includes anything
+    meaningful and (b) doesn't guarantee a finding. Every connection either
+    tab's own construction made is still alive and still unreleased at
+    every point after it, precisely because it is still doing its job.
+    """
+    a_path = os.path.join(TMPDIR, "restart-a.md")
+    b_path = os.path.join(TMPDIR, "restart-b.md")
+
+    def phase_one_open():
+        for path, title in ((a_path, "A"), (b_path, "B")):
+            if not os.path.exists(path):
+                with open(path, "w") as handle:
+                    handle.write(
+                        f"# {title}\n\n![remote](https://example.invalid/x.png)\n"
+                    )
+        _state["a"] = probe.window.create_tab_from_location(
+            Gio.File.new_for_path(a_path), None, 0, False, True
+        )
+        _state["b"] = probe.window.create_tab_from_location(
+            Gio.File.new_for_path(b_path), None, 0, False, True
+        )
+
+    def phase_one_arrange():
+        from xedown import settings as xedown_settings
+        from xedown.document_state import Mode
+
+        # Load-bearing for this whole scenario: if remembering is off,
+        # nothing set below ever reaches disk, and phase 2 would pass by
+        # accident -- finding the *default* mode in both tabs and reading
+        # that as "remembered" rather than confirming persistence at all.
+        _record(
+            "restart-remember-mode-per-file-on",
+            xedown_settings.get_settings().get(xedown_settings.REMEMBER_MODE_PER_FILE),
+            "REMEMBER_MODE_PER_FILE is off; phase 1's mode changes were never stored",
+        )
+        a = _controller(_state["a"])
+        b = _controller(_state["b"])
+        if a is not None:
+            a.set_mode(Mode.PREVIEW)
+            a._on_load_images_requested(None)
+        if b is not None:
+            b.set_mode(Mode.SOURCE)
+        _record("restart-phase1-arranged", a is not None and b is not None)
+
+    def phase_two_check():
+        from xedown.document_state import Mode
+
+        a = _controller(_state["a"])
+        b = _controller(_state["b"])
+        _record(
+            "restart-remembered-preview",
+            a is not None and a.state.mode is Mode.PREVIEW,
+            f"a is {a and a.state.mode}",
+        )
+        _record(
+            "restart-remembered-source",
+            b is not None and b.state.mode is Mode.SOURCE,
+            f"b is {b and b.state.mode}",
+        )
+        _record(
+            "restart-remote-grant-did-not-persist",
+            a is not None and not a._remote_unblocked,
+            "a per-tab remote-image grant survived a restart",
+        )
+
+    if PHASE == "2":
+        return [(3000, phase_one_open), (3000, phase_two_check)]
+    return [(2500, phase_one_open), (2500, phase_one_arrange)]
+
+
 SCENARIOS = {
     "close-tab": _scenario_close_tab,
     "close-many-tabs": _scenario_close_many_tabs,
@@ -808,6 +899,7 @@ SCENARIOS = {
     "settings-configurable": _scenario_settings_configurable,
     "close-with-fetches-in-flight": _scenario_close_with_fetches_in_flight,
     "re-enable": _scenario_re_enable,
+    "restart": _scenario_restart,
 }
 
 

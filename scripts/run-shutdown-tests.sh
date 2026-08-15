@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of ten scenarios.
+# Verifies that xed shuts down cleanly after each of eleven scenarios.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -61,6 +61,7 @@ ALL_SCENARIOS=(
   settings-configurable
   close-with-fetches-in-flight
   re-enable
+  restart
 )
 
 if [ "$#" -gt 0 ]; then
@@ -267,12 +268,17 @@ xed_alive() {
 
 run_scenario() {
   local scenario="$1"
+  local phase="${2:-}"
+  local label="${scenario}${phase:+-$phase}"
   local dir="$WORKDIR/$scenario"
-  local report="$dir/report.txt"
-  local log="$dir/xed.log"
+  local report="$dir/report${phase:+-$phase}.txt"
+  local log="$dir/xed${phase:+-$phase}.log"
   local sample="$dir/main.md"
 
   mkdir -p "$dir"
+  # Same content every call -- restart's two launches share this $dir, and
+  # this must stay idempotent so the second launch does not overwrite
+  # anything the first one left for it to find.
   printf '# %s\n\nOpening document for the %s scenario.\n' "$scenario" "$scenario" > "$sample"
 
   if [ "$CONTROL" = "1" ]; then
@@ -283,13 +289,14 @@ run_scenario() {
 
   echo
   echo "=============================================================="
-  echo "SCENARIO: $scenario"
+  echo "SCENARIO: $label"
   echo "=============================================================="
 
   XEDOWN_SHUTDOWN_SCENARIO="$scenario" \
   XEDOWN_SHUTDOWN_REPORT="$report" \
   XEDOWN_SHUTDOWN_TMPDIR="$dir" \
   XEDOWN_SHUTDOWN_CONTROL="$([ "$CONTROL" = "1" ] && echo 1 || echo 0)" \
+  XEDOWN_SHUTDOWN_PHASE="$phase" \
   XEDOWN_CONFIG_DIR="$dir/config" \
     xed --new-window "$sample" > "$log" 2>&1 &
   XED_PID=$!
@@ -308,7 +315,7 @@ run_scenario() {
   done
 
   if [ "$ready" -eq 0 ]; then
-    echo "FAIL [$scenario]: setup did not complete within ${READY_TIMEOUT_SECONDS}s." >&2
+    echo "FAIL [$label]: setup did not complete within ${READY_TIMEOUT_SECONDS}s." >&2
     STATUS=1
   fi
 
@@ -352,7 +359,7 @@ run_scenario() {
         sleep 0.5
       done
       if [ "$closed" -eq 0 ]; then
-        echo "FAIL [$scenario]: window $win did not close within ${SHUTDOWN_GRACE_SECONDS}s." >&2
+        echo "FAIL [$label]: window $win did not close within ${SHUTDOWN_GRACE_SECONDS}s." >&2
         echo "    windows still owned by pid $XED_PID:" >&2
         wmctrl -lp 2>/dev/null | awk -v pid="$XED_PID" '$3 == pid' | sed 's/^/      /' >&2
         echo "    process state:" >&2
@@ -375,7 +382,7 @@ run_scenario() {
   local we_killed=0
   local dead_pid="$XED_PID"
   if xed_alive; then
-    echo "FAIL [$scenario]: xed did not exit after every window was closed; killing." >&2
+    echo "FAIL [$label]: xed did not exit after every window was closed; killing." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
     we_killed=1
     STATUS=1
@@ -423,7 +430,7 @@ run_scenario() {
   fi
 
   if [ "$signal_number" -ne 0 ]; then
-    echo "FAIL [$scenario]: xed died on signal $signal_number." >&2
+    echo "FAIL [$label]: xed died on signal $signal_number." >&2
     echo "    Before assuming either way, get the stack:" >&2
     echo "      coredumpctl info $dead_pid" >&2
     echo "    A stack with no xedown, Python or libpeas frames is xed's own bug;" >&2
@@ -438,7 +445,7 @@ run_scenario() {
   # empty log is the expected reading of a killed process, so "no warnings
   # found" here means nothing at all.
   if [ "$shutdown_captured" -eq 0 ]; then
-    echo "FAIL [$scenario]: shutdown output was not captured; nothing below is trustworthy." >&2
+    echo "FAIL [$label]: shutdown output was not captured; nothing below is trustworthy." >&2
     STATUS=1
     # "it crashed" is the more specific diagnosis and outranks "we could not
     # watch it finish", which is merely the consequence.
@@ -448,7 +455,7 @@ run_scenario() {
   fi
 
   if [ ! -f "$report" ] || ! grep -q '^READY' "$report"; then
-    echo "FAIL [$scenario]: the probe did not report READY." >&2
+    echo "FAIL [$label]: the probe did not report READY." >&2
     STATUS=1
     if [ "$scenario_status" = "clean" ] || [ "$scenario_status" = "NOT OBSERVED" ]; then
       scenario_status="setup-failed"
@@ -460,26 +467,35 @@ run_scenario() {
   unexpected="$(printf '%s\n' "$matches" | grep -Ev "$KNOWN_XED_CORE_ASSERTION" | grep -Ev '^$' || true)"
 
   if [ -n "$unexpected" ]; then
-    echo "FAIL [$scenario]: xed's log contains output that blocks the release:" >&2
+    echo "FAIL [$label]: xed's log contains output that blocks the release:" >&2
     printf '%s\n' "$unexpected" | sed 's/^/    /' >&2
     echo "    (full log: $log)" >&2
     STATUS=1
     scenario_status="BLOCKER"
   elif [ -n "$matches" ]; then
-    echo "NOTE [$scenario]: only the known xed-core assertion appeared:" >&2
+    echo "NOTE [$label]: only the known xed-core assertion appeared:" >&2
     printf '%s\n' "$matches" | sed 's/^/    /' >&2
     if [ "$scenario_status" = "clean" ]; then
       scenario_status="clean (known xed assertion)"
     fi
   elif [ "$scenario_status" = "clean" ]; then
-    echo "OK [$scenario]: no warnings, criticals, tracebacks or crashes."
+    echo "OK [$label]: no warnings, criticals, tracebacks or crashes."
   fi
 
-  SUMMARY+=("$(printf '%-18s %s' "$scenario" "$scenario_status")")
+  SUMMARY+=("$(printf '%-18s %s' "$label" "$scenario_status")")
 }
 
 for scenario in "${SCENARIOS[@]}"; do
-  run_scenario "$scenario"
+  if [ "$scenario" = "restart" ]; then
+    # Two launches against the same $dir (run_scenario's own report/log
+    # naming keeps their output separate) -- $dir/config is what carries
+    # the mode store and settings from phase 1 into phase 2, which is the
+    # whole point of this scenario.
+    run_scenario restart 1
+    run_scenario restart 2
+  else
+    run_scenario "$scenario"
+  fi
 done
 
 echo
