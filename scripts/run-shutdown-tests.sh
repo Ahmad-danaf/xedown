@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of eleven scenarios.
+# Verifies that xed shuts down cleanly after each of twelve scenarios.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -62,6 +62,7 @@ ALL_SCENARIOS=(
   close-with-fetches-in-flight
   re-enable
   restart
+  cycle
 )
 
 if [ "$#" -gt 0 ]; then
@@ -111,6 +112,32 @@ plugin_staged_ok() {
   local unexpected
   unexpected="$(find "$dir" -mindepth 1 -maxdepth 1 -not -name 'xedown' -not -name 'xedown.plugin')"
   [ -z "$unexpected" ]
+}
+
+# Total RSS in KB and process count for xed and every descendant. WebKit
+# runs its Web and Network processes as children, so a reading taken
+# inside the Python process cannot see the memory that matters most.
+# Report-only: no threshold, nothing here ever sets STATUS.
+sample_tree() {
+  local root="$1"
+  local pids
+  # `|| true` on both command substitutions below: this whole function runs
+  # under this script's own `set -euo pipefail`, and either one -- pstree
+  # finding nothing (the root already gone), or a child's /proc entry
+  # vanishing between the listing and the read -- exits non-zero. Without
+  # the guard that would abort the entire harness run over a report-only
+  # measurement, exactly the kind of failure this is not supposed to cause.
+  pids="$(pstree -p "$root" 2>/dev/null | grep -oP '\(\K[0-9]+' | tr '\n' ' ')" || true
+  [ -n "$pids" ] || pids="$root"
+  local total=0 count=0
+  for pid in $pids; do
+    local rss
+    rss="$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status" 2>/dev/null)" || true
+    [ -n "$rss" ] || continue
+    total=$((total + rss))
+    count=$((count + 1))
+  done
+  echo "$count $total"
 }
 
 cleanup() {
@@ -323,11 +350,36 @@ run_scenario() {
     cat "$report"
   fi
 
+  # `cycle`'s own assertions are made by the probe; this is the check that
+  # can only be made from outside, on the process tree -- WebKit's Web and
+  # Network processes are children of xed, invisible to a reading taken
+  # inside the Python process. Report-only: generous by construction, since
+  # there is no threshold at all here, just the numbers and their delta.
+  # `pstree` is optional -- `wmctrl` is this harness's one hard dependency
+  # already, and this measurement is not worth adding a second.
+  local cycle_pstree_ok=0
+  local cycle_count_before=0 cycle_rss_before=0
+  if [ "$scenario" = "cycle" ] && [ "$ready" -eq 1 ]; then
+    if command -v pstree >/dev/null 2>&1; then
+      cycle_pstree_ok=1
+      read -r cycle_count_before cycle_rss_before < <(sample_tree "$XED_PID")
+      echo "CYCLE MEMORY: baseline ${cycle_count_before} processes, ${cycle_rss_before} KB RSS"
+    else
+      echo "NOTE [$label]: pstree not found; skipping process-tree memory sampling." >&2
+    fi
+  fi
+
   # Close every window this process owns, one at a time, waiting for each --
   # the way a user closes windows, and the only way xed's own shutdown and
   # plugin-unload output gets produced at all.
   local shutdown_captured=0
   if xed_alive; then
+    if [ "$cycle_pstree_ok" -eq 1 ]; then
+      local cycle_count_after cycle_rss_after
+      read -r cycle_count_after cycle_rss_after < <(sample_tree "$XED_PID")
+      echo "CYCLE MEMORY: after churn ${cycle_count_after} processes, ${cycle_rss_after} KB RSS" \
+           "(delta $((cycle_rss_after - cycle_rss_before)) KB)"
+    fi
     echo "--> closing window(s) gracefully"
     while :; do
       local ids win remaining closed

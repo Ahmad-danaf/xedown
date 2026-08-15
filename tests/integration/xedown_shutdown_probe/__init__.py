@@ -888,6 +888,54 @@ def _scenario_restart(probe):
     return [(2500, phase_one_open), (2500, phase_one_arrange)]
 
 
+def _scenario_cycle(probe):
+    """Open and close a Markdown tab twenty times, then stand aside.
+
+    The assertions that matter here are made by the runner, on the process
+    tree, before and after. This scenario's own job is only to perform the
+    churn and prove it actually happened -- a cycle test that silently
+    failed to build any preview would leave a beautifully flat memory graph
+    and prove nothing.
+    """
+    built = {"count": 0}
+
+    def one_cycle():
+        tab = _open_tab(probe.window, "cycle.md", "# Cycle\n\nBody.\n")
+        _state["cycle_tab"] = tab
+
+    def start():
+        # Before the first cycle's own tab exists, so the audit in done()
+        # is scoped to what this scenario's churn acquires -- not the
+        # runner's own tab, already open in this window before the probe
+        # did anything.
+        _state["checkpoint"] = leakhooks.checkpoint()
+        one_cycle()
+
+    def close_cycle():
+        tab = _state.get("cycle_tab")
+        controller = _controller(tab) if tab is not None else None
+        if controller is not None and controller.preview is not None:
+            built["count"] += 1
+        if tab is not None:
+            probe.window.close_tab(tab)
+
+    def done():
+        _record(
+            "cycle-previews-built",
+            built["count"] >= 18,
+            f"only {built['count']} of 20 cycles built a preview",
+        )
+        _audit("cycle", since=_state["checkpoint"])
+
+    steps = [(2500, start)]
+    for _ in range(19):
+        steps.append((900, close_cycle))
+        steps.append((900, one_cycle))
+    steps.append((900, close_cycle))
+    steps.append((1500, done))
+    return steps
+
+
 SCENARIOS = {
     "close-tab": _scenario_close_tab,
     "close-many-tabs": _scenario_close_many_tabs,
@@ -900,6 +948,7 @@ SCENARIOS = {
     "close-with-fetches-in-flight": _scenario_close_with_fetches_in_flight,
     "re-enable": _scenario_re_enable,
     "restart": _scenario_restart,
+    "cycle": _scenario_cycle,
 }
 
 
