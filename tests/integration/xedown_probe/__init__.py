@@ -4057,7 +4057,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         action = self._find_action(xedown_shortcuts.SETTINGS)
         record("settings-action-is-in-the-menu", action is not None)
         if action is None:
-            self._schedule(300, self.step_disable_prep_infobar)
+            self._schedule(300, self.step_perf_setup)
             return False
         action.activate()
         self._schedule(600, self.step_settings_audit)
@@ -4068,7 +4068,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         window = getattr(activatable, "_settings_window", None)
         record("settings-window-opened", window is not None)
         if window is None:
-            self._schedule(300, self.step_disable_prep_infobar)
+            self._schedule(300, self.step_perf_setup)
             return False
         self._settings_window = window
 
@@ -4212,7 +4212,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # Put the theme back so later steps see the state they expect.
         xedown_settings.get_settings().set(xedown_settings.PREVIEW_THEME, "repository")
         self._settings_window = None
-        self._schedule(400, self.step_disable_prep_infobar)
+        self._schedule(400, self.step_perf_setup)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
@@ -4351,7 +4351,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         dest = getattr(self, "_move_dest_window", None)
         if dest is not None:
             dest.close()
-        self._schedule(500, self.step_perf_setup)
+        self._schedule(500, self.step_done)
         return False
 
     # --- performance: does a render stall the main loop? ------------------
@@ -4692,7 +4692,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
             not findings,
             leakhooks.format_findings(findings),
         )
-        self._schedule(800, self.step_done)
+        self._schedule(800, self.step_disable_prep_infobar)
         return False
 
     def step_done(self):
