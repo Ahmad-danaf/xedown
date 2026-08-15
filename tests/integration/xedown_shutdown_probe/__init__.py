@@ -259,7 +259,14 @@ def _scenario_close_many_tabs(probe):
 
 
 def _scenario_multi_window(probe):
-    """Two real xed windows, Markdown previewing in both, closed by the runner."""
+    """Two real xed windows, Markdown previewing in both.
+
+    The first window is left as-is for the runner to close, the way a user
+    closing xed with several windows open actually ends -- but the second
+    is closed here, gracefully (`window.close()`, never `.destroy()` -- see
+    this module's own docstring), so the scenario can audit its own
+    teardown instead of ending before anything has actually torn down.
+    """
 
     def build():
         app = Xed.App.get_default()
@@ -271,11 +278,35 @@ def _scenario_multi_window(probe):
             _open_tab(second, "win2-a.md", "# Window two A\n\nBody.\n"),
             _open_tab(second, "win2-b.md", "# Window two B\n\nBody.\n"),
         ]
+        _state["second_tabs"] = _state["tabs"][1:]
+        _state["second_views"] = [tab.get_view() for tab in _state["second_tabs"]]
 
     def verify():
         _check_live_preview("multi-window", _state["tabs"])
 
-    return [(2500, build), (3500, verify)]
+    def close_second_window():
+        # Checkpointed here, not from build(): window one's tab is never
+        # torn down by this scenario (the runner closes it afterward, like
+        # any other still-open window), so an earlier checkpoint would
+        # include its `watch_object` calls from `verify` above -- a
+        # legitimately live, never-released WebView the audit below would
+        # otherwise report as this scenario's own leak. Re-watching window
+        # two's tabs here, after the checkpoint, is what puts them back in
+        # scope for it.
+        _state["checkpoint"] = leakhooks.checkpoint()
+        _check_live_preview("multi-window-second", _state["second_tabs"])
+        _state["second"].close()
+
+    def verify_gone():
+        _check_torn_down("multi-window", _state["second_views"])
+        _audit("multi-window", since=_state["checkpoint"])
+
+    return [
+        (2500, build),
+        (3500, verify),
+        (500, close_second_window),
+        (1500, verify_gone),
+    ]
 
 
 def _scenario_move_tab(probe):
@@ -293,6 +324,11 @@ def _scenario_move_tab(probe):
         second.show_all()
         _state["second"] = second
         _state["original"] = probe.window.get_active_tab()
+        # Captured before the move: `verify_focus_watch_moved` below needs
+        # to tell "still watching the window the tab left" apart from
+        # "watching the window the tab is in now", and after the move
+        # nothing else records which window that was.
+        _state["origin_window"] = probe.window
         _state["seed"] = _open_tab(second, "move-seed.md", "# Seed\n\nBody.\n")
         _state["movable"] = _open_tab(
             probe.window, "movable.md", "# Movable\n\nBody.\n"
@@ -319,13 +355,67 @@ def _scenario_move_tab(probe):
     def verify():
         _check_live_preview("move-tab-after", [_state["movable"], _state["extra"]])
 
-    return [(2500, build), (3000, move), (1500, switch_tabs), (1200, verify)]
+    def verify_focus_watch_moved():
+        # The controller deliberately SURVIVES a tab move -- this scenario
+        # must never assert teardown. What it asserts instead is that the
+        # "set-focus" watch followed the tab: the old window's connection
+        # was dropped and a new one made against the window the tab is in
+        # now. A leak and a functional regression share a symptom here -- if
+        # the old window still held the handler, Escape would stop closing
+        # the search bar for that tab AND the old window would be pinning a
+        # controller that should be free to go when that window closes.
+        controller = _controller(_state["movable"])
+        window = controller._toplevel() if controller is not None else None
+        _record(
+            "move-tab-controller-survived",
+            controller is not None and controller.preview is not None,
+        )
+        _record(
+            "move-tab-focus-watch-follows-the-tab",
+            controller is not None and controller._focus_window is window,
+            f"watching {controller and controller._focus_window!r}, tab is in {window!r}",
+        )
+        _record(
+            "move-tab-old-window-released",
+            controller is not None
+            and controller._focus_window is not _state.get("origin_window"),
+        )
+        # Checkpointed here, not from build(): the moved tab (and "extra",
+        # and the seed tab in the second window) all deliberately survive
+        # this scenario, and the "move-tab-before"/"move-tab-after" checks
+        # above `watch_object` their WebViews/DocumentStates without ever
+        # releasing them -- an earlier checkpoint would report those, and
+        # the tab's now-permanent post-move focus-watch connection, as leaks
+        # of a teardown this scenario was never going to perform. What
+        # remains checkable without one is that the verification just
+        # performed above did not itself leave anything new and unreleased
+        # behind -- see tests/integration/leakcheck/ledger.py's own rule:
+        # a still-live, never-destroyed object is only a leak once nothing
+        # legitimate is still holding it, and here everything legitimately
+        # still is.
+        checkpoint = leakhooks.checkpoint()
+        _audit("move-tab", since=checkpoint)
+
+    return [
+        (2500, build),
+        (3000, move),
+        (1500, switch_tabs),
+        (1200, verify),
+        (1000, verify_focus_watch_moved),
+    ]
 
 
 def _scenario_disable_plugin(probe):
     """xedown switched off through the same gsettings key Preferences uses."""
 
     def open_them():
+        # Before this scenario's own tabs exist, so the audit in
+        # verify_registries_empty is scoped to what THIS scenario acquires
+        # -- not the runner's own tab, already open in this window before
+        # the probe did anything (that tab's controller is torn down by
+        # `disable()` too, but the registry checks below cover it globally,
+        # unscoped, so the scoped audit does not need to).
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tabs"] = [
             _open_tab(probe.window, f"disable-{i}.md", f"# Tab {i}\n\nBody.\n")
             for i in range(2)
@@ -340,6 +430,28 @@ def _scenario_disable_plugin(probe):
         active = settings.get_strv("active-plugins")
         settings.set_strv("active-plugins", [p for p in active if p != "xedown"])
 
+    def verify_registries_empty():
+        # Disabling the plugin tears down every controller in the process
+        # -- the strictest of the three Task 4 scenarios, so this is where
+        # the registries must be provably empty, globally, not just for
+        # this scenario's own two tabs.
+        if CONTROL:
+            return
+        from xedown import controller as xedown_controller
+        from xedown import imagescheme
+
+        _record(
+            "disable-plugin-live-controllers-empty",
+            not xedown_controller._live_controllers,
+            f"{len(xedown_controller._live_controllers)} left",
+        )
+        _record(
+            "disable-plugin-failure-listeners-empty",
+            not imagescheme._failure_listeners,
+            f"{len(imagescheme._failure_listeners)} left",
+        )
+        _audit("disable-plugin", since=_state["checkpoint"])
+
     def verify_after():
         _check_torn_down("disable", _state["views"])
         if not CONTROL:
@@ -353,6 +465,7 @@ def _scenario_disable_plugin(probe):
                 if frame is None or not frame.get_visible():
                     hidden.append(index)
             _record("disable-source-frames-returned", not hidden, f"hidden: {hidden!r}")
+        verify_registries_empty()
 
     return [
         (2500, open_them),
