@@ -744,6 +744,59 @@ def _scenario_settings_configurable(probe):
     return [(2500, cycle)]
 
 
+def _scenario_re_enable(probe):
+    """Disable xedown, turn it back on, and use it again in one session.
+
+    The process-wide registrations survive a disable -- `register_once` is
+    idempotent for the life of the process and `imagescheme.shutdown()`
+    leaves `get_fetcher()` able to build a fresh one. Both facts are load
+    bearing for this cycle and neither has ever been exercised.
+
+    The audit runs right after the "before" tab's teardown is confirmed and
+    before the plugin comes back -- not at the very end, after a SECOND tab
+    has been opened and deliberately left open. `_check_live_preview`'s
+    watch_object side effect would put that second tab's own construction
+    inside the checkpoint's scope with nothing left in this scenario ever
+    releasing it, which is exactly the trap `close-tab`'s own "-remaining"
+    check sidesteps by running after its audit rather than before it.
+    """
+
+    def open_it():
+        _state["checkpoint"] = leakhooks.checkpoint()
+        _state["tab"] = _open_tab(probe.window, "re-enable.md", "# Before\n\nBody.\n")
+        _state["view"] = _state["tab"].get_view()
+
+    def disable_it():
+        _check_live_preview("re-enable-before", [_state["tab"]])
+        from gi.repository import Peas
+
+        _state["engine"] = Peas.Engine.get_default()
+        _state["plugin"] = _state["engine"].get_plugin_info("xedown")
+        _state["engine"].unload_plugin(_state["plugin"])
+
+    def verify_disabled():
+        _check_torn_down("re-enable", [_state["view"]])
+        _audit("re-enable", since=_state["checkpoint"])
+        _state["engine"].load_plugin(_state["plugin"])
+
+    def verify_enabled_again():
+        # A fresh tab, not the old one: peas does not re-activate a
+        # ViewActivatable for a view that already existed when the plugin
+        # was loaded, which is xed's behaviour and not xedown's to fix.
+        _state["tab2"] = _open_tab(probe.window, "re-enable-2.md", "# After\n\nBody.\n")
+
+    def verify_works():
+        _check_live_preview("re-enable-after", [_state["tab2"]])
+
+    return [
+        (2500, open_it),
+        (2000, disable_it),
+        (1500, verify_disabled),
+        (1500, verify_enabled_again),
+        (2500, verify_works),
+    ]
+
+
 SCENARIOS = {
     "close-tab": _scenario_close_tab,
     "close-many-tabs": _scenario_close_many_tabs,
@@ -754,6 +807,7 @@ SCENARIOS = {
     "settings-window": _scenario_settings_window,
     "settings-configurable": _scenario_settings_configurable,
     "close-with-fetches-in-flight": _scenario_close_with_fetches_in_flight,
+    "re-enable": _scenario_re_enable,
 }
 
 

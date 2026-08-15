@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of nine scenarios.
+# Verifies that xed shuts down cleanly after each of ten scenarios.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -60,6 +60,7 @@ ALL_SCENARIOS=(
   settings-window
   settings-configurable
   close-with-fetches-in-flight
+  re-enable
 )
 
 if [ "$#" -gt 0 ]; then
