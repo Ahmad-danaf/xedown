@@ -293,6 +293,34 @@ xed_alive() {
   [ "$state" != "Z" ]
 }
 
+# Polls $2 (a report file) for a line matching the extended regex $1, up to
+# $3 seconds, the same way the main wait loop in run_scenario() already
+# polls for READY/FAILED -- reused here so a scenario can signal a point
+# partway through its own step sequence, not just its terminal state.
+# Returns failure early, without waiting out the rest of the timeout, if
+# the probe has already reached ITS OWN terminal state (READY/FAILED)
+# without ever writing the marker -- e.g. a crash before the scenario got
+# that far -- since the marker will then never come.
+wait_for_marker() {
+  local pattern="$1" report="$2" timeout_s="$3"
+  local i
+  for ((i = 0; i < timeout_s * 2; i++)); do
+    if [ -f "$report" ]; then
+      if grep -qE "$pattern" "$report"; then
+        return 0
+      fi
+      if grep -qE '^(READY|FAILED)' "$report"; then
+        return 1
+      fi
+    fi
+    if ! xed_alive; then
+      return 1
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 run_scenario() {
   local scenario="$1"
   local phase="${2:-}"
@@ -328,6 +356,46 @@ run_scenario() {
     xed --new-window "$sample" > "$log" 2>&1 &
   XED_PID=$!
 
+  # `cycle`'s own assertions are made by the probe; this is the check that
+  # can only be made from outside, on the process tree -- WebKit's Web and
+  # Network processes are children of xed, invisible to a reading taken
+  # inside the Python process. Report-only: generous by construction, since
+  # there is no threshold at all here, just the numbers and their delta.
+  # `pstree` is optional -- `wmctrl` is this harness's one hard dependency
+  # already, and this measurement is not worth adding a second.
+  #
+  # The baseline has to be taken from HERE, before the big READY/FAILED
+  # wait loop below -- not after it. `cycle`'s own terminal READY, like
+  # every other scenario's, only appears once its WHOLE step sequence
+  # (all twenty open/close cycles, plus the closing assertions) is over;
+  # gating the baseline on it would take that reading AFTER the churn, not
+  # before, and measure a few hundred ms of idle time rather than the
+  # churn itself. `cycle` writes a `cycle-churn-starting` marker as the
+  # very first thing it does instead, specifically so this can poll for
+  # that moment -- reusing the same poll-the-report-file pattern the big
+  # wait loop already uses, rather than inventing a fixed sleep.
+  local cycle_pstree_ok=0
+  local cycle_count_before=0 cycle_rss_before=0
+  if [ "$scenario" = "cycle" ]; then
+    if command -v pstree >/dev/null 2>&1; then
+      # A third of the main timeout, not the whole thing: if this scenario
+      # is going to fail outright, the big wait loop below still applies
+      # its own full timeout, and there is no reason for a doomed run to
+      # pay for both in full.
+      if wait_for_marker '^PASS cycle-churn-starting' "$report" \
+           "$((READY_TIMEOUT_SECONDS / 3))"; then
+        cycle_pstree_ok=1
+        read -r cycle_count_before cycle_rss_before < <(sample_tree "$XED_PID")
+        echo "CYCLE MEMORY: baseline ${cycle_count_before} processes, ${cycle_rss_before} KB RSS"
+      else
+        echo "NOTE [$label]: cycle-churn-starting marker never appeared;" \
+             "skipping baseline sample." >&2
+      fi
+    else
+      echo "NOTE [$label]: pstree not found; skipping process-tree memory sampling." >&2
+    fi
+  fi
+
   local ready=0
   for ((i = 0; i < READY_TIMEOUT_SECONDS * 2; i++)); do
     if [ -f "$report" ] && grep -qE '^(READY|FAILED)' "$report"; then
@@ -350,35 +418,27 @@ run_scenario() {
     cat "$report"
   fi
 
-  # `cycle`'s own assertions are made by the probe; this is the check that
-  # can only be made from outside, on the process tree -- WebKit's Web and
-  # Network processes are children of xed, invisible to a reading taken
-  # inside the Python process. Report-only: generous by construction, since
-  # there is no threshold at all here, just the numbers and their delta.
-  # `pstree` is optional -- `wmctrl` is this harness's one hard dependency
-  # already, and this measurement is not worth adding a second.
-  local cycle_pstree_ok=0
-  local cycle_count_before=0 cycle_rss_before=0
-  if [ "$scenario" = "cycle" ] && [ "$ready" -eq 1 ]; then
-    if command -v pstree >/dev/null 2>&1; then
-      cycle_pstree_ok=1
-      read -r cycle_count_before cycle_rss_before < <(sample_tree "$XED_PID")
-      echo "CYCLE MEMORY: baseline ${cycle_count_before} processes, ${cycle_rss_before} KB RSS"
-    else
-      echo "NOTE [$label]: pstree not found; skipping process-tree memory sampling." >&2
-    fi
-  fi
-
   # Close every window this process owns, one at a time, waiting for each --
   # the way a user closes windows, and the only way xed's own shutdown and
   # plugin-unload output gets produced at all.
   local shutdown_captured=0
   if xed_alive; then
     if [ "$cycle_pstree_ok" -eq 1 ]; then
-      local cycle_count_after cycle_rss_after
-      read -r cycle_count_after cycle_rss_after < <(sample_tree "$XED_PID")
-      echo "CYCLE MEMORY: after churn ${cycle_count_after} processes, ${cycle_rss_after} KB RSS" \
-           "(delta $((cycle_rss_after - cycle_rss_before)) KB)"
+      # By this point the big wait loop above already confirmed the
+      # terminal READY/FAILED line, which done() only writes after this
+      # marker -- so this should already be true. Polled anyway, briefly,
+      # rather than assumed outright, and skipped gracefully if it somehow
+      # isn't (an earlier crash-in-step, say, that still left the process
+      # alive long enough for xed_alive above to be true).
+      if wait_for_marker '^PASS cycle-churn-finished' "$report" 5; then
+        local cycle_count_after cycle_rss_after
+        read -r cycle_count_after cycle_rss_after < <(sample_tree "$XED_PID")
+        echo "CYCLE MEMORY: after churn ${cycle_count_after} processes, ${cycle_rss_after} KB RSS" \
+             "(delta $((cycle_rss_after - cycle_rss_before)) KB)"
+      else
+        echo "NOTE [$label]: cycle-churn-finished marker missing;" \
+             "skipping after-churn sample." >&2
+      fi
     fi
     echo "--> closing window(s) gracefully"
     while :; do

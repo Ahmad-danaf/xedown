@@ -805,7 +805,11 @@ def _scenario_restart(probe):
 
     Phase 1 leaves two documents in different modes and grants remote
     images to one of them. Phase 2 relaunches against the same config
-    directory and checks the modes came back and the grant did not.
+    directory and checks the plugin came back active, neither document
+    is showing an error page, the modes came back (both the resulting
+    mode AND the mode store's own recorded entry -- see the comment at
+    the mode-store assertions for why the resulting mode alone cannot
+    tell "remembered" apart from "defaulted"), and the grant did not.
 
     The grant assertion is a REGRESSION GUARD, not a bug hunt.
     `controller._remote_unblocked` is a plain instance field, so it already
@@ -856,6 +860,14 @@ def _scenario_restart(probe):
         a = _controller(_state["a"])
         b = _controller(_state["b"])
         if a is not None:
+            # `a` opens in Preview already -- DEFAULT_MODE's own default --
+            # so a direct set_mode(PREVIEW) call would hit set_mode's own
+            # "already in this mode" no-op guard and never reach
+            # _remember_mode at all. Toggle through Source first so the
+            # final PREVIEW transition is a REAL one that actually writes
+            # to the mode store, not an accidental match with the default
+            # a never-remembered document would land on anyway.
+            a.set_mode(Mode.SOURCE)
             a.set_mode(Mode.PREVIEW)
             a._on_load_images_requested(None)
         if b is not None:
@@ -863,19 +875,54 @@ def _scenario_restart(probe):
         _record("restart-phase1-arranged", a is not None and b is not None)
 
     def phase_two_check():
+        from xedown import modestore
         from xedown.document_state import Mode
 
         a = _controller(_state["a"])
         b = _controller(_state["b"])
+        # Distinctly named rather than left implied by the `a is not None`/
+        # `b is not None` halves of every check below: a plugin that failed
+        # to activate at all would otherwise surface as a confusing mode
+        # mismatch instead of its own, more useful failure.
+        _record(
+            "restart-plugin-active",
+            a is not None and b is not None,
+            f"a={a!r} b={b!r}",
+        )
+        _record(
+            "restart-no-error-page",
+            a is not None
+            and a._page_is_document
+            and b is not None
+            and b._page_is_document,
+            f"a._page_is_document={a and a._page_is_document} "
+            f"b._page_is_document={b and b._page_is_document}",
+        )
         _record(
             "restart-remembered-preview",
             a is not None and a.state.mode is Mode.PREVIEW,
             f"a is {a and a.state.mode}",
         )
+        # The resulting-mode check above cannot, on its own, tell "genuinely
+        # remembered" apart from "defaulted": DEFAULT_MODE's own default is
+        # Preview, so a store that never persisted anything for `a` would
+        # still leave it showing Preview in phase 2. Reading the store's
+        # own contents directly is the only check that requires an entry to
+        # have actually been written.
+        _record(
+            "restart-mode-store-has-preview-for-a",
+            modestore.get_store().get(a_path) is Mode.PREVIEW,
+            f"store has {modestore.get_store().get(a_path)!r} for a",
+        )
         _record(
             "restart-remembered-source",
             b is not None and b.state.mode is Mode.SOURCE,
             f"b is {b and b.state.mode}",
+        )
+        _record(
+            "restart-mode-store-has-source-for-b",
+            modestore.get_store().get(b_path) is Mode.SOURCE,
+            f"store has {modestore.get_store().get(b_path)!r} for b",
         )
         _record(
             "restart-remote-grant-did-not-persist",
@@ -891,41 +938,85 @@ def _scenario_restart(probe):
 def _scenario_cycle(probe):
     """Open and close a Markdown tab twenty times, then stand aside.
 
-    The assertions that matter here are made by the runner, on the process
-    tree, before and after. This scenario's own job is only to perform the
-    churn and prove it actually happened -- a cycle test that silently
-    failed to build any preview would leave a beautifully flat memory graph
-    and prove nothing.
+    The process-tree memory reading is made by the runner, before and
+    after -- but the runner can only sample around markers this scenario
+    writes to the report itself, `cycle-churn-starting` (before cycle #1
+    opens anything) and `cycle-churn-finished` (after cycle #20 closes).
+    The scenario's own terminal READY, like every other scenario's, only
+    appears once the whole step sequence is over -- gating the runner's
+    "before" sample on it would take that reading AFTER the churn, not
+    before, and measure a few hundred ms of idle time rather than the
+    churn itself.
+
+    This scenario's own job is only to perform the churn and prove it
+    actually happened -- a cycle test that silently failed to build any
+    preview would leave a beautifully flat memory graph and prove nothing.
+
+    Each cycle also `watch_object`s its WebView and DocumentState, same as
+    every other torn-down scenario (see `_check_live_preview`), but does
+    NOT release them per cycle the way `_check_torn_down` does: releasing
+    right after `close_tab()` would drop the ledger record before the
+    final audit's post-`gc.collect()` liveness check ever runs, which is
+    the one thing that can tell a genuinely torn-down WebView or
+    DocumentState apart from one a stray reference is still keeping alive
+    -- the dangling-Python-reference class of leak, distinct from a
+    handler or timer leak, and the reason for watching these at all. All
+    twenty cycles' watches accumulate, unreleased, until `done()`'s single
+    audit has had a chance to see whichever of them are still alive; only
+    then are they released, for bookkeeping, now that nothing more will
+    ever check them.
     """
     built = {"count": 0}
+    watched_views = []
 
     def one_cycle():
         tab = _open_tab(probe.window, "cycle.md", "# Cycle\n\nBody.\n")
         _state["cycle_tab"] = tab
+        _state["cycle_view"] = tab.get_view()
 
     def start():
         # Before the first cycle's own tab exists, so the audit in done()
         # is scoped to what this scenario's churn acquires -- not the
         # runner's own tab, already open in this window before the probe
-        # did anything.
+        # did anything. The marker is written first, before even that, so
+        # the runner's baseline sample is triggered as close to "nothing
+        # has happened yet" as this step sequence can get.
+        _record("cycle-churn-starting", True, "beginning twenty open/close cycles")
         _state["checkpoint"] = leakhooks.checkpoint()
         one_cycle()
 
     def close_cycle():
         tab = _state.get("cycle_tab")
+        view = _state.get("cycle_view")
         controller = _controller(tab) if tab is not None else None
         if controller is not None and controller.preview is not None:
             built["count"] += 1
+            leakhooks.watch_object(
+                controller.preview.widget, _watch_label(view, "webview")
+            )
+            leakhooks.watch_object(controller.state, _watch_label(view, "docstate"))
+            watched_views.append(view)
         if tab is not None:
             probe.window.close_tab(tab)
 
     def done():
+        # Written before the assertions below, so the runner's "after
+        # churn" sample -- which polls for this marker -- is triggered as
+        # soon as the churn itself is actually over, not after this
+        # function's own bookkeeping (the audit's `gc.collect()` in
+        # particular) has also run.
+        _record("cycle-churn-finished", True, "twenty open/close cycles complete")
         _record(
             "cycle-previews-built",
             built["count"] >= 18,
             f"only {built['count']} of 20 cycles built a preview",
         )
         _audit("cycle", since=_state["checkpoint"])
+        # Matching releases for every watch above, now that the one audit
+        # that needed them intact has already run.
+        for view in watched_views:
+            leakhooks.release_object(_watch_label(view, "webview"))
+            leakhooks.release_object(_watch_label(view, "docstate"))
 
     steps = [(2500, start)]
     for _ in range(19):
