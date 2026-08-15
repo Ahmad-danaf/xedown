@@ -4484,12 +4484,41 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # and doubles as proof the watcher can detect a real stall at all,
         # which the two "does-not-stall" bounds elsewhere in this scenario
         # cannot demonstrate on their own.
-        margin = self._perf_open_worst + 0.25
+        #
+        # A flat "+250ms" margin used to sit here, sized against a stale
+        # estimate that a 393k-character render blocks 600-900ms. It does
+        # not: the performance harness's own corrected cost model puts
+        # prose at roughly 458ms per million characters, which makes
+        # ~246ms the CORRECT figure at this fixture's size, not a shortfall
+        # -- and a flat "open + 250ms" margin failed on exactly that
+        # correct number. A live run measured open worst 34ms, build worst
+        # 246ms: a genuine 7.2x signal that a fixed-ms margin cannot track
+        # once the baseline it was tuned against moves.
+        #
+        # A ratio is what "self-calibrating" was supposed to mean:
+        # BUILD_STALL_RATIO requires the build's worst gap to be a multiple
+        # of the open's, not larger by some fixed number of milliseconds
+        # that stops meaning anything once either side of the comparison
+        # changes scale. BUILD_STALL_FLOOR_S guards the case a ratio alone
+        # cannot: a machine fast enough that open_worst is close to zero,
+        # where even a few milliseconds of real stall would clear a
+        # ratio-only bound with room to spare. Against the observed run,
+        # the margin is max(34ms * 3, 100ms) = 102ms; 246ms clears it with
+        # 2.4x to spare, and a machine several times faster or slower than
+        # this one still leaves comparable headroom on both sides. If the
+        # deliberate build stopped stalling the loop -- e.g. build_worst
+        # dropped to something in line with open_worst, rather than a
+        # multiple of it -- this assertion fails, which is the whole point
+        # of a positive control.
+        BUILD_STALL_RATIO = 3.0
+        BUILD_STALL_FLOOR_S = 0.1
+        margin = max(self._perf_open_worst * BUILD_STALL_RATIO, BUILD_STALL_FLOOR_S)
         record(
             "perf-large-build-stalls-the-loop",
             build_worst > margin,
             f"open worst {self._perf_open_worst * 1000:.0f}ms, "
-            f"build worst {build_worst * 1000:.0f}ms",
+            f"build worst {build_worst * 1000:.0f}ms, "
+            f"margin {margin * 1000:.0f}ms",
         )
         record(
             "perf-large-preview-built-on-request",
