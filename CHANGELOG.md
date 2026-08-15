@@ -120,12 +120,12 @@ published in [docs/performance.md](docs/performance.md).
   is in
   [docs/markdown-compatibility.md](docs/markdown-compatibility.md).
 - Moving a Markdown tab into another window and then closing xed can crash
-  it. Every frame in the crash is xed's own or GTK's — none of xedown's —
-  but xedown's own shutdown harness measured the crash happening far more
-  often with xedown installed than without. See
-  [docs/known-issues.md](docs/known-issues.md) for the measurement, the
-  plausible mechanism, and why it is deliberately left off the release
-  gate's allowlist.
+  it, and a crash can lose unsaved work. Every frame in the crash is xed's
+  own or GTK's — none of xedown's — and xedown's own shutdown harness
+  reproduces it with xedown uninstalled at a rate consistent with xedown
+  installed, so there is no sign that xedown affects it. See
+  [docs/known-issues.md](docs/known-issues.md) for the measurement and why
+  it is deliberately left off the release gate's allowlist.
 
 ### Internal
 

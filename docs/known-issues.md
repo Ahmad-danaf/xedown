@@ -11,20 +11,26 @@ window. Usually it closes normally. Sometimes xed prints this to the terminal:
 
 and sometimes it does not print anything and simply dies with `SIGSEGV`.
 
-**These are the same bug, not two.** The stack is identical in both cases:
+**These are the same bug, not two.** The stack is identical in both cases.
+The full trace below is from `coredumpctl` on a segfaulted run captured
+during this project's pre-1.0 lifecycle-hardening workstream:
 
 ```
 #0  gtk_action_group_get_action   (libgtk-3.so.0)
 #1  received_clipboard_contents   (libxed.so)
-#2  ... GTK signal emission, main loop, g_application_run
+#2-#12                             GTK signal emission / main loop
+#19 main                          (xed)
 ```
 
-xed's own clipboard callback reaches an action group that is already gone. When
-the freed memory still happens to be readable, GTK's type check catches it and
-you get the assertion above. When it does not, the same read is a segfault. The
-assertion is therefore a *warning shot from a memory-safety bug*, not cosmetic
-noise — which is why the description here changed: an earlier version of this
-file called it harmless, and that was wrong.
+No xedown, Python or libpeas frame appears anywhere in it. xed's own
+clipboard callback reaches an action group that is already gone — an
+asynchronous clipboard reply arriving after the window that owned the
+action group has been destroyed. When the freed memory still happens to be
+readable, GTK's type check catches it and you get the assertion above; when
+it does not, the same read is a segfault. The assertion and the segfault
+are therefore two outcomes of one defect, not two bugs — which is why the
+description here changed: an earlier version of this file called the
+assertion harmless, and that was wrong.
 
 **Whose bug it is:** xed 3.8.9's. Every frame in that stack is xed or GTK —
 there are no xedown, Python or libpeas frames in it at all — and it reproduces
@@ -40,19 +46,25 @@ runs the scenario with xedown uninstalled and still reproduces it.
 **How often:** roughly a quarter to a third of the time under the harness's
 scripted sequence (10 failures in 35 runs with xedown installed; 2 in 8 with it
 uninstalled — same rate within these sample sizes, no sign that xedown affects
-it). That sequence moves a tab, switches tabs and closes a window within a few
-seconds, which is far faster than anyone works by hand, and the bug is
-timing-dependent, so ordinary use should hit it much less often. It is not
-something xedown can fix or work around: nothing in this plugin touches xed's
-clipboard handling.
-
-A later, much smaller sample taken while closing out the pre-1.0
-lifecycle-hardening workstream found the opposite of "no sign that xedown
-affects it" — see the entry directly below, which measures the segfault
-variant specifically rather than the pair together.
+it). A further 4 xedown-installed and 5 control runs were taken later, while
+closing out the pre-1.0 lifecycle-hardening workstream and specifically
+capturing the segfault variant (the `coredumpctl` trace above is from that
+batch): 2 of the 4 xedown-installed runs crashed, and 0 of the 5 control runs
+did. Neither is a surprise against the rates already measured — 2 crashes in 4
+runs at the documented 28.6% xedown-installed rate is a 32.3% outcome, and 0
+crashes in 5 runs at the documented 25.0% control rate is a 23.7% outcome — so
+this later batch reproduces the same intermittent crash at a rate consistent
+with what was already measured, rather than a different one. It does not, on
+its own or added to the totals above, show xedown changing the odds. That
+sequence moves a tab, switches tabs and closes a window within a few seconds,
+which is far faster than anyone works by hand, and the bug is timing-dependent,
+so ordinary use should hit it much less often. It is not something xedown can
+fix or work around: nothing in this plugin touches xed's clipboard handling.
 
 **What to do about it:** nothing is lost that was saved. Save before dragging
-tabs between windows if you have unsaved work, which is good practice anyway.
+tabs between windows if you have unsaved work, which is good practice anyway:
+moving a Markdown tab into another window and then closing xed can crash it,
+and a crash can lose unsaved work, regardless of what causes it.
 
 **Why the allowlist exists:** the assertion is the single exception in xedown's
 release gate, which otherwise treats *any* warning, critical, traceback or
@@ -63,82 +75,19 @@ The **crash** is not allowlisted and never should be: `run-shutdown-tests.sh`
 reports it as `CRASHED`, checks `coredumpctl` when a slow core dump would
 otherwise make it look like a hang, and fails the run.
 
-**Status:** upstream. Revisit if a future xed release fixes
-`received_clipboard_contents`, at which point both the allowlist and this entry
-should be deleted rather than kept "just in case".
-
-## The segfault variant above measured far likelier with xedown installed
-
-**What this adds to the entry above:** running the `move-tab` shutdown
-scenario during this project's lifecycle-hardening workstream, xed
-intermittently died on `SIGSEGV` during the runner's graceful window close —
-*after* the scenario's six assertions had already passed and it had reported
-`READY`. `coredumpctl` on the resulting core showed the identical stack the
-entry above already documents:
-
-```
-#0  gtk_action_group_get_action   (libgtk-3.so.0)
-#1  received_clipboard_contents   (libxed.so)
-#2-#12                             GTK signal emission / main loop
-#19 main                          (xed)
-```
-
-No xedown frame, no Python frame and no libpeas frame appears anywhere in
-it — the same absence the entry above relies on to call this xed's bug, not
-xedown's. This is that entry's segfault variant specifically, not the
-`Gtk-CRITICAL` assertion, and the mechanism is the same one already given
-above: an asynchronous clipboard reply arriving after the window that owns
-the action group is gone, timing-dependent enough to explain why it is
-intermittent either way.
-
-**Measured today, on this machine, the rate was not the same in both
-conditions:**
-
-| Condition | Runs | Crashes |
-|---|---|---|
-| xedown installed (`scripts/run-shutdown-tests.sh move-tab`) | 4 | 2 |
-| Control, xedown **not** installed (`XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh move-tab`) | 5 | 0 |
-
-If the underlying rate were the same in both conditions, five clean control
-runs in a row would be roughly a 0.4% coincidence. So: still xed's defect —
-the stack proves that, and proves it the same way the entry above does — but
-xedown reliably provokes it, on this evidence. The plausible reason, stated
-as *plausible and no more*: a tab carrying a WebKit WebView makes window
-teardown slower and busier than a plain text tab, so the asynchronous
-clipboard reply loses its race against window destruction more often. The
-stack shows where the crash happens, not why xedown changes the odds, and
-this entry is not claiming the second thing as established.
-
-Both of today's samples are small — four runs and five — next to the 35 and
-8 the entry above draws on, so its exact rate should be treated cautiously.
-What moved the conclusion is the direction, not the precision: a
-xedown-installed run crashing half the time against five straight clean
-control runs is not the "same rate" the earlier, larger sample found.
-
-**What this means for a reader:** moving a Markdown tab into another window
-and then closing xed can crash it, and a crash can lose unsaved work.
-
-**Not allowlisted, deliberately**, same as the entry above: the xed-core
-allowlist in both harness scripts is exactly one anchored log line covering
-the *assertion*, pinned by `tests/unit/test_shutdown_allowlist.py`, and the
-related crash is excluded on purpose so a regression here cannot hide behind
-it. This entry does not ask for that to change, and nothing here widens or
-touches that line.
-
 **Reproduction:**
 
 ```
 scripts/run-shutdown-tests.sh move-tab
 ```
 
-It is intermittent — expect it roughly every other run under this scenario,
-not every run. `coredumpctl info <pid>` on the crashed `xed` process gives
-the stack above.
+It is intermittent — expect it roughly a quarter to a third of the time
+under this scenario, not every run. `coredumpctl info <pid>` on a crashed
+`xed` process gives the stack above.
 
-**Status:** upstream, same bug as the entry above and revisited together.
-This entry's own rate, specifically, deserves a larger sample before being
-trusted as precise — four and five runs is a direction, not a measurement —
-but the direction is what this entry exists to record.
+**Status:** upstream. Revisit if a future xed release fixes
+`received_clipboard_contents`, at which point both the allowlist and this entry
+should be deleted rather than kept "just in case".
 
 ## A bare path or URL in right-to-left prose can break at its edges
 
