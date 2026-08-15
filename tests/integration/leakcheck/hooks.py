@@ -18,6 +18,7 @@ radius of a bug in this file, which runs inside the process it audits.
 """
 
 import gc
+import sys
 import traceback
 import weakref
 
@@ -31,7 +32,6 @@ from .ledger import HANDLER, OBJECT, SOURCE, Ledger
 
 _LEDGER = Ledger()
 _ORIGINALS = {}
-_WATCHED = []
 
 
 def _origin():
@@ -40,11 +40,53 @@ def _origin():
     Full stacks are unreadable in a probe report, and the frames inside
     this file are never the answer. The first frame from the plugin is.
     """
-    for frame in reversed(traceback.extract_stack()[:-2]):
+    stack = traceback.extract_stack()
+    for frame in reversed(stack[:-2]):
         if "xedown" in frame.filename and "leakcheck" not in frame.filename:
             return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno} in {frame.name}"
-    frame = traceback.extract_stack()[-3]
-    return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}"
+    # No xedown frame anywhere: name the wrapper's own caller instead.
+    # Length-checked rather than indexed blind -- `stack[-3]` assumes there
+    # IS a caller below the wrapper, and a connect() or timeout_add() made
+    # from the outermost frame of a script leaves a stack only two deep. An
+    # IndexError raised here would come straight out of `GObject.connect`.
+    if len(stack) >= 3:
+        frame = stack[-3]
+        return f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}"
+    return "unknown origin"
+
+
+def _auditor_failed(what, exc):
+    """Report a bug in this file on stderr, then carry on.
+
+    Swallowed in silence, a bug here would present as an audit that quietly
+    stopped finding things -- the worst possible failure for a tool whose
+    whole job is noticing what is missing. The wording is deliberately
+    plain: `run-shutdown-tests.sh` treats `Traceback (most recent`,
+    `CRITICAL **` and friends in xed's log as release blockers, and an
+    auditor hiccup is a harness bug to fix rather than a blocker to file
+    against the plugin.
+    """
+    sys.stderr.write(f"LEAKCHECK: bookkeeping failed in {what}: {exc!r}\n")
+    sys.stderr.flush()
+
+
+def _guard(action, *args):
+    """Run one piece of bookkeeping that must never escape into the host.
+
+    Everything recorded here happens inside a wrapped `gi` entry point, on
+    xedown's or GTK's own call stack -- or, for the source wrapper, inside
+    a GLib dispatch. A bug in the auditor must cost one missing record, not
+    an exception out of `GObject.connect` or out of a timer callback.
+    `Ledger.findings` is deliberately defensive for the same reason; the
+    recording side matches it.
+
+    Never used to wrap the audited callback itself: a step that raises must
+    still surface as the probe's own `crash-in-step-N`.
+    """
+    try:
+        action(*args)
+    except Exception as exc:  # noqa: BLE001 - an auditor must not break its host
+        _auditor_failed(getattr(action, "__name__", "bookkeeping"), exc)
 
 
 def _handler_liveness(emitter_ref, handler_id):
@@ -74,14 +116,28 @@ def _wrap_connect(name):
         except TypeError:
             # Not weak-referenceable. Recording it would mean holding a
             # strong reference from the auditor, which is itself a leak.
+            # Silent, and kept as its own narrow branch rather than folded
+            # into the guard below: this is an expected outcome, and
+            # `_auditor_failed` is for things that should not happen.
             return handler_id
-        _LEDGER.record(
-            HANDLER,
-            handler_id,
-            f"{detailed_signal} on {type(self).__name__}",
-            _origin(),
-            _handler_liveness(reference, handler_id),
-        )
+        # The record below runs INSIDE `GObject.connect`, on the plugin's
+        # own call stack -- `_origin()` walks a traceback, `Ledger.record`
+        # touches two dicts -- and an exception escaping it would come out
+        # of a connect() call in xedown or GTK. A missed record is by far
+        # the cheaper failure. `Ledger.findings` is deliberately defensive
+        # about exactly this on the reading side; the wrappers match it.
+        # The handler id is returned either way, so the caller never
+        # notices.
+        try:
+            _LEDGER.record(
+                HANDLER,
+                handler_id,
+                f"{detailed_signal} on {type(self).__name__}",
+                _origin(),
+                _handler_liveness(reference, handler_id),
+            )
+        except Exception as exc:  # noqa: BLE001 - an auditor must not break its host
+            _auditor_failed(f"{name}({detailed_signal})", exc)
         return handler_id
 
     return original, wrapper
@@ -123,21 +179,57 @@ def _wrap_source(name):
 
         callback = args[index]
         holder = {}
+        label = f"{name} source"
+        # Captured once, here, at the moment the source is ARMED -- and
+        # reused verbatim if `wrapped` below re-records it. That stack is
+        # the actionable one; re-deriving the origin from inside the
+        # callback would name the main loop dispatching it instead, which
+        # is never the answer to "who armed this timer".
+        try:
+            origin = _origin()
+        except Exception as exc:  # noqa: BLE001 - an auditor must not break its host
+            _auditor_failed(f"{name} origin", exc)
+            origin = "unknown origin"
 
         def wrapped(*cb_args, **cb_kwargs):
+            # Released BEFORE the callback runs; re-recorded only if the
+            # callback asks to stay armed.
+            #
+            # A source being DISPATCHED is not a source still armed. While
+            # its own callback is on the stack, GLib has already taken it
+            # off the ready list and is waiting on the return value to
+            # learn whether to keep it -- so for the duration of the call
+            # there is nothing outstanding to report.
+            #
+            # Releasing afterwards instead broke every audit in the suite.
+            # Both probes chain their steps with `GLib.timeout_add` and
+            # each step schedules the next from inside its own body, so the
+            # source dispatching a step was armed after that scenario's
+            # checkpoint and is still on the books while the step runs. An
+            # audit taken from inside a step body -- which is the only kind
+            # either probe takes -- saw the very source running it, whose
+            # liveness closure is `lambda: True`, and failed on correct
+            # code every time.
+            sid = holder.get("id")
+            _guard(_LEDGER.release, SOURCE, sid)
             keep = callback(*cb_args, **cb_kwargs)
-            if not keep:
-                # Returned False: GLib retires the source itself, so it is
-                # not outstanding and must not be reported. Without this
-                # every legitimate one-shot idle_add reads as a leak.
-                _LEDGER.release(SOURCE, holder.get("id"))
+            if keep:
+                # Genuinely repeating: GLib keeps it armed, so it goes back
+                # on the books under the same key, with the origin that
+                # armed it. The re-record takes a fresh sequence number, so
+                # a timer that re-arms after a checkpoint is in that
+                # checkpoint's scope -- which is correct: it is armed now.
+                _guard(_LEDGER.record, SOURCE, sid, label, origin, lambda: True)
+            # Returning falsy retires the source, and the release above
+            # already accounted for that -- without it every legitimate
+            # one-shot `idle_add` in the plugin would read as a leak.
             return keep
 
         patched = list(args)
         patched[index] = wrapped
         source_id = original(*patched, **kwargs)
         holder["id"] = source_id
-        _LEDGER.record(SOURCE, source_id, f"{name} source", _origin(), lambda: True)
+        _guard(_LEDGER.record, SOURCE, source_id, label, origin, lambda: True)
         return source_id
 
     return original, wrapper
@@ -187,7 +279,6 @@ def watch_object(obj, label):
         reference = weakref.ref(obj)
     except TypeError:
         return
-    _WATCHED.append((label, reference))
     _LEDGER.record(OBJECT, label, label, _origin(), lambda: reference() is not None)
 
 

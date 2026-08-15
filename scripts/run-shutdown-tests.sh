@@ -121,13 +121,24 @@ plugin_staged_ok() {
 sample_tree() {
   local root="$1"
   local pids
+  # `-T` hides threads, and it is load bearing. `pstree -p` renders a
+  # thread as `{name}(tid)`, so the id pattern below collects every TID as
+  # well as every PID -- and /proc/<tid>/status exists and reports the
+  # WHOLE PROCESS's VmRSS, so the sum came out as (process RSS x thread
+  # count) rather than the tree's memory. Measured on this machine:
+  # `pstree -p 1` yields 558 id-like entries against `pstree -pT 1`'s 136,
+  # and xed with WebKit's Web and Network processes is far more threaded
+  # than init's tree. Section 6.3 of the lifecycle design and its success
+  # criterion #5 are entirely this number, so an inflated one is worse
+  # than none.
+  #
   # `|| true` on both command substitutions below: this whole function runs
   # under this script's own `set -euo pipefail`, and either one -- pstree
   # finding nothing (the root already gone), or a child's /proc entry
   # vanishing between the listing and the read -- exits non-zero. Without
   # the guard that would abort the entire harness run over a report-only
   # measurement, exactly the kind of failure this is not supposed to cause.
-  pids="$(pstree -p "$root" 2>/dev/null | grep -oP '\(\K[0-9]+' | tr '\n' ' ')" || true
+  pids="$(pstree -pT "$root" 2>/dev/null | grep -oP '\(\K[0-9]+' | tr '\n' ' ')" || true
   [ -n "$pids" ] || pids="$root"
   local total=0 count=0
   for pid in $pids; do

@@ -135,10 +135,28 @@ def _controller(tab):
 #
 # A bare `id(view)` was considered and rejected: it is a memory address, and
 # nothing here guarantees a later object never reuses one a dead, already-
-# released view held. A counter, assigned once per view the first time it is
-# watched and remembered here for the view's lifetime, does not have that
-# problem. The mapping is a weak one, matching `watch_object`'s own rule --
-# an id cache that pinned the views it names would itself be a leak.
+# released view held. A counter, assigned once the first time a view is
+# watched and remembered here for as long as the key survives, does not have
+# that problem. The mapping is a weak one, matching `watch_object`'s own rule
+# -- an id cache that pinned the views it names would itself be a leak.
+#
+# What the weak key holds is the PYGOBJECT WRAPPER, not the underlying
+# XedView, and those are two different lifetimes. pygobject is free to drop a
+# wrapper it considers uninteresting while the C object lives on and to build
+# a fresh one at the next lookup -- and a fresh wrapper is a different key, so
+# the same view would be handed a second watch id and the matching
+# `release_object` would miss the first, leaving it watched forever.
+#
+# What keeps the two coincident here is `XedownViewActivatable`: it sets
+# `_xedown_controller` on every view it activates, and setting a Python
+# attribute on a pygobject switches it to a toggle reference, which pins that
+# one wrapper for as long as the C object exists. Every view this probe
+# labels is a view xedown activated (nothing reaches `_watch_label` in
+# control mode -- `_check_live_preview`, `_check_torn_down` and `cycle` all
+# stand down when there is no controller), so every one of them is
+# toggle-referenced before it is ever labelled. Correct as written, but not
+# self-evidently so: if that attribute ever stopped being set, this cache
+# would need its own way to pin the wrapper.
 _watch_ids = weakref.WeakKeyDictionary()
 _watch_id_seq = itertools.count()
 
@@ -435,6 +453,15 @@ def _scenario_move_tab(probe):
         _check_live_preview("move-tab-after", [_state["movable"], _state["extra"]])
 
     def verify_focus_watch_moved():
+        # Nothing to assert without a plugin: `_controller()` is None for
+        # every tab in control mode, so all three checks below would report
+        # FAIL and the control log -- the evidence behind the runner's one
+        # allowlisted xed-core assertion, and this is the very scenario that
+        # provokes it -- would stop being a like-for-like comparison. The
+        # move-and-switch choreography above still runs, which is the part
+        # the comparison is actually made of.
+        if CONTROL:
+            return
         # The controller deliberately SURVIVES a tab move -- this scenario
         # must never assert teardown. What it asserts instead is that the
         # "set-focus" watch followed the tab: the old window's connection
@@ -790,6 +817,14 @@ def _scenario_re_enable(probe):
 
     def disable_it():
         _check_live_preview("re-enable-before", [_state["tab"]])
+        # In control mode there is no xedown to unload:
+        # `get_plugin_info("xedown")` returns None and `unload_plugin(None)`
+        # raises, which would land as `crash-in-step-1` and take the whole
+        # control run of this scenario down with it. The tab choreography
+        # above and below still runs, which is what makes the control log a
+        # like-for-like comparison.
+        if CONTROL:
+            return
         from gi.repository import Peas
 
         _state["engine"] = Peas.Engine.get_default()
@@ -799,6 +834,11 @@ def _scenario_re_enable(probe):
     def verify_disabled():
         _check_torn_down("re-enable", [_state["view"]])
         _audit("re-enable", since=_state["checkpoint"])
+        # Paired with `disable_it`'s own guard above: nothing was unloaded
+        # in control mode, so `_state["engine"]` was never set and reloading
+        # would be a KeyError here.
+        if CONTROL:
+            return
         _state["engine"].load_plugin(_state["plugin"])
 
     def verify_enabled_again():
@@ -868,6 +908,14 @@ def _scenario_restart(probe):
         )
 
     def phase_one_arrange():
+        # `from xedown import ...` is an ImportError in control mode, where
+        # the plugin is not installed at all -- an unguarded one here lands
+        # as `crash-in-step-1` and reports the whole phase FAILED, so the
+        # control log stops being comparable. Both documents stay open in
+        # their default modes, which is all the choreography this scenario
+        # contributes to the comparison.
+        if CONTROL:
+            return
         from xedown import settings as xedown_settings
         from xedown.document_state import Mode
 
@@ -898,6 +946,11 @@ def _scenario_restart(probe):
         _record("restart-phase1-arranged", a is not None and b is not None)
 
     def phase_two_check():
+        # Same guard, same reason, as `phase_one_arrange` above: the xedown
+        # imports below are an ImportError with the plugin uninstalled, and
+        # every assertion in this body is about state only xedown keeps.
+        if CONTROL:
+            return
         from xedown import modestore
         from xedown.document_state import Mode
 
@@ -1009,7 +1062,16 @@ def _scenario_cycle(probe):
     findings (signal connections, timers) are unaffected and still gate.
     """
     built = {"count": 0}
-    watched_views = []
+    # Label STRINGS, never the views they name. `done()` only needs the
+    # labels, and a list of twenty `Xed.View`s -- reachable from these step
+    # closures for the life of the process -- would keep twenty
+    # destroyed-but-unfinalised views and their buffers resident at exactly
+    # the moment the runner takes its "after churn" RSS sample. That sample
+    # is the one measurement this scenario exists to produce; holding the
+    # subject of the measurement alive to do the bookkeeping would poison
+    # it. Labels are stable per view (see `_watch_label`), so recomputing
+    # them later is unnecessary as well as unaffordable.
+    watched_labels = []
 
     def one_cycle():
         tab = _open_tab(probe.window, "cycle.md", "# Cycle\n\nBody.\n")
@@ -1033,13 +1095,19 @@ def _scenario_cycle(probe):
         controller = _controller(tab) if tab is not None else None
         if controller is not None and controller.preview is not None:
             built["count"] += 1
-            leakhooks.watch_object(
-                controller.preview.widget, _watch_label(view, "webview")
-            )
-            leakhooks.watch_object(controller.state, _watch_label(view, "docstate"))
-            watched_views.append(view)
+            webview_label = _watch_label(view, "webview")
+            docstate_label = _watch_label(view, "docstate")
+            leakhooks.watch_object(controller.preview.widget, webview_label)
+            leakhooks.watch_object(controller.state, docstate_label)
+            watched_labels.extend((webview_label, docstate_label))
         if tab is not None:
             probe.window.close_tab(tab)
+        # Same reasoning as `watched_labels` above, for the one cycle these
+        # two entries would otherwise still be holding when `done()` writes
+        # the marker the runner samples on. Nothing after this point reads
+        # them; the next `one_cycle()` sets them afresh.
+        _state.pop("cycle_tab", None)
+        _state.pop("cycle_view", None)
 
     def done():
         # Written before the assertions below, so the runner's "after
@@ -1048,11 +1116,19 @@ def _scenario_cycle(probe):
         # function's own bookkeeping (the audit's `gc.collect()` in
         # particular) has also run.
         _record("cycle-churn-finished", True, "twenty open/close cycles complete")
-        _record(
-            "cycle-previews-built",
-            built["count"] >= 18,
-            f"only {built['count']} of 20 cycles built a preview",
-        )
+        # Gated the way `_check_live_preview` gates itself, and for the same
+        # reason: in control mode there is no plugin to build a preview, so
+        # the count is 0 by design and asserting on it would report FAIL for
+        # a run that behaved exactly as intended. The churn markers above
+        # and below are deliberately NOT gated -- the runner polls for them
+        # to bracket its memory sample, which is a measurement of xed
+        # itself and just as wanted in a control run.
+        if not CONTROL:
+            _record(
+                "cycle-previews-built",
+                built["count"] >= 18,
+                f"only {built['count']} of 20 cycles built a preview",
+            )
         # OBJECT findings only (the WebView/DocumentState watches above) are
         # report-only here -- see `_audit`'s own docstring for why twenty
         # WebViews, audited at once after continuous churn, is a fuzzy
@@ -1063,9 +1139,8 @@ def _scenario_cycle(probe):
         )
         # Matching releases for every watch above, now that the one audit
         # that needed them intact has already run.
-        for view in watched_views:
-            leakhooks.release_object(_watch_label(view, "webview"))
-            leakhooks.release_object(_watch_label(view, "docstate"))
+        for label in watched_labels:
+            leakhooks.release_object(label)
 
     steps = [(2500, start)]
     for _ in range(19):

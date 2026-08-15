@@ -137,6 +137,54 @@ def test_findings_with_no_argument_still_reports_everything():
     assert labels == ["after", "before"]
 
 
+def test_a_key_can_be_released_and_recorded_again():
+    # The dispatch cycle of a repeating timer, in ledger terms. `hooks`
+    # releases a source BEFORE running its callback -- a source being
+    # dispatched is not a source still armed -- and records it again only
+    # if the callback returned True. Both halves have to work on one key,
+    # and the second record must replace the first rather than duplicate
+    # it.
+    lg = _ledger()
+    lg.record(led.SOURCE, 3, "timeout_add source", "filewatch.py:110", lambda: True)
+    lg.release(led.SOURCE, 3)
+    assert lg.findings() == ()
+
+    lg.record(led.SOURCE, 3, "timeout_add source", "filewatch.py:110", lambda: True)
+    findings = lg.findings()
+    assert [f.label for f in findings] == ["timeout_add source"]
+    assert findings[0].origin == "filewatch.py:110"
+
+
+def test_a_re_recorded_key_gets_a_fresh_sequence_number():
+    # Checkpoint scoping is what makes an audit mean anything, and it runs
+    # entirely on the sequence number `record()` assigns. A source armed
+    # before a checkpoint, dispatched, and then re-armed after it is armed
+    # NOW, and belongs in that checkpoint's scope -- which only happens if
+    # the re-record takes a new number instead of keeping the old one.
+    lg = _ledger()
+    lg.record(led.SOURCE, 3, "repeating", "o", lambda: True)
+    first = lg.outstanding()[0].seq
+    lg.release(led.SOURCE, 3)
+    mark = lg.mark()
+    lg.record(led.SOURCE, 3, "repeating", "o", lambda: True)
+    second = lg.outstanding()[0].seq
+    assert second > first
+    assert [f.label for f in lg.findings(since=mark)] == ["repeating"]
+
+
+def test_a_key_released_and_not_re_recorded_leaves_the_scope_empty():
+    # The other half of the same mechanism: a one-shot that retires itself
+    # is released and never comes back, so an audit taken afterwards --
+    # including one taken from inside another source's callback -- sees
+    # nothing.
+    lg = _ledger()
+    mark = lg.mark()
+    lg.record(led.SOURCE, 3, "one shot", "o", lambda: True)
+    lg.release(led.SOURCE, 3)
+    assert lg.findings(since=mark) == ()
+    assert lg.outstanding(since=mark) == ()
+
+
 def test_outstanding_since_filters_the_same_way_as_findings_since():
     lg = _ledger()
     lg.record(led.HANDLER, 1, "before", "o", lambda: False)

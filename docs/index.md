@@ -5,7 +5,7 @@
 - Manual smoke test — [manual-smoke-test.md](manual-smoke-test.md), which also
   describes the automated harnesses that run before it:
   `scripts/run-integration-tests.sh` (live widget-tree behaviour),
-  `scripts/run-shutdown-tests.sh` (clean shutdown after each of eight
+  `scripts/run-shutdown-tests.sh` (clean shutdown after each of twelve
   scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
   says, in an isolated display)
 - Known issues — [known-issues.md](known-issues.md)

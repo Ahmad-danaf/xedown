@@ -57,11 +57,14 @@ shutdown — and because that sequence disables the plugin near the end, the shu
 sees is one where xedown is no longer active. The shutdown harness gives each scenario
 its own xed launch and closes the window(s) the way a user does (a real window-manager
 close request, never a signal, so xed runs its normal shutdown and plugin-unload path),
-then checks that launch's stderr on its own. Eight scenarios: closing a Markdown
-tab, closing several Markdown tabs, closing several xed windows, moving a tab
+then checks that launch's stderr on its own. Twelve scenarios: closing a Markdown
+tab, closing twelve Markdown tabs, closing several xed windows, moving a tab
 between windows, disabling the plugin before closing, closing xed with previews
-live, closing the settings window, and closing it after changing a setting.
-Run it before tagging; it takes a few minutes.
+live, closing the settings window, closing it after changing a setting, closing
+xed with remote-image fetches still in flight, disabling the plugin and turning
+it back on in one session, restarting xed and checking what survived, and twenty
+open/close cycles measured on the process tree. Run it before tagging; it takes
+several minutes.
 
 Start with a terminal visible: `xed` prints warnings and tracebacks there, and a silent
 terminal is itself one of the checks.
@@ -133,7 +136,7 @@ explained inline below.
 | 32 | Create `~/.config/xedown/mine.css` containing `body { background: #101820; }`, set `"custom_stylesheet": "~/.config/xedown/mine.css"` in `settings.json`, restart xed and open `tests/fixtures/showcase.md` | The preview background is that colour rather than the theme's — the stylesheet is layered over the theme, not replacing it |
 | 33 | With that preview still open, open `mine.css` in xed itself, change the colour to `#201810` and save | The open preview changes colour within a moment. No restart, no reopening the document, no flicker of the wrong content |
 | 34 | Delete `mine.css` from a terminal while the preview is still open | Within a moment the preview returns to the built-in theme, with a bar at the top of the page naming `mine.css` and saying it was not found. The document is still fully rendered below the bar |
-| 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The eight shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
+| 35 | Review the terminal | No warnings, criticals, tracebacks or segfaults, with one named exception — see below. The twelve shutdown scenarios are automated (`scripts/run-shutdown-tests.sh`); what this row adds is the paths a script cannot drive — a real drag of a tab out of the notebook, a click on a window's close button, a close from the window menu |
 | 36 | Hover a code block in `tests/fixtures/showcase.md` | A **Copy** button fades in at the corner. The code does not move or resize as it appears |
 | 37 | Click it, then paste somewhere | The code arrives exactly as written, including indentation. The button says **Copied** for a moment, then goes back to **Copy** |
 | 38 | Tab to the copy button instead of hovering | It becomes visible with a clear focus ring, and <kbd>Enter</kbd> copies |
