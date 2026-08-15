@@ -343,19 +343,39 @@ def _scenario_multi_window(probe):
     teardown instead of ending before anything has actually torn down.
     """
 
-    def build():
+    def open_window_one():
         _state["tabs"] = [_open_tab(probe.window, "win1.md", "# Window one\n\nBody.\n")]
-        # Checkpointed here: after window one's tab (never torn down by
-        # this scenario -- the runner closes it afterward, like any other
-        # still-open window) but before window two, or either of ITS tabs,
-        # exist. Checkpointing any later -- e.g. in close_second_window(),
-        # after both of window two's TabControllers have already been
-        # built -- would put every connect()/timeout_add() their
-        # construction made below the checkpoint's sequence number,
-        # permanently out of `findings(since=...)`'s scope. That is exactly
-        # the population a forgotten disconnect would show up in, so this
-        # audit would end up checking only the close itself, blind to the
-        # thing it exists to catch.
+
+    def build():
+        # Confirmed live, not just opened. `TabController.activate()`
+        # defers its own construction through
+        # `GLib.idle_add(self._build_if_markdown)` -- the ModeBar,
+        # PreviewView, SearchBar, AppearanceWatcher and FileWatch, i.e.
+        # everything that connects a signal, are built on a LATER
+        # main-loop turn than `_open_tab`'s own return, not before it. This
+        # used to be a single synchronous `build()` that checkpointed right
+        # after opening window one's tab, which landed BEFORE that later
+        # turn ran: window one's own, entirely legitimate construction fell
+        # inside the audit's scope, and since window one is never torn down
+        # by this scenario, every one of its handlers was reported as a
+        # leak. `_check_live_preview` is the probe's own existing signal
+        # that a controller has actually finished building; using it here,
+        # rather than just trusting that the delay above was long enough,
+        # is what makes the checkpoint below genuinely after window one's
+        # controller exists.
+        _check_live_preview("multi-window-first", [_state["tabs"][0]])
+        # Checkpointed here: after window one's tab AND its controller
+        # (never torn down by this scenario -- the runner closes it
+        # afterward, like any other still-open window) but before window
+        # two, or either of ITS tabs, exist. Checkpointing any later -- e.g.
+        # in close_second_window(), after both of window two's
+        # TabControllers have already been built -- would put every
+        # connect()/timeout_add() their construction made below the
+        # checkpoint's sequence number, permanently out of
+        # `findings(since=...)`'s scope. That is exactly the population a
+        # forgotten disconnect would show up in, so this audit would end up
+        # checking only the close itself, blind to the thing it exists to
+        # catch.
         _state["checkpoint"] = leakhooks.checkpoint()
         app = Xed.App.get_default()
         second = app.create_window(None)
@@ -399,7 +419,8 @@ def _scenario_multi_window(probe):
         _audit("multi-window", since=_state["checkpoint"])
 
     return [
-        (2500, build),
+        (2500, open_window_one),
+        (500, build),
         (3500, verify),
         (500, close_second_window),
         (1500, verify_gone),
