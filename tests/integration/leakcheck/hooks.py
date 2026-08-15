@@ -91,8 +91,18 @@ def _wrap_disconnect(name):
     original = getattr(GObject.Object, name)
 
     def wrapper(self, handler_id, *args, **kwargs):
+        # The original runs FIRST, and release() only on success. A
+        # disconnect that raises (TypeError, RuntimeError -- the pair
+        # `TabController.deactivate()` itself tolerates, against a window or
+        # widget GTK has already disposed) must not be recorded as released:
+        # doing so would stop tracking a handler that may still be
+        # connected, silently hiding it from every later audit. The
+        # liveness check (`signal_handler_is_connected`) is what actually
+        # arbitrates whether a still-tracked handler is a leak; release()
+        # must not pre-empt that by guessing.
+        result = original(self, handler_id, *args, **kwargs)
         _LEDGER.release(HANDLER, handler_id)
-        return original(self, handler_id, *args, **kwargs)
+        return result
 
     return original, wrapper
 

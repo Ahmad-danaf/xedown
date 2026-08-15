@@ -269,12 +269,24 @@ def _scenario_multi_window(probe):
     """
 
     def build():
+        _state["tabs"] = [_open_tab(probe.window, "win1.md", "# Window one\n\nBody.\n")]
+        # Checkpointed here: after window one's tab (never torn down by
+        # this scenario -- the runner closes it afterward, like any other
+        # still-open window) but before window two, or either of ITS tabs,
+        # exist. Checkpointing any later -- e.g. in close_second_window(),
+        # after both of window two's TabControllers have already been
+        # built -- would put every connect()/timeout_add() their
+        # construction made below the checkpoint's sequence number,
+        # permanently out of `findings(since=...)`'s scope. That is exactly
+        # the population a forgotten disconnect would show up in, so this
+        # audit would end up checking only the close itself, blind to the
+        # thing it exists to catch.
+        _state["checkpoint"] = leakhooks.checkpoint()
         app = Xed.App.get_default()
         second = app.create_window(None)
         second.show_all()
         _state["second"] = second
-        _state["tabs"] = [
-            _open_tab(probe.window, "win1.md", "# Window one\n\nBody.\n"),
+        _state["tabs"] += [
             _open_tab(second, "win2-a.md", "# Window two A\n\nBody.\n"),
             _open_tab(second, "win2-b.md", "# Window two B\n\nBody.\n"),
         ]
@@ -285,15 +297,14 @@ def _scenario_multi_window(probe):
         _check_live_preview("multi-window", _state["tabs"])
 
     def close_second_window():
-        # Checkpointed here, not from build(): window one's tab is never
-        # torn down by this scenario (the runner closes it afterward, like
-        # any other still-open window), so an earlier checkpoint would
-        # include its `watch_object` calls from `verify` above -- a
-        # legitimately live, never-released WebView the audit below would
-        # otherwise report as this scenario's own leak. Re-watching window
-        # two's tabs here, after the checkpoint, is what puts them back in
-        # scope for it.
-        _state["checkpoint"] = leakhooks.checkpoint()
+        # Re-watches window two's tabs specifically, under labels indexed
+        # from 0 over `second_tabs` -- matching what `_check_torn_down`
+        # below releases -- rather than relying on the "multi-window" watch
+        # above, which indexed them 1 and 2 over the combined `tabs` list.
+        # A side effect: since both calls start counting from 0, this
+        # overwrites window one's own "webview:0"/"docstate:0" entries from
+        # `verify` -- harmless, since window one was never going to be
+        # checked for teardown in this scenario anyway.
         _check_live_preview("multi-window-second", _state["second_tabs"])
         _state["second"].close()
 
@@ -380,21 +391,18 @@ def _scenario_move_tab(probe):
             controller is not None
             and controller._focus_window is not _state.get("origin_window"),
         )
-        # Checkpointed here, not from build(): the moved tab (and "extra",
-        # and the seed tab in the second window) all deliberately survive
-        # this scenario, and the "move-tab-before"/"move-tab-after" checks
-        # above `watch_object` their WebViews/DocumentStates without ever
-        # releasing them -- an earlier checkpoint would report those, and
-        # the tab's now-permanent post-move focus-watch connection, as leaks
-        # of a teardown this scenario was never going to perform. What
-        # remains checkable without one is that the verification just
-        # performed above did not itself leave anything new and unreleased
-        # behind -- see tests/integration/leakcheck/ledger.py's own rule:
-        # a still-live, never-destroyed object is only a leak once nothing
-        # legitimate is still holding it, and here everything legitimately
-        # still is.
-        checkpoint = leakhooks.checkpoint()
-        _audit("move-tab", since=checkpoint)
+        # No leakhooks._audit here: nothing in this scenario is ever torn
+        # down (the controller and every tab it touches deliberately
+        # survive), so there is no checkpoint placement that both (a)
+        # includes anything meaningful and (b) doesn't guarantee a finding
+        # -- the moved tab's now-permanent post-move focus-watch connection
+        # is legitimately alive and would show up as one no matter where a
+        # checkpoint were taken. The three assertions above -- "the
+        # controller survived", "the watch follows the tab", "the old
+        # window let go" -- ARE this scenario's audit; see design doc
+        # docs/superpowers/specs/2026-08-14-lifecycle-stress-design.md
+        # §6.2: "move-tab's audit asserts the focus watch was re-pointed to
+        # the new window and released from the old one."
 
     return [
         (2500, build),
