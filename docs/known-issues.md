@@ -46,6 +46,11 @@ timing-dependent, so ordinary use should hit it much less often. It is not
 something xedown can fix or work around: nothing in this plugin touches xed's
 clipboard handling.
 
+A later, much smaller sample taken while closing out the pre-1.0
+lifecycle-hardening workstream found the opposite of "no sign that xedown
+affects it" — see the entry directly below, which measures the segfault
+variant specifically rather than the pair together.
+
 **What to do about it:** nothing is lost that was saved. Save before dragging
 tabs between windows if you have unsaved work, which is good practice anyway.
 
@@ -61,6 +66,79 @@ otherwise make it look like a hang, and fails the run.
 **Status:** upstream. Revisit if a future xed release fixes
 `received_clipboard_contents`, at which point both the allowlist and this entry
 should be deleted rather than kept "just in case".
+
+## The segfault variant above measured far likelier with xedown installed
+
+**What this adds to the entry above:** running the `move-tab` shutdown
+scenario during this project's lifecycle-hardening workstream, xed
+intermittently died on `SIGSEGV` during the runner's graceful window close —
+*after* the scenario's six assertions had already passed and it had reported
+`READY`. `coredumpctl` on the resulting core showed the identical stack the
+entry above already documents:
+
+```
+#0  gtk_action_group_get_action   (libgtk-3.so.0)
+#1  received_clipboard_contents   (libxed.so)
+#2-#12                             GTK signal emission / main loop
+#19 main                          (xed)
+```
+
+No xedown frame, no Python frame and no libpeas frame appears anywhere in
+it — the same absence the entry above relies on to call this xed's bug, not
+xedown's. This is that entry's segfault variant specifically, not the
+`Gtk-CRITICAL` assertion, and the mechanism is the same one already given
+above: an asynchronous clipboard reply arriving after the window that owns
+the action group is gone, timing-dependent enough to explain why it is
+intermittent either way.
+
+**Measured today, on this machine, the rate was not the same in both
+conditions:**
+
+| Condition | Runs | Crashes |
+|---|---|---|
+| xedown installed (`scripts/run-shutdown-tests.sh move-tab`) | 4 | 2 |
+| Control, xedown **not** installed (`XEDOWN_CONTROL=1 scripts/run-shutdown-tests.sh move-tab`) | 5 | 0 |
+
+If the underlying rate were the same in both conditions, five clean control
+runs in a row would be roughly a 0.4% coincidence. So: still xed's defect —
+the stack proves that, and proves it the same way the entry above does — but
+xedown reliably provokes it, on this evidence. The plausible reason, stated
+as *plausible and no more*: a tab carrying a WebKit WebView makes window
+teardown slower and busier than a plain text tab, so the asynchronous
+clipboard reply loses its race against window destruction more often. The
+stack shows where the crash happens, not why xedown changes the odds, and
+this entry is not claiming the second thing as established.
+
+Both of today's samples are small — four runs and five — next to the 35 and
+8 the entry above draws on, so its exact rate should be treated cautiously.
+What moved the conclusion is the direction, not the precision: a
+xedown-installed run crashing half the time against five straight clean
+control runs is not the "same rate" the earlier, larger sample found.
+
+**What this means for a reader:** moving a Markdown tab into another window
+and then closing xed can crash it, and a crash can lose unsaved work.
+
+**Not allowlisted, deliberately**, same as the entry above: the xed-core
+allowlist in both harness scripts is exactly one anchored log line covering
+the *assertion*, pinned by `tests/unit/test_shutdown_allowlist.py`, and the
+related crash is excluded on purpose so a regression here cannot hide behind
+it. This entry does not ask for that to change, and nothing here widens or
+touches that line.
+
+**Reproduction:**
+
+```
+scripts/run-shutdown-tests.sh move-tab
+```
+
+It is intermittent — expect it roughly every other run under this scenario,
+not every run. `coredumpctl info <pid>` on the crashed `xed` process gives
+the stack above.
+
+**Status:** upstream, same bug as the entry above and revisited together.
+This entry's own rate, specifically, deserves a larger sample before being
+trusted as precise — four and five runs is a direction, not a measurement —
+but the direction is what this entry exists to record.
 
 ## A bare path or URL in right-to-left prose can break at its edges
 

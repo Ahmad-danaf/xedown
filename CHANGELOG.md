@@ -119,6 +119,41 @@ published in [docs/performance.md](docs/performance.md).
   Every known difference from GitHub's rendering, with what to write instead,
   is in
   [docs/markdown-compatibility.md](docs/markdown-compatibility.md).
+- Moving a Markdown tab into another window and then closing xed can crash
+  it. Every frame in the crash is xed's own or GTK's — none of xedown's —
+  but xedown's own shutdown harness measured the crash happening far more
+  often with xedown installed than without. See
+  [docs/known-issues.md](docs/known-issues.md) for the measurement, the
+  plausible mechanism, and why it is deliberately left off the release
+  gate's allowlist.
+
+### Internal
+
+Lifecycle testing closed out before this release: two live GTK harnesses
+that install xedown into a real xed session, drive it, and tear it down.
+
+- **The shutdown harness now covers 13 scenarios, all clean**, up from nine:
+  new are `re-enable` (disable and re-enable xedown within one session),
+  `restart` (close xed and reopen it, two launches sharing a config
+  directory) and `cycle` (twenty open/close iterations in a row).
+  `restart` confirmed that a per-file remembered mode survives a real
+  restart, and that a per-tab remote-image grant does not — the second a
+  security-relevant property that had no test before this. `cycle`
+  confirmed that twenty iterations leave no signal handler or timer behind:
+  process count returns to baseline and memory use falls rather than climbs.
+- **The integration harness now covers 236 assertions, all passing**,
+  including, against a live xed session for the first time, the
+  document-size guard from the performance pass above: a 384 KB document
+  opens in Markdown mode, the mode bar offers "Large document (384 KB)",
+  the preview builds only once that button is pressed, the chip then
+  retires, live refresh stays suppressed, and typing does not stall the
+  main loop while it is showing.
+- **Both harnesses now check for leaks at every teardown** — signal
+  handlers, GLib timer sources, WebViews and DocumentStates, each compared
+  against a checkpoint and, if anything is left behind, reported by the
+  file and line that acquired it. It found no leak in xedown.
+- One xed-core crash was found this way, not introduced or fixed by this
+  work; see *Known issues* above.
 
 ## [0.3.0] - 2026-08-13
 
