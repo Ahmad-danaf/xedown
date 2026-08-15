@@ -27,8 +27,10 @@ where the plugin does not exist. That comparison is what keeps the
 runner's one allowlisted xed-core assertion honest.
 """
 
+import itertools
 import os
 import sys
+import weakref
 
 # Before every other import that could reach xedown: the wrap has to see
 # the plugin's first connection, and `install()` is a no-op once xedown is
@@ -120,6 +122,35 @@ def _controller(tab):
     return getattr(view, CONTROLLER_ATTRIBUTE, None) if view is not None else None
 
 
+# `_watch_label` gives `_check_live_preview` and `_check_torn_down` a shared,
+# stable name for a tab, keyed by the tab's own View -- reachable from both
+# (via `tab.get_view()` on one side, handed directly on the other) -- rather
+# than by its position in whatever list either call happens to be iterating.
+# Positional labels break the moment the two calls see lists of different
+# length: multi-window watches three tabs and tears down two, and under the
+# old `webview:{index}`/`docstate:{index}` scheme the second window's own
+# re-watch (`close_second_window`, indices 0 and 1 again) silently overwrote
+# window one's entries while leaving one of window two's stranded -- watched
+# forever, never released.
+#
+# A bare `id(view)` was considered and rejected: it is a memory address, and
+# nothing here guarantees a later object never reuses one a dead, already-
+# released view held. A counter, assigned once per view the first time it is
+# watched and remembered here for the view's lifetime, does not have that
+# problem. The mapping is a weak one, matching `watch_object`'s own rule --
+# an id cache that pinned the views it names would itself be a leak.
+_watch_ids = weakref.WeakKeyDictionary()
+_watch_id_seq = itertools.count()
+
+
+def _watch_label(view, prefix):
+    watch_id = _watch_ids.get(view)
+    if watch_id is None:
+        watch_id = next(_watch_id_seq)
+        _watch_ids[view] = watch_id
+    return f"{prefix}:{watch_id}"
+
+
 def _check_live_preview(label, tabs):
     """Assert every tab really is sitting in Preview with a built WebView.
 
@@ -140,11 +171,14 @@ def _check_live_preview(label, tabs):
         elif controller.frame.get_visible():
             missing.append(f"{index}:source-frame-still-visible")
         else:
-            leakhooks.watch_object(controller.preview.widget, f"webview:{index}")
+            view = tab.get_view()
+            leakhooks.watch_object(
+                controller.preview.widget, _watch_label(view, "webview")
+            )
             # The spec's "stale document state" bullet, made concrete. A
             # DocumentState still reachable after teardown means the
             # controller is too, and with it the view and its buffer.
-            leakhooks.watch_object(controller.state, f"docstate:{index}")
+            leakhooks.watch_object(controller.state, _watch_label(view, "docstate"))
     _record(f"{label}-previews-live", not missing, ", ".join(missing))
 
 
@@ -153,9 +187,9 @@ def _check_torn_down(label, views):
         return
     leaked = [i for i, view in enumerate(views) if hasattr(view, CONTROLLER_ATTRIBUTE)]
     _record(f"{label}-controllers-released", not leaked, f"leaked: {leaked!r}")
-    for index, _view in enumerate(views):
-        leakhooks.release_object(f"webview:{index}")
-        leakhooks.release_object(f"docstate:{index}")
+    for view in views:
+        leakhooks.release_object(_watch_label(view, "webview"))
+        leakhooks.release_object(_watch_label(view, "docstate"))
 
 
 def _audit(label, since=None):
@@ -208,9 +242,10 @@ def _scenario_close_tab(probe):
         _check_torn_down("close-tab", [_state["view"]])
         # Before the remaining-tab check below: that check calls
         # `_check_live_preview` too, which would `watch_object` the
-        # survivor's WebView under the same "webview:0" label -- a fresh,
-        # legitimately-alive, never-released record the audit would
-        # otherwise report as this scenario's own leak.
+        # survivor's WebView under its own fresh, never-released label -- a
+        # legitimately-alive record, inside this checkpoint's scope, that
+        # the audit would otherwise report as this scenario's own leak of a
+        # tab nothing here ever intends to close.
         _audit("close-tab", since=_state["checkpoint"])
         _check_live_preview("close-tab-remaining", [probe.window.get_active_tab()])
 
@@ -295,16 +330,27 @@ def _scenario_multi_window(probe):
 
     def verify():
         _check_live_preview("multi-window", _state["tabs"])
+        # Window one is left open for the runner to close afterward, never
+        # torn down by this scenario -- but the call above just watched its
+        # webview and DocumentState too, as a side effect of confirming ITS
+        # preview is live in the same pass as window two's. Release that
+        # watch right away: with per-view labels now stable (see
+        # `_watch_label`) rather than positional, nothing later collides
+        # with it and overwrites it away by accident, so left alone it would
+        # sit inside the checkpoint's scope, unreleased and alive for the
+        # rest of this scenario, and `verify_gone`'s audit would read it as
+        # a leak of a tab nothing here ever intends to close.
+        first_view = _state["tabs"][0].get_view()
+        leakhooks.release_object(_watch_label(first_view, "webview"))
+        leakhooks.release_object(_watch_label(first_view, "docstate"))
 
     def close_second_window():
-        # Re-watches window two's tabs specifically, under labels indexed
-        # from 0 over `second_tabs` -- matching what `_check_torn_down`
-        # below releases -- rather than relying on the "multi-window" watch
-        # above, which indexed them 1 and 2 over the combined `tabs` list.
-        # A side effect: since both calls start counting from 0, this
-        # overwrites window one's own "webview:0"/"docstate:0" entries from
-        # `verify` -- harmless, since window one was never going to be
-        # checked for teardown in this scenario anyway.
+        # Re-watches window two's tabs specifically -- matching what
+        # `_check_torn_down` below releases -- rather than relying on the
+        # "multi-window" watch above. Labels are stable per view now, so
+        # this just re-records the same two entries `verify` already made;
+        # it no longer matters that both calls index `second_tabs`/`tabs`
+        # differently.
         _check_live_preview("multi-window-second", _state["second_tabs"])
         _state["second"].close()
 
