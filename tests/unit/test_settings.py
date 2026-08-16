@@ -891,3 +891,66 @@ def test_a_migrated_default_fallback_is_not_written_as_an_explicit_key(tmp_path)
     assert settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == (
         "placeholder"
     )
+
+
+# The complete v0.2 settings file: all twelve keys v0.2 could write, each at
+# a non-default value so that a value silently reverting to its default is
+# visible rather than indistinguishable from success.
+V02_SETTINGS = {
+    "default_mode": "markdown",
+    "remember_mode_per_file": False,
+    "preview_theme": "focused",
+    "custom_stylesheet": "/home/reader/style.css",
+    "content_width_rem": 72,
+    "text_size_px": 20,
+    "auto_refresh": False,
+    "refresh_delay_ms": 500,
+    "remote_images": "alt",  # v0.2 meaning: how a blocked image displays
+    "code_copy_buttons": False,
+    "text_direction": "rtl",
+    "watch_external_changes": False,
+}
+
+
+def test_a_complete_v02_settings_file_survives_the_upgrade(tmp_path):
+    """Every choice a v0.2 reader made is still in force after upgrading.
+
+    The upgrade promise stated once, in one place. `remote_images` is the
+    only key whose meaning changed between v0.2 and v0.3, and it is checked
+    here as `image_fallback` -- its new name -- rather than being skipped.
+    """
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(V02_SETTINGS), encoding="utf-8")
+
+    loaded = settings.Settings(path)
+
+    assert loaded.quarantine is None
+    assert loaded.get(settings.DEFAULT_MODE) == "markdown"
+    assert loaded.get(settings.REMEMBER_MODE_PER_FILE) is False
+    assert loaded.get(settings.PREVIEW_THEME) == "focused"
+    assert loaded.get(settings.CUSTOM_STYLESHEET) == "/home/reader/style.css"
+    assert loaded.get(settings.CONTENT_WIDTH_REM) == 72
+    assert loaded.get(settings.TEXT_SIZE_PX) == 20
+    assert loaded.get(settings.AUTO_REFRESH) is False
+    assert loaded.get(settings.REFRESH_DELAY_MS) == 500
+    assert loaded.get(settings.CODE_COPY_BUTTONS) is False
+    assert loaded.get(settings.TEXT_DIRECTION) == "rtl"
+    assert loaded.get(settings.WATCH_EXTERNAL_CHANGES) is False
+
+    # The one renamed key: the v0.2 display choice arrives under its v0.3
+    # name, and the v0.3 fetch policy stays at its safe default because a
+    # v0.2 file cannot have expressed an opinion about it.
+    assert loaded.get(settings.IMAGE_FALLBACK) == "alt"
+    assert loaded.get(settings.REMOTE_IMAGES) == "never"
+
+
+def test_upgrading_does_not_rewrite_the_users_file(tmp_path):
+    # The file belongs to the user, a second xed process may be reading it,
+    # and nothing about loading is worth a write nobody asked for.
+    path = tmp_path / "settings.json"
+    original = json.dumps(V02_SETTINGS)
+    path.write_text(original, encoding="utf-8")
+
+    settings.Settings(path)
+
+    assert path.read_text(encoding="utf-8") == original
