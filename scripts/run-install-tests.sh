@@ -24,6 +24,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(mktemp -d)" || { printf 'mktemp -d failed\n' >&2; exit 1; }
 FAILURES=0
 CURRENT=""
+MATCHED=()
 
 cleanup() { rm -rf "$WORKSPACE"; }
 trap cleanup EXIT
@@ -38,6 +39,13 @@ new_sandbox() {
   [ -n "$WORKSPACE" ] && [ -n "$CURRENT" ] || { printf 'new_sandbox: WORKSPACE or CURRENT is empty, refusing to proceed\n' >&2; exit 1; }
   SANDBOX="$WORKSPACE/$CURRENT"
   rm -rf "$SANDBOX"
+  # Reset the evidence a scenario's own run leaves behind, not just the
+  # filesystem: an assertion that fires before this scenario's first
+  # run_install/run_uninstall must not have the previous scenario's OUTPUT
+  # and STATUS still lying around for fail() to print as if they were this
+  # scenario's.
+  OUTPUT=""
+  STATUS=""
   export HOME="$SANDBOX/home"
   export XDG_DATA_HOME="$HOME/.local/share"
   export XDG_CONFIG_HOME="$HOME/.config"
@@ -146,6 +154,7 @@ scenario() {
   if [ "${#WANTED[@]}" -gt 0 ] && ! printf '%s\n' "${WANTED[@]}" | grep -qx "$1"; then
     return 0
   fi
+  MATCHED+=("$1")
   printf '==> %s\n' "$1"
   SCENARIO_FAILED=0
   new_sandbox
@@ -392,6 +401,19 @@ scenario purge-removes-preferences
 scenario uninstall-with-nothing-installed
 scenario uninstall-refuses-while-xed-runs
 scenario uninstall-refuses-a-directory-that-is-not-xedown
+
+# A requested name that matched no scenario above is a loud failure, not a
+# silent no-op: every real scenario filters itself out for it too, so
+# FAILURES would otherwise stay 0 and "All scenarios passed." would print
+# for a run that tried nothing at all.
+if [ "${#WANTED[@]}" -gt 0 ]; then
+  for name in "${WANTED[@]}"; do
+    if ! printf '%s\n' "${MATCHED[@]-}" | grep -qx "$name"; then
+      printf 'error: no such scenario: %s\n' "$name" >&2
+      FAILURES=$((FAILURES + 1))
+    fi
+  done
+fi
 
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%s scenario(s) failed\n' "$FAILURES" >&2

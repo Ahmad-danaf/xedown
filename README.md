@@ -136,11 +136,12 @@ Or from a checkout:
 ./install.sh
 ```
 
-`install.sh` checks that this machine can actually run xedown before it
-copies anything, refuses rather than installing something that would never
-load, and replaces any previous version rather than copying over it — so an
-upgrade leaves no files from the old version behind. Your settings in
-`~/.config/xedown` are never touched. It offers to switch the plugin on;
+`install.sh` checks that this machine can actually run xedown before
+anything is installed and before any existing install is touched, refuses
+rather than installing something that would never load, and replaces any
+previous version rather than copying over it — so an upgrade leaves no files
+from the old version behind. Your settings in `~/.config/xedown` are never
+touched. It offers to switch the plugin on;
 `--enable` says yes without asking, `--no-enable` skips the question.
 
 Without the installer, nothing else is required:

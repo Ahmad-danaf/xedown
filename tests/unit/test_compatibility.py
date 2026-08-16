@@ -93,4 +93,4 @@ def test_the_may_work_sentence_exists():
 
 
 def test_the_document_is_linked_from_the_docs_index():
-    assert "compatibility.md" in INDEX.read_text(encoding="utf-8")
+    assert "](compatibility.md)" in INDEX.read_text(encoding="utf-8")

@@ -23,9 +23,10 @@ published in [docs/performance.md](docs/performance.md).
 ### Added
 
 - `install.sh` and `uninstall.sh`. The installer checks that this machine can
-  run xedown before copying anything, names the package to install for
-  anything missing, and replaces any previous version rather than copying
-  over it — so an upgrade cannot leave a module from the old version behind.
+  run xedown before anything is installed and before any existing install is
+  touched, names the package to install for anything missing, and replaces
+  any previous version rather than copying over it — so an upgrade cannot
+  leave a module from the old version behind.
   It offers to switch the plugin on rather than doing it silently, and never
   touches `~/.config/xedown`. The uninstaller keeps your settings unless you
   pass `--purge`. Both are published beside the release archive.

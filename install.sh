@@ -111,15 +111,15 @@ $unexpected"
   [ -f "$STAGE/xedown/__init__.py" ] || die "no xedown/__init__.py to install"
   [ -f "$STAGE/xedown.plugin" ] || die "no xedown.plugin to install"
 
-  VERSION="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$STAGE/xedown/__init__.py")"
+  STAGED_VERSION="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' "$STAGE/xedown/__init__.py")"
   local descriptor
   descriptor="$(sed -n 's/^Version=\(.*\)$/\1/p' "$STAGE/xedown.plugin")"
-  [ -n "$VERSION" ] || die "could not read __version__ from xedown/__init__.py"
+  [ -n "$STAGED_VERSION" ] || die "could not read __version__ from xedown/__init__.py"
   # The same disagreement build-release.sh refuses to build through,
   # refused again here: a hand-assembled directory must not be installed
   # under a version it does not carry.
-  [ "$VERSION" = "$descriptor" ] || die "version mismatch — refusing to install:
-  xedown/__init__.py: $VERSION
+  [ "$STAGED_VERSION" = "$descriptor" ] || die "version mismatch — refusing to install:
+  xedown/__init__.py: $STAGED_VERSION
   xedown.plugin:      $descriptor"
 }
 
@@ -374,9 +374,9 @@ PREVIOUS="$(installed_version)"
 install_plugin
 
 if [ -n "$PREVIOUS" ]; then
-  say "Upgraded xedown $PREVIOUS -> $VERSION in $PLUGIN_DIR"
+  say "Upgraded xedown $PREVIOUS -> $STAGED_VERSION in $PLUGIN_DIR"
 else
-  say "Installed xedown $VERSION in $PLUGIN_DIR"
+  say "Installed xedown $STAGED_VERSION in $PLUGIN_DIR"
 fi
 if [ -d "$CONFIG_DIR" ]; then
   say "Your settings in $CONFIG_DIR were not touched."
