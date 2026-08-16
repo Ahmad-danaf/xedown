@@ -317,6 +317,61 @@ scenario_non_interactive_never_enables() {
   assert_plugins_setting "['docinfo', 'time']"
 }
 
+scenario_uninstall_keeps_preferences() {
+  run_install --enable
+  mkdir -p "$CONFIG_DIR"
+  printf '{"preview_theme": "focused"}\n' > "$CONFIG_DIR/settings.json"
+  printf '{}\n' > "$CONFIG_DIR/modes.json"
+
+  run_uninstall
+  assert_status 0
+  assert_not_installed
+  assert_present "$CONFIG_DIR/settings.json"
+  assert_present "$CONFIG_DIR/modes.json"
+  assert_output_contains "$CONFIG_DIR"
+  assert_output_contains "--purge"
+  # The reader's other plugins survive.
+  assert_plugins_setting "['docinfo', 'time']"
+}
+
+scenario_purge_removes_preferences() {
+  run_install --no-enable
+  mkdir -p "$CONFIG_DIR"
+  printf '{"preview_theme": "focused"}\n' > "$CONFIG_DIR/settings.json"
+
+  run_uninstall --purge
+  assert_status 0
+  assert_not_installed
+  assert_absent "$CONFIG_DIR"
+}
+
+scenario_uninstall_with_nothing_installed() {
+  run_uninstall
+  assert_status 0
+  assert_output_contains "not installed"
+}
+
+scenario_uninstall_refuses_while_xed_runs() {
+  run_install --no-enable
+  export STUB_XED_RUNNING=1
+  run_uninstall
+  assert_status 1
+  assert_installed
+  assert_output_contains "Close xed"
+}
+
+scenario_uninstall_refuses_a_directory_that_is_not_xedown() {
+  # The plugin path is computed from XDG_DATA_HOME. A computed path is
+  # exactly the kind that becomes a catastrophe when a variable is empty,
+  # so anything that does not look like a xedown install is left alone.
+  mkdir -p "$PLUGIN_DIR/xedown"
+  printf 'not xedown\n' > "$PLUGIN_DIR/xedown/something_else.py"
+  run_uninstall
+  assert_status 1
+  assert_present "$PLUGIN_DIR/xedown/something_else.py"
+  assert_output_contains "does not look like"
+}
+
 # --- main ----------------------------------------------------------------
 
 ROOT_PATH="$PATH"
@@ -332,6 +387,11 @@ scenario enable-adds-to-active-plugins
 scenario enable-is-idempotent
 scenario enable-is-skipped-while-xed-runs
 scenario non-interactive-never-enables
+scenario uninstall-keeps-preferences
+scenario purge-removes-preferences
+scenario uninstall-with-nothing-installed
+scenario uninstall-refuses-while-xed-runs
+scenario uninstall-refuses-a-directory-that-is-not-xedown
 
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%s scenario(s) failed\n' "$FAILURES" >&2
