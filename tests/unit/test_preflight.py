@@ -81,3 +81,115 @@ def test_reads_a_distro_major(text, expected):
 @pytest.mark.parametrize("text", ["", "rolling", None, "٢٢"])
 def test_unreadable_distro_major_is_none(text):
     assert preflight.parse_distro_major(text) is None
+
+
+SUPPORTED = {
+    "python_version": "3.12.3",
+    "has_gi": True,
+    "gtk3_typelib": True,
+    "webkit41_typelib": True,
+    "has_xed": True,
+    "xed_version": "xed - Version 3.8.9+zena",
+    "distro_id": "linuxmint",
+    "distro_version_id": "22.3",
+    "session_type": "x11",
+}
+
+
+def _codes(**overrides):
+    facts = dict(SUPPORTED, **overrides)
+    return {f.code: f.severity for f in preflight.evaluate(facts)}
+
+
+def test_the_live_machine_produces_no_findings():
+    # The exact configuration the matrix claims. If this ever reports
+    # something, the matrix and the machine have drifted apart.
+    assert preflight.evaluate(SUPPORTED) == []
+
+
+@pytest.mark.parametrize(
+    "overrides,code",
+    [
+        ({"has_gi": False}, "gi-missing"),
+        ({"gtk3_typelib": False}, "gtk3-missing"),
+        ({"webkit41_typelib": False}, "webkit41-missing"),
+        ({"python_version": "3.9.18"}, "python-too-old"),
+        ({"has_xed": False}, "xed-missing"),
+    ],
+)
+def test_these_refuse_the_install(overrides, code):
+    assert _codes(**overrides).get(code) == preflight.HARD
+
+
+@pytest.mark.parametrize(
+    "overrides,code",
+    [
+        ({"xed_version": "xed - Version 3.9.0"}, "xed-untested"),
+        ({"xed_version": "xed - Version 3.0.0"}, "xed-untested"),
+        ({"xed_version": "xed - Version 4.0.0"}, "xed-untested"),
+        ({"xed_version": "nonsense"}, "xed-version-unknown"),
+        ({"distro_id": "fedora", "distro_version_id": "41"}, "distro-untested"),
+        ({"distro_id": "linuxmint", "distro_version_id": "21.3"}, "distro-untested"),
+        ({"python_version": "3.13.0"}, "python-untested"),
+        ({"session_type": "wayland"}, "wayland-untested"),
+    ],
+)
+def test_these_only_warn(overrides, code):
+    assert _codes(**overrides).get(code) == preflight.SOFT
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "python_version",
+        "has_gi",
+        "gtk3_typelib",
+        "webkit41_typelib",
+        "has_xed",
+        "xed_version",
+        "distro_id",
+        "distro_version_id",
+        "session_type",
+    ],
+)
+def test_an_undetermined_fact_never_refuses(key):
+    # A probe that failed is not evidence of absence. Refusing to install
+    # over a question the script could not answer is worse than installing
+    # with a warning.
+    severities = set(_codes(**{key: None}).values())
+    assert preflight.HARD not in severities
+
+
+def test_a_missing_gi_does_not_also_report_two_missing_typelibs():
+    # Both typelib probes need `gi` to run at all, so `install.sh` reports
+    # them as undetermined when `gi` is absent. One cause, one message.
+    codes = _codes(has_gi=False, gtk3_typelib=None, webkit41_typelib=None)
+    assert codes == {"gi-missing": preflight.HARD}
+
+
+def test_boundaries_of_the_python_floor():
+    assert "python-too-old" in _codes(python_version="3.9.99")
+    assert _codes(python_version="3.10.0") == {}
+    assert _codes(python_version="3.12.99") == {}
+    assert "python-untested" in _codes(python_version="3.13.0")
+
+
+def test_every_hard_finding_that_apt_can_fix_names_a_package():
+    for overrides in (
+        {"has_gi": False},
+        {"gtk3_typelib": False},
+        {"webkit41_typelib": False},
+        {"has_xed": False},
+    ):
+        facts = dict(SUPPORTED, **overrides)
+        hard = [f for f in preflight.evaluate(facts) if f.severity == preflight.HARD]
+        assert hard, overrides
+        assert all("apt install" in f.remedy for f in hard), overrides
+
+
+def test_the_required_webkit_version_appears_in_its_message():
+    # The one row that is a requirement rather than a measurement. A reader
+    # on WebKit2GTK 4.0 must be told the number, not just "unsupported".
+    facts = dict(SUPPORTED, webkit41_typelib=False)
+    (finding,) = [f for f in preflight.evaluate(facts) if f.code == "webkit41-missing"]
+    assert preflight.REQUIRED_WEBKIT_GI in finding.message
