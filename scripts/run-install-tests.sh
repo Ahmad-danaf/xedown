@@ -278,7 +278,40 @@ scenario_enable_is_skipped_while_xed_runs() {
 scenario_non_interactive_never_enables() {
   # No --enable, no --no-enable, and no terminal: the quiet answer is the
   # one that changes nothing about the reader's desktop.
-  run_install < /dev/null
+  #
+  # This must reproduce the actual hazard the `[ -t 0 ] || return 0` guard
+  # in install.sh exists for: stdin that is OPEN, non-tty, and silent --
+  # the shape of a script launched from something that has not written
+  # anything yet. A plain `< /dev/null` does NOT do that: `read` on an
+  # already-closed stdin returns instant EOF, which the `case` statement's
+  # default branch already treats as "no" -- so that shape of test would
+  # still pass even if the guard were deleted, and would never catch a
+  # regression.
+  #
+  # A FIFO whose write end is held open by a background process (but which
+  # never writes anything) reproduces the real hazard: `read -r` on it
+  # blocks exactly as it would on a real non-interactive, non-tty session.
+  # `run_install` (command substitution) does not redirect stdin, so it is
+  # not used here -- this scenario builds its own stdin explicitly rather
+  # than depending on whatever the harness process happens to be attached
+  # to, and bounds the run with `timeout` so a reintroduced hang becomes a
+  # failed scenario instead of a hung harness.
+  local fifo="$SANDBOX/stdin-fifo"
+  mkfifo "$fifo"
+  ( exec 3>"$fifo"; sleep 30 ) &
+  local holder=$!
+
+  OUTPUT="$(timeout 5 "$ROOT/install.sh" < "$fifo" 2>&1)"
+  STATUS=$?
+
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null
+  rm -f "$fifo"
+
+  if [ "$STATUS" -eq 124 ]; then
+    fail "install.sh hung waiting on stdin (killed by timeout after 5s) -- the [ -t 0 ] guard did not short-circuit the prompt"
+    return
+  fi
   assert_status 0
   assert_installed
   assert_plugins_setting "['docinfo', 'time']"
