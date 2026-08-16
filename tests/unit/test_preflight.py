@@ -193,3 +193,87 @@ def test_the_required_webkit_version_appears_in_its_message():
     facts = dict(SUPPORTED, webkit41_typelib=False)
     (finding,) = [f for f in preflight.evaluate(facts) if f.code == "webkit41-missing"]
     assert preflight.REQUIRED_WEBKIT_GI in finding.message
+
+
+SUPPORTED_STRINGS = {
+    "python_version": "3.12.3",
+    "has_gi": "1",
+    "gtk3_typelib": "1",
+    "webkit41_typelib": "1",
+    "has_xed": "1",
+    "xed_version": "xed - Version 3.8.9+zena",
+    "distro_id": "linuxmint",
+    "distro_version_id": "22.3",
+    "session_type": "x11",
+}
+
+
+def _argv(**overrides):
+    """A full argument list with some facts replaced.
+
+    Built from a dict rather than by slicing a list: `parse_facts` reads
+    arguments in order and a later one wins, so a test that appended an
+    override would have it silently overwritten by the value it meant to
+    replace.
+    """
+    facts = dict(SUPPORTED_STRINGS, **overrides)
+    return [f"{key}={value}" for key, value in facts.items()]
+
+
+def test_facts_decode_from_key_value_arguments():
+    facts = preflight.parse_facts(_argv())
+    assert facts["has_gi"] is True
+    assert facts["python_version"] == "3.12.3"
+    # The value may contain spaces and its own separators; only the first
+    # `=` splits.
+    assert facts["xed_version"] == "xed - Version 3.8.9+zena"
+
+
+def test_an_empty_value_means_undetermined():
+    facts = preflight.parse_facts(["has_gi=", "xed_version="])
+    assert facts["has_gi"] is None
+    assert facts["xed_version"] is None
+
+
+def test_boolean_facts_decode_from_one_and_zero():
+    facts = preflight.parse_facts(["has_gi=0", "has_xed=1"])
+    assert facts["has_gi"] is False
+    assert facts["has_xed"] is True
+
+
+def test_an_unknown_key_is_ignored_rather_than_fatal():
+    # The installer and this module are versioned together but installed
+    # separately; a stale caller must not crash the check it is running.
+    assert "nonsense" not in preflight.parse_facts(["nonsense=1", "has_gi=1"])
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        (_argv(), 0),
+        (_argv(xed_version="xed - Version 3.9.0"), 1),
+        (_argv(has_gi="0"), 2),
+    ],
+)
+def test_exit_code_says_clear_warned_or_refused(argv, expected):
+    assert preflight.main(argv) == expected
+
+
+def test_a_hard_finding_wins_over_soft_ones(capsys):
+    argv = _argv(has_gi="0", session_type="wayland")
+    assert preflight.main(argv) == 2
+    printed = capsys.readouterr().out
+    # Every finding is printed, not only the first: a reader fixing one
+    # missing package should learn about the second in the same run.
+    assert "python3-gi" in printed
+    assert "Wayland" in printed
+
+
+def test_a_remedy_is_printed_where_there_is_one(capsys):
+    preflight.main(_argv(webkit41_typelib="0"))
+    assert "sudo apt install gir1.2-webkit2-4.1" in capsys.readouterr().out
+
+
+def test_a_clear_machine_prints_nothing(capsys):
+    assert preflight.main(_argv()) == 0
+    assert capsys.readouterr().out == ""

@@ -20,6 +20,7 @@ because both places need it readable, and a test makes that safe.
 """
 
 import re
+import sys
 from typing import NamedTuple
 
 # --- the supported matrix ------------------------------------------------
@@ -272,3 +273,60 @@ def evaluate(facts):
     for check in (_typelibs, _python, _xed, _distro, _session):
         findings.extend(check(facts))
     return findings
+
+
+# --- the command-line face -----------------------------------------------
+#
+# `install.sh` probes the machine and calls this with `key=value` arguments.
+# The exit code is the whole protocol: 0 clear, 1 warned, 2 refused.
+
+_BOOLEAN_FACTS = ("has_gi", "gtk3_typelib", "webkit41_typelib", "has_xed")
+_TEXT_FACTS = (
+    "python_version",
+    "xed_version",
+    "distro_id",
+    "distro_version_id",
+    "session_type",
+)
+
+
+def parse_facts(argv):
+    """`key=value` arguments as a facts dict.
+
+    An empty value is `None` -- "could not be determined" -- which is a
+    different thing from `0`, and the difference decides whether an install
+    is refused. An unknown key is ignored rather than fatal: this module
+    ships inside the plugin and the caller is a separate script, so a stale
+    caller must not crash the check it is running.
+    """
+    facts = {}
+    for argument in argv:
+        key, separator, value = argument.partition("=")
+        if not separator:
+            continue
+        if key in _BOOLEAN_FACTS:
+            facts[key] = None if value == "" else value.strip() not in ("0", "")
+        elif key in _TEXT_FACTS:
+            facts[key] = value or None
+    return facts
+
+
+def format_finding(finding):
+    label = "ERROR" if finding.severity == HARD else "warning"
+    line = f"{label}: {finding.message}"
+    if finding.remedy:
+        line += f"\n       {finding.remedy}"
+    return line
+
+
+def main(argv):
+    findings = evaluate(parse_facts(argv))
+    for finding in findings:
+        print(format_finding(finding))
+    if any(finding.severity == HARD for finding in findings):
+        return 2
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
