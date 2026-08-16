@@ -207,6 +207,47 @@ scenario_install_from_archive() {
   assert_installed
 }
 
+scenario_hard_failure_refuses() {
+  # An existing install must survive a refused one untouched.
+  mkdir -p "$PLUGIN_DIR/xedown"
+  printf '__version__ = "0.3.0"\n' > "$PLUGIN_DIR/xedown/__init__.py"
+  printf 'Version=0.3.0\n' > "$PLUGIN_DIR/xedown.plugin"
+
+  # The whole fact string is restated, not just the one being changed: a
+  # missing python3-gi suppresses both typelib probes by design, so a
+  # scenario that only set webkit41_typelib=0 would report nothing at all on
+  # a machine without gi.
+  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=0"
+  run_install --no-enable
+  assert_status 2
+  assert_output_contains "gir1.2-webkit2-4.1"
+  grep -q '0\.3\.0' "$PLUGIN_DIR/xedown/__init__.py" \
+    || fail "the existing install was modified by a refused install"
+  # Nothing is left behind in the plugins directory either.
+  [ -z "$(find "$PLUGIN_DIR" -maxdepth 1 -name '.xedown-*')" ] \
+    || fail "a staging or aside directory was left behind"
+}
+
+scenario_force_overrides_a_hard_failure() {
+  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=0"
+  run_install --no-enable --force
+  assert_status 0
+  assert_installed
+  assert_output_contains "gir1.2-webkit2-4.1"
+  assert_output_contains "--force"
+}
+
+scenario_soft_findings_warn_and_install() {
+  export STUB_XED_VERSION="xed - Version 3.9.0"
+  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=1 distro_id=fedora distro_version_id=41 session_type=wayland"
+  run_install --no-enable
+  assert_status 0
+  assert_installed
+  assert_output_contains "3.9.0"
+  assert_output_contains "fedora"
+  assert_output_contains "Wayland"
+}
+
 # --- main ----------------------------------------------------------------
 
 ROOT_PATH="$PATH"
@@ -215,6 +256,9 @@ WANTED=("$@")
 scenario fresh-install
 scenario upgrade-replaces
 scenario install-from-archive
+scenario hard-failure-refuses
+scenario force-overrides-a-hard-failure
+scenario soft-findings-warn-and-install
 
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%s scenario(s) failed\n' "$FAILURES" >&2

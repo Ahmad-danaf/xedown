@@ -181,11 +181,123 @@ Your previous install is still sitting in $aside -- move it back by hand:
   die "install failed"
 }
 
+# --- what this machine actually is ---------------------------------------
+#
+# Facts are gathered here and judged in `xedown/preflight.py`, which is pure
+# Python and therefore reachable by the unit tests -- the same boundary that
+# decides where the rest of this project's logic lives.
+#
+# preflight.py is run as a FILE, not imported as `xedown.preflight`:
+# importing the package runs __init__.py, whose gi guard prints a note to
+# stderr, and an install is the wrong place for that note.
+
+FACT_NAMES=(python_version has_gi gtk3_typelib webkit41_typelib
+            has_xed xed_version distro_id distro_version_id session_type)
+
+probe_facts() {
+  fact_python_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || true)"
+
+  if python3 -c 'import gi' >/dev/null 2>&1; then
+    fact_has_gi=1
+    if python3 -c 'import gi; gi.require_version("Gtk", "3.0")' >/dev/null 2>&1
+    then fact_gtk3_typelib=1; else fact_gtk3_typelib=0; fi
+    if python3 -c 'import gi; gi.require_version("WebKit2", "4.1")' >/dev/null 2>&1
+    then fact_webkit41_typelib=1; else fact_webkit41_typelib=0; fi
+  else
+    fact_has_gi=0
+    # Both probes need gi to run, so with gi gone their answer would be a
+    # guess dressed as a measurement. Left undetermined on purpose.
+    fact_gtk3_typelib=""
+    fact_webkit41_typelib=""
+  fi
+
+  if command -v xed >/dev/null 2>&1; then
+    fact_has_xed=1
+    fact_xed_version="$(xed --version 2>/dev/null || true)"
+  else
+    fact_has_xed=0
+    fact_xed_version=""
+  fi
+
+  fact_distro_id=""
+  fact_distro_version_id=""
+  if [ -r /etc/os-release ]; then
+    fact_distro_id="$(. /etc/os-release 2>/dev/null && printf '%s' "${ID-}")"
+    fact_distro_version_id="$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_ID-}")"
+  fi
+
+  fact_session_type="${XDG_SESSION_TYPE-}"
+
+  # TEST-ONLY SEAM. `scripts/run-install-tests.sh` sets this to override
+  # probed facts, so "the WebKit 4.1 typelib is missing" is testable without
+  # sabotaging the interpreter that has to run preflight.py a moment later.
+  # This is the only seam of its kind in this script.
+  local pair key value known
+  for pair in ${XEDOWN_PREFLIGHT_FACTS-}; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    for known in "${FACT_NAMES[@]}"; do
+      if [ "$key" = "$known" ]; then
+        printf -v "fact_$key" '%s' "$value"
+        break
+      fi
+    done
+  done
+}
+
+run_preflight() {
+  local args=()
+  local name var
+  for name in "${FACT_NAMES[@]}"; do
+    var="fact_$name"
+    args+=("$name=${!var-}")
+  done
+  set +e
+  python3 "$STAGE/xedown/preflight.py" "${args[@]}"
+  local status=$?
+  set -e
+  return "$status"
+}
+
+preflight_gate() {
+  # An archive built before the compatibility check existed does not carry
+  # preflight.py. Python exits 2 when it cannot open a file, which is the
+  # same code preflight.py uses for "refused" -- so without this guard every
+  # pre-1.0 tarball would be refused with no findings printed and no way to
+  # tell the two cases apart. Publishing the installer separately from the
+  # archive is exactly what invites that pairing.
+  if [ ! -f "$STAGE/xedown/preflight.py" ]; then
+    say "This archive predates xedown's compatibility check, so nothing was"
+    say "verified about this machine. Installing anyway."
+    return 0
+  fi
+  probe_facts
+  local status=0
+  run_preflight || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) say ""; say "Installing anyway: nothing above prevents xedown from running,"
+       say "but this machine is outside what xedown is tested on."
+       say "See docs/compatibility.md."; say ""; return 0 ;;
+    2) if [ "$FORCE" = 1 ]; then
+         say ""; say "Installing anyway because --force was given."
+         say "xedown may not load at all until the above is fixed."; say ""
+         return 0
+       fi
+       say ""
+       say "Refusing to install: xedown cannot run on this machine as it is."
+       say "Fix the above, or re-run with --force if you know better."
+       exit 2 ;;
+    *) die "preflight check could not be run (exit $status)" ;;
+  esac
+}
+
 # --- main ----------------------------------------------------------------
 
 SOURCE="$(resolve_source)"
 stage_source "$SOURCE"
 check_staged
+preflight_gate
 
 PREVIOUS="$(installed_version)"
 install_plugin
