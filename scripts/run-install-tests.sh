@@ -172,12 +172,49 @@ scenario_fresh_install() {
   assert_output_contains "Preferences"
 }
 
+scenario_upgrade_replaces() {
+  # An existing install carrying a v0.2 settings file and a module that no
+  # longer exists in the new version. Copying over this would leave the
+  # orphan behind; replacing must not.
+  mkdir -p "$PLUGIN_DIR/xedown" "$CONFIG_DIR"
+  printf '__version__ = "0.2.0"\n' > "$PLUGIN_DIR/xedown/__init__.py"
+  printf 'Version=0.2.0\n' > "$PLUGIN_DIR/xedown.plugin"
+  printf 'gone in 1.0\n' > "$PLUGIN_DIR/xedown/removed_in_1_0.py"
+  mkdir -p "$PLUGIN_DIR/xedown/__pycache__"
+  printf 'stale\n' > "$PLUGIN_DIR/xedown/__pycache__/removed_in_1_0.pyc"
+  local settings_file="$CONFIG_DIR/settings.json"
+  printf '{"preview_theme": "focused", "remote_images": "alt"}\n' > "$settings_file"
+  local before; before="$(cat "$settings_file")"
+
+  run_install --no-enable
+  assert_status 0
+  assert_installed
+  assert_absent "$PLUGIN_DIR/xedown/removed_in_1_0.py"
+  assert_absent "$PLUGIN_DIR/xedown/__pycache__"
+  [ "$(cat "$settings_file")" = "$before" ] || fail "settings.json was modified"
+  assert_output_contains "0.2.0"
+}
+
+scenario_install_from_archive() {
+  local archive
+  archive="$(ls -1t "$ROOT"/dist/xedown-*.tar.gz 2>/dev/null | head -1)"
+  if [ -z "$archive" ]; then
+    printf '    SKIP: no archive in dist/ (run scripts/build-release.sh)\n'
+    return 0
+  fi
+  run_install --from "$archive" --no-enable
+  assert_status 0
+  assert_installed
+}
+
 # --- main ----------------------------------------------------------------
 
 ROOT_PATH="$PATH"
 WANTED=("$@")
 
 scenario fresh-install
+scenario upgrade-replaces
+scenario install-from-archive
 
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%s scenario(s) failed\n' "$FAILURES" >&2
