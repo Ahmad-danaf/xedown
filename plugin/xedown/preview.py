@@ -30,17 +30,15 @@ class PreviewView:
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = 0.0
-        # The live search, remembered so a full page load can re-issue it: a
-        # fresh page is a fresh JS context and knows nothing about it. Body
-        # swaps need no help -- preview.js re-applies the search itself.
+        # Remembered so a full page load can re-issue it: a fresh page is a
+        # fresh JS context. Body swaps need no help -- preview.js re-applies
+        # the search itself.
         self._search_request = None
-        # Whichever of the page's own "ready" message or LoadEvent.FINISHED
-        # arrives first does the post-load work; the other is then a no-op.
-        # Reset on every load_document, not only here, or the second document
-        # loaded into this view would never restore its scroll. The gating
-        # logic (including why COMMITTED must arrive before a "ready" is
-        # accepted) lives in pageready.py, on the pure side of the `gi`
-        # boundary, where it can actually be unit tested.
+        # Whichever of the page's "ready" message or LoadEvent.FINISHED
+        # arrives first does the post-load work. Reset on every
+        # `load_document`, not only here, or the second document loaded into
+        # this view would never restore its scroll. The gating rules live in
+        # `pageready.py`, where they can be unit tested.
         self._page_ready = pageready.PageReadyGate()
 
         self._content_manager = WebKit2.UserContentManager()
@@ -58,8 +56,7 @@ class PreviewView:
         accessible = self.widget.get_accessible()
         if accessible is not None:
             # Focus lands here on every switch into Preview, so this name is
-            # what a screen reader reads out at the moment the mode changes.
-            # It is the mode announcement -- see the design's section 3.3.
+            # what a screen reader reads at the moment the mode changes.
             accessible.set_name(a11y.NAMES["preview"])
 
         settings = self.widget.get_settings()
@@ -80,8 +77,6 @@ class PreviewView:
         self._load_changed_handler_id = self.widget.connect(
             "load-changed", self._on_load_changed
         )
-
-    # --- loading -----------------------------------------------------------
 
     def load_document(self, html, base_uri=None, restore_scroll=0.0):
         """Load a complete page. Resets scroll reporting.
@@ -238,8 +233,6 @@ class PreviewView:
         except GLib.Error:
             pass  # the view is being torn down
 
-    # --- host callbacks ----------------------------------------------------
-
     def _on_script_message(self, _manager, message):
         try:
             payload = json.loads(message.get_js_value().to_string())
@@ -388,8 +381,6 @@ class PreviewView:
         # again -- the page has no memory of it.
         if self._search_request is not None:
             self.search(*self._search_request)
-
-    # --- teardown ----------------------------------------------------------
 
     def destroy(self):
         for owner, handler_id in (

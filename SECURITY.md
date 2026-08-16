@@ -84,6 +84,8 @@ somebody else's:
 
 ## The network boundary
 
+xedown itself makes network requests only for permitted remote images.
+
 **The preview page itself is never granted `http:` or `https:`.** Its
 content security policy is `default-src 'none'`, and `img-src` never lists
 either scheme, whatever the settings say. Only xedown's own fetch code
@@ -92,7 +94,7 @@ scheme in `imagescheme.py`) reaches the network — only for images, only over
 `https://`, only to public addresses, and only when the reader has allowed
 it: globally with `remote_images` in Preferences, or for one document at a
 time from the mode bar's **Load** button. See
-[docs/settings.md](docs/settings.md#remote-images).
+[docs/remote-images.md](docs/remote-images.md).
 
 Nothing else in xedown reaches the network. No font, stylesheet, script,
 frame, XHR, WebSocket or favicon is ever fetched, by the page or by xedown's
@@ -135,8 +137,9 @@ known payloads:
 7. **No credentials are ever sent.** A URL carrying `user:pass@` is refused
    outright, on the original URL and on every redirect hop.
 8. **No cookies, no `Referer` and no `Authorization` ever leave this
-   machine.** The only header xedown adds is a fixed `User-Agent` naming the
-   project and where to find it.
+   machine.** xedown adds only a fixed `User-Agent` naming the project and
+   where to find it, an image-format `Accept` header, and
+   `Accept-Encoding: identity`.
 9. **No SVG and no format xedown cannot measure is ever fetched.** A format
    whose dimensions cannot be read cheaply and safely is refused rather than
    guessed at — this is also why AVIF cannot be fetched remotely; see

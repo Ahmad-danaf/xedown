@@ -231,3 +231,5 @@ docs/superpowers
 # stay ignored.
 tests/compat/corpus/*
 !tests/compat/corpus/MANIFEST.json
+AGENTS.md
+.codex/

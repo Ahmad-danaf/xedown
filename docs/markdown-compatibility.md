@@ -91,7 +91,7 @@ should not tell a stranger's server your IP address, roughly where you are,
 and when you read it. The placeholder is also more use than a broken-image
 icon, because it names what is missing. Allow fetching for one tab with
 **Load** in the mode bar, or for every document with `"remote_images":
-"https"` in Preferences. See [settings.md](settings.md#remote-images) and
+"https"` in Preferences. See [remote-images.md](remote-images.md) and
 [../SECURITY.md](../SECURITY.md).
 
 Measured on the corpus with fetching off — the default a new reader gets —
@@ -283,7 +283,7 @@ renders `1) b` as a heading, marker included.
 **Why:** `1)` was accepted as an ordered-list marker in this release, which is
 what CommonMark asks for. That put it at parity with the `.` spelling — and the
 `.` spelling has behaved this way in every previous version of xedown. Writing
-the same document with `1.` produces the same heading in xedown 0.3.0.
+the same document with `1.` produces the same heading in xedown 1.0.0.
 Narrowing the marker rule to close this would re-break the two-space `1) b`
 nesting the same release fixed.
 

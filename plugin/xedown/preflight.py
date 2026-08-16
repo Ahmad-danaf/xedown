@@ -12,18 +12,20 @@ importing the package executes `__init__.py`, whose `gi` guard prints a note
 to stderr, which is correct behaviour and noise in the middle of an install.
 That is why there are no relative imports here.
 
-The matrix below is duplicated in `docs/compatibility.md`, which is the copy
-a reader actually meets. `tests/unit/test_compatibility.py` pins the two
-together, the same way `test_shutdown_allowlist.py` pins the allowlist line
-that is duplicated across both harness scripts: the fact lives in two places
-because both places need it readable, and a test makes that safe.
+The installer ranges and exact live-release versions below are published in
+`docs/compatibility.md`, which is the copy a reader actually meets.
+`tests/unit/test_compatibility.py` pins both halves to these values: the
+`LIVE_*` constants and the required GI API versions to the supported table,
+and `MIN_PYTHON`, `TESTED_PYTHON`, `TESTED_XED` and `TESTED_DISTRO_MAJOR` to
+the sections describing what the installer refuses and warns about. The two
+are deliberately different claims -- a range the installer tolerates is not a
+version anyone ran -- and the document keeps them in separate sections for
+that reason.
 """
 
 import re
 import sys
 from typing import NamedTuple
-
-# --- the supported matrix ------------------------------------------------
 
 MIN_PYTHON = (3, 10)
 TESTED_PYTHON = ((3, 10), (3, 11), (3, 12))
@@ -34,7 +36,14 @@ TESTED_DISTRO_ID = "linuxmint"
 TESTED_DISTRO_MAJOR = 22
 TESTED_SESSION_TYPE = "x11"
 
-# --- severities ----------------------------------------------------------
+# Exact environment used for live v1.0 desktop verification. These are kept
+# separate from the broader installer-warning ranges above: a preflight may
+# reasonably allow a nearby version without turning it into a support claim.
+LIVE_DISTRO_VERSION = "22.3"
+LIVE_XED_VERSION = "3.8.9"
+LIVE_PYTHON_VERSION = "3.12.3"
+LIVE_GTK_VERSION = "3.24.41"
+LIVE_WEBKIT_VERSION = "2.52.3"
 
 HARD = "hard"
 SOFT = "soft"
@@ -54,8 +63,6 @@ class Finding(NamedTuple):
     remedy: str = ""
 
 
-# --- parsers -------------------------------------------------------------
-#
 # `[0-9]`, never `\d`: `\d` is Unicode-aware and matches Arabic-Indic
 # digits, which `int()` then converts without complaint, inventing a version
 # nobody reported. CLAUDE.md records the same trap in the sanitizer.
@@ -102,18 +109,13 @@ def parse_distro_major(text):
     return int(match.group(1)) if match else None
 
 
-# --- the verdict ---------------------------------------------------------
-#
-# Three states per fact, and the difference between two of them is the whole
-# point:
+# Three states per fact, and the difference is the whole point:
 #
 #   True  -- present.
 #   False -- determined absent. Only this can be fatal.
 #   None  -- could not be determined. Never fatal, at most a warning.
 #
-# A probe that failed is not evidence of absence, and an installer that
-# refuses over a question it could not answer is worse than one that
-# installs with a warning.
+# A probe that failed is not evidence of absence.
 
 
 def _python(facts):
@@ -275,8 +277,6 @@ def evaluate(facts):
     return findings
 
 
-# --- the command-line face -----------------------------------------------
-#
 # `install.sh` probes the machine and calls this with `key=value` arguments.
 # The exit code is the whole protocol: 0 clear, 1 warned, 2 refused.
 

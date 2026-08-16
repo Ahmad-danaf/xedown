@@ -21,18 +21,9 @@ Everything here was established by probe rather than assumed:
   `['direct://']` when no proxy is configured, and the proxy URI when one
   is -- `_proxies_for` reads exactly that.
 
-`imagefetch.Fetcher` takes `proxies_for` as a callable consulted per URL on
-its own worker thread, not a per-request attribute assignment: mutating a
-shared `Fetcher`'s internals on every request would race the very worker
-that reads them. `_proxies_for` is instead handed to the `Fetcher`
-constructor once, in `get_fetcher()`.
-
-`Fetcher.shutdown()` stops the executor from taking new work but does not
-itself refuse a later `.request()` call -- that invariant belongs to
-whoever owns the `Fetcher`'s lifecycle, which is this module. `get_fetcher()`
-never hands back an instance that has already been shut down: see its
-docstring for how, and why the alternative (going permanently inert) was
-not chosen.
+`proxies_for` is handed to the `Fetcher` constructor once rather than
+assigned per request, because mutating a shared `Fetcher`'s internals on
+every request would race the worker that reads them.
 """
 
 import concurrent.futures
@@ -91,13 +82,10 @@ def _network_available():
 def _on_network_changed(_monitor, available):
     """Forget failures on reconnect, against whichever fetcher is live.
 
-    Reads the module-level `_fetcher` at call time rather than closing over
-    the instance that was live when `connect()` ran, because this handler
-    outlives any single `Fetcher`: it is connected once per process (see
-    `_monitor_connected`), and `get_fetcher()` can replace `_fetcher` many
-    times across that same process's life. The None-guard covers the gap
-    between a `shutdown()` and the next `get_fetcher()` call, when there is
-    momentarily no fetcher to invalidate.
+    Reads `_fetcher` at call time rather than closing over the instance live
+    when `connect()` ran: this handler is connected once per process and
+    outlives any single `Fetcher`. The None-guard covers the gap between a
+    `shutdown()` and the next `get_fetcher()`.
     """
     if available and _fetcher is not None:
         _fetcher.invalidate_failures()
@@ -106,24 +94,16 @@ def _on_network_changed(_monitor, available):
 def get_fetcher():
     """The one fetcher this process shares, built on first use.
 
-    Also rebuilt, fresh, the first time this is called *after*
-    `shutdown()`: `shutdown()` resets `_fetcher` (and `_executor`) to
-    `None` rather than leaving a torn-down instance in place, so this
-    function only ever does one of two things -- return the single live
-    fetcher, or build an entirely new one. It never hands back the instance
-    `shutdown()` just tore down. Combined with `_on_request` asking this
-    function fresh on every request rather than caching the result across
-    calls, that is what keeps a `.request()` call from ever landing on a
-    `Fetcher` whose executor has already been shut down.
+    Rebuilt fresh the first time this is called after `shutdown()`, which
+    resets `_fetcher` to `None` rather than leaving a torn-down instance in
+    place. With `_on_request` calling this afresh per request, that is what
+    keeps a `.request()` from landing on a shut-down executor.
 
-    Rebuilding was chosen over the alternative -- latching permanently
-    inert once `shutdown()` has ever run. `register_once()` installs the
-    scheme handler once for the life of the process, so WebKit can hand
-    this module a request at any later point, including after every tab
-    has closed and a new one has been opened. A fetcher that never came
-    back would mean every image in that next document hangs forever, with
-    no recovery short of restarting xed -- worse than the resource cost of
-    rebuilding a thread pool that only happens on the cold path anyway.
+    Rebuilding beats latching permanently inert: `register_once()` installs
+    the scheme handler for the life of the process, so WebKit can hand this
+    module a request after every tab has closed and a new one opened. A
+    fetcher that never came back would hang every image in that document
+    with no recovery short of restarting xed.
     """
     global _fetcher, _executor, _monitor_connected
     if _fetcher is None:

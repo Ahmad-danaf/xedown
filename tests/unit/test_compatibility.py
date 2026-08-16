@@ -1,14 +1,21 @@
-"""Pins the published compatibility claim to the matrix the installer uses.
+"""Pin what `docs/compatibility.md` publishes to the constants behind it.
 
-The matrix lives in two places on purpose. `preflight.py` needs it as data;
-`docs/compatibility.md` is the copy a reader actually meets, and neither can
-be replaced by a pointer to the other. What makes a duplicate safe is a test
-that fails when the copies disagree -- the same technique
-`test_shutdown_allowlist.py` uses for the allowlist line duplicated across
-both harness scripts, and `test_release_manifest.py` for the REQUIRED array.
+Two different claims live in that document, and both are duplicated from
+`preflight.py` on purpose -- `preflight.py` needs them as data, and the
+document is the copy a reader actually meets, so neither can be replaced by
+a pointer to the other:
 
-The table is read out of the document rather than restated here. Restating
-it would produce a test that passes happily while the published claim drifts.
+- the *support* claim: the exact live-verified stack, held against the
+  `LIVE_*` constants and the required GI API versions;
+- the *installer* claim: the broader series-level matrix the preflight
+  judges a machine against, held against `MIN_PYTHON`, `TESTED_PYTHON`,
+  `TESTED_XED` and `TESTED_DISTRO_MAJOR`.
+
+What makes a duplicate safe is a test that fails when the copies disagree --
+the same technique `test_shutdown_allowlist.py` uses for the allowlist line
+duplicated across both harness scripts. Both claims are read out of the
+document rather than restated here; restating one would produce a test that
+passes happily while the published claim drifts.
 """
 
 import pathlib
@@ -21,76 +28,121 @@ DOC = ROOT / "docs" / "compatibility.md"
 INDEX = ROOT / "docs" / "index.md"
 
 
-def supported_rows():
-    """`{component: [token, ...]}` from the Supported table's second column."""
+def dotted(version):
+    return ".".join(str(part) for part in version)
+
+
+def section(title):
+    """The body of `## <title>`, up to the next heading or the end."""
     text = DOC.read_text(encoding="utf-8")
-    section = re.search(r"^## Supported\b(.*?)^## ", text, re.MULTILINE | re.DOTALL)
-    assert section is not None, "no '## Supported' section in docs/compatibility.md"
+    found = re.search(
+        rf"^## {re.escape(title)}\b(.*?)(?=^## |\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert found is not None, f"no '## {title}' section in docs/compatibility.md"
+    body = found.group(1)
+    assert body.strip(), f"the '{title}' section is empty; its shape has drifted"
+    return body
+
+
+def supported_rows():
+    """`{component: [token, ...]}` from the supported table's second column."""
     rows = {}
-    for line in section.group(1).splitlines():
+    for line in section("Officially supported runtime").splitlines():
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) < 2 or set(cells[0]) <= set("- ") or not cells[0]:
             continue
         tokens = re.findall(r"`([^`]+)`", cells[1])
         if tokens:
             rows[cells[0]] = tokens
-    assert rows, "the Supported table parsed as empty; its shape has drifted"
+    assert rows, "the supported table parsed as empty; its shape has drifted"
     return rows
 
 
-def test_every_component_in_the_matrix_has_a_published_row():
-    rows = supported_rows()
-    for component in (
+def test_every_live_component_has_a_published_row():
+    assert set(supported_rows()) == {
         "Linux Mint",
         "xed",
         "Python",
-        "WebKit2GTK",
         "GTK",
+        "WebKitGTK",
         "Display server",
-    ):
-        assert component in rows, f"no published row for {component}"
+    }
 
 
-def test_the_published_xed_series_is_the_tested_one():
-    (token,) = supported_rows()["xed"]
-    assert token == f"{preflight.TESTED_XED[0]}.{preflight.TESTED_XED[1]}.x"
-
-
-def test_the_published_python_versions_are_the_tested_ones():
-    tokens = supported_rows()["Python"]
-    published = tuple(preflight.parse_python_version(t)[:2] for t in tokens)
-    assert published == preflight.TESTED_PYTHON
-
-
-def test_the_published_webkit_and_gtk_versions_are_the_required_ones():
+def test_exact_live_versions_are_published():
     rows = supported_rows()
-    assert rows["WebKit2GTK"] == [preflight.REQUIRED_WEBKIT_GI]
-    assert rows["GTK"] == [preflight.REQUIRED_GTK_GI]
+    assert rows["Linux Mint"] == [preflight.LIVE_DISTRO_VERSION]
+    assert rows["xed"] == [preflight.LIVE_XED_VERSION]
+    assert rows["Python"] == [preflight.LIVE_PYTHON_VERSION]
+    assert rows["GTK"] == [
+        preflight.LIVE_GTK_VERSION,
+        preflight.REQUIRED_GTK_GI,
+    ]
+    assert rows["WebKitGTK"] == [
+        preflight.LIVE_WEBKIT_VERSION,
+        preflight.REQUIRED_WEBKIT_GI,
+    ]
+    assert rows["Display server"] == [preflight.TESTED_SESSION_TYPE.upper()]
 
 
-def test_the_published_distro_is_the_tested_one():
-    (token,) = supported_rows()["Linux Mint"]
-    assert token == f"{preflight.TESTED_DISTRO_MAJOR}.x"
+def test_ci_only_python_versions_are_not_called_live_supported():
+    body = section("CI unit-tested only")
+    # Every tested series except the one the live machine ran: those are the
+    # interpreters with unit evidence and no evidence inside xed.
+    for version in preflight.TESTED_PYTHON[:-1]:
+        assert f"`{dotted(version)}`" in body, (
+            f"Python {dotted(version)} is in TESTED_PYTHON but the "
+            "CI-only section does not name it"
+        )
 
 
-def test_the_published_display_server_is_the_tested_one():
-    (token,) = supported_rows()["Display server"]
-    assert token == preflight.TESTED_SESSION_TYPE
+def test_the_installer_refusal_and_warning_thresholds_are_published():
+    """The preflight's series-level matrix, as the installer section states it.
+
+    These are the numbers a reader uses to predict what `install.sh` will do
+    on their machine, and each one is a constant in `preflight.py`. They are
+    checked inside the installer section specifically: the same digits appear
+    elsewhere in the document meaning something else -- `3.12` is also the
+    live-verified patch series, `3.10` also the hard minimum -- so a
+    whole-document search would pass on the wrong sentence.
+    """
+    body = section("What the installer checks")
+    for token, constant in (
+        (dotted(preflight.MIN_PYTHON), "MIN_PYTHON"),
+        (dotted(preflight.TESTED_PYTHON[-1]), "TESTED_PYTHON's ceiling"),
+        (dotted(preflight.TESTED_XED), "TESTED_XED"),
+        (str(preflight.TESTED_DISTRO_MAJOR), "TESTED_DISTRO_MAJOR"),
+    ):
+        assert f"`{token}`" in body, (
+            f"{constant} is {token}, which the installer section does not "
+            "publish; the two copies have drifted"
+        )
 
 
-def test_the_known_negative_is_stated():
-    # WebKit2GTK 4.1 is pinned in code, so 4.0-only systems cannot work at
-    # all. A known negative is more useful to a reader than silence, and
-    # this is the one xedown knows.
-    text = DOC.read_text(encoding="utf-8")
-    assert "4.0" in text
+def test_the_hard_python_minimum_is_published_with_the_requirements():
+    # Stated twice in the document because a reader checking requirements
+    # and a reader predicting the installer are looking in different places.
+    body = section("Hard requirements and known negatives")
+    assert f"`{dotted(preflight.MIN_PYTHON)}`" in body
 
 
-def test_the_may_work_sentence_exists():
+def test_the_required_gi_api_versions_are_published_as_requirements():
+    body = section("Hard requirements and known negatives")
+    assert f"`{preflight.REQUIRED_WEBKIT_GI}`" in body
+    assert f"`{preflight.REQUIRED_GTK_GI}`" in body
+
+
+def test_expected_versions_are_explicitly_unverified():
     text = DOC.read_text(encoding="utf-8").lower()
-    assert "may work" in text
-    assert "not officially tested" in text
+    assert "expected to work" in text
+    assert "unverified" in text
 
 
-def test_the_document_is_linked_from_the_docs_index():
+def test_webkit_40_is_a_known_negative():
+    assert "4.0" in DOC.read_text(encoding="utf-8")
+
+
+def test_document_is_linked_from_the_docs_index():
     assert "](compatibility.md)" in INDEX.read_text(encoding="utf-8")

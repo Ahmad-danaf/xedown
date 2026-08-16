@@ -46,18 +46,12 @@ EXTERNAL_CHANGE_MESSAGE = (
 # user's work.
 RELOAD_LABEL = "Reload…"
 
-# Every controller currently alive in this process, so that the last one out
-# can release the image-fetch resources `imagescheme` holds on everyone's
-# behalf -- a thread pool with queued fetches in it, which nothing else in
-# the plugin is positioned to shut down (a plugin disable, or the last window
-# closing, must not leave workers dialling hosts for tabs that no longer
-# exist). Added in `activate` and dropped in `deactivate`, which is the same
-# pair of moments the view's own `_xedown_controller` attribute exists
-# between, so this cannot go stale the way a second reference held elsewhere
-# would: it is not another source of truth about *which* controller a view
-# has, only a count of how many are still running. Weak, so a controller that
-# somehow escapes teardown is still collectable and still leaves the set --
-# strong references here would turn that into a leak for the life of xed.
+# So the last controller out can release the image-fetch thread pool
+# `imagescheme` holds on everyone's behalf; nothing else in the plugin is
+# positioned to stop workers still dialling hosts for tabs that are gone.
+# Weak, so a controller that escapes teardown leaves the set anyway rather
+# than leaking for the life of xed. A count, never a source of truth about
+# which controller a view has.
 _live_controllers = weakref.WeakSet()
 
 
@@ -95,40 +89,24 @@ class TabController:
         # measured, so nothing is withheld from a tab that has not loaded.
         self._size_allows_live_refresh = True
         self._preview_deferred = False
-        # The chip's label, computed once at the moment `_preview_deferred`
-        # is set -- by `_build_if_markdown`, or by `_on_document_loaded` on
-        # the build/load race described below -- and never touched again
-        # while it stays true. `_apply_size_guard` runs on every keystroke,
-        # so it only ever reads this rather than re-measuring the buffer --
-        # see that method's docstring. A label that goes stale after
-        # someone pastes megabytes into an already-deferred document is
-        # accepted: it is a size hint offered once, not a live readout.
+        # Computed once when `_preview_deferred` is set, never re-measured:
+        # `_apply_size_guard` runs on every keystroke. A label that goes stale
+        # after a huge paste is accepted -- it is a hint offered once, not a
+        # live readout.
         self._deferred_size_label = None
-        # Whether Preview has ever actually shown this reader real,
-        # non-empty content -- set once, by `_note_preview_shown`, and
-        # never cleared again. This is the question `_on_document_loaded`
-        # needs answered before it may ever switch a reader out of
-        # Preview on its own: two earlier, narrower discriminators here
-        # ("was this the tab's first `loaded` event", then "did the build
-        # measure an empty buffer") each closed one lifecycle and missed
-        # another -- a document built via New -> Save As, and a genuinely
-        # empty file that gets typed into for an hour before its first
-        # revert. Both fail the same way in the end: they infer "has the
-        # reader seen a preview" from something else (event order, a
-        # buffer's state at one instant) instead of asking it directly.
-        # A fourth attempt failed the same way one level down: it asked
-        # the *buffer* how long the document was, when what the reader was
-        # shown is `_render_text()` -- and those two diverge for as long as
-        # `_disk_text` holds an external change the buffer has not taken.
-        # The two render calls now hand in the text they rendered.
-        # See `_note_preview_shown`'s own docstring for where this is set.
+        # Whether Preview has ever shown this reader real content, which
+        # `_on_document_loaded` must know before switching anyone out of
+        # Preview. Set once by `_note_preview_shown` from the text actually
+        # rendered. Three earlier attempts inferred it instead -- from event
+        # order, from the buffer's state at one instant, from the buffer's
+        # length -- and each missed a lifecycle the others caught. Ask
+        # directly; do not infer.
         self._preview_has_shown_content = False
         self._refresh_delay_ms = 250
         self._text_direction = direction.AUTO
         self._ui_direction = direction.LTR
         self._stylesheet_token = None
         self._info_bar = None
-        # What the current bar's action button does, if it has one.
         self._info_bar_action = None
         # The external-change bar specifically, when it is the one in the
         # tab's single slot. Tracked apart from `_info_bar` so that retiring
@@ -169,8 +147,6 @@ class TabController:
         # in another tab -- which is the point, since the grant is about the
         # document the reader looked at and decided to trust.
         self._remote_unblocked = False
-
-    # --- lifecycle ---------------------------------------------------------
 
     def activate(self):
         self._active = True
@@ -223,7 +199,6 @@ class TabController:
 
         self._dismiss_info_bar()
 
-        # Always hand the source editor back, whatever mode we were in.
         if self.frame is not None:
             self.frame.set_no_show_all(False)
             self.frame.show()
@@ -240,18 +215,11 @@ class TabController:
             self.searchbar = None
         self._built = False
 
-        # Last one out. Done after the WebView above is destroyed, so any
-        # scheme request still outstanding is already orphaned by the time
-        # the fetcher stops answering -- `imagescheme.shutdown()` cancels
-        # queued fetches without answering their callbacks, and that is only
-        # harmless for requests whose page has gone. The emptiness test is
-        # what keeps a closing tab from tearing the pool out from under a
-        # tab in another window: while any controller is still registered,
-        # this does nothing. A later request cannot land on the fetcher this
-        # tears down either -- `imagescheme._on_request` asks `get_fetcher()`
-        # fresh every time, and that function builds a new one rather than
-        # returning the shut-down instance, which is what makes a
-        # disable/re-enable cycle work as well.
+        # Last one out, and only after the WebView above is destroyed:
+        # `imagescheme.shutdown()` cancels queued fetches without answering
+        # their callbacks, which is harmless only once their page is gone.
+        # The emptiness test keeps a closing tab from tearing the pool out
+        # from under a tab in another window.
         _live_controllers.discard(self)
         if not _live_controllers:
             imagescheme.shutdown()
@@ -274,35 +242,12 @@ class TabController:
     def _attach_focus_watch(self, *_args):
         """Watch the "set-focus" of the window this tab is in *right now*.
 
-        Why the signal is watched at all is `_on_window_set_focus`'s own
-        docstring. Why it is tracked here instead of through `_connect` is
-        the tab move: `Documents -> Move to New Window` (and dragging a tab
-        out) re-parents the very same tab into another window, and this
-        controller deliberately survives that -- see
-        `XedownWindowActivatable._on_tab_removed`. A connection made once,
-        to the window the tab happened to be in when the controller was
-        built, would still be attached to the window the tab has left, and
-        Escape would silently stop closing the search bar for that tab.
-
-        So this connection is moved rather than only torn down: called
-        again after the tab's toplevel changed (from `hierarchy-changed`,
-        connected in `_build_if_markdown`), it drops the old connection and
-        makes a new one against the new window. It is idempotent -- called
-        for the window already watched, it does nothing -- and it takes the
-        `hierarchy-changed` arguments it ignores, so it can be connected
-        directly.
-
-        No `GLib.idle_add` here, unlike `_on_tab_removed`: that handler has
-        to *wait* to learn whether a move or a close happened, because
-        "tab-removed" cannot tell them apart. This has nothing to wait for.
-        `_toplevel()` answers the only question it asks, the answer is
-        already correct at emission time (both halves of a move -- the
-        unparent and the re-parent -- emit `hierarchy-changed` in turn,
-        synchronously), and re-running it later can only produce the same
-        answer. During the unparent half, and during teardown,
-        `get_toplevel()` returns a widget that is no window at all;
-        `_toplevel()` already answers None for that, which detaches and
-        waits for the re-parent (or for `deactivate`).
+        Tracked here rather than through `_connect` because the connection
+        has to MOVE with the tab: a tab dragged into another window keeps
+        this controller, and a connection left on the window it came from
+        would silently stop Escape closing that tab's search bar. Called
+        again from `hierarchy-changed`, it is idempotent, and `_toplevel()`
+        answers None mid-move, which detaches until the re-parent arrives.
         """
         window = self._toplevel()
         if window is self._focus_window:
@@ -316,18 +261,11 @@ class TabController:
     def _detach_focus_watch(self):
         """Drop the "set-focus" connection, if one is live.
 
-        Defensive about the window already being disposed, for the same
-        reason `deactivate()`'s bulk disconnect loop is: this runs during
-        teardown too, and a disconnect against a window GTK has already
-        finalised raises rather than returning quietly.
-
-        `_last_focus` goes with the connection that fed it. The watch is
-        per-tab on a signal the whole *window* shares, so what it records is
-        routinely some other tab's widget -- and a `Xed.View` held here is
-        that tab's buffer held too. Dropping it is also the right answer for
-        the tab move this method is half of: the widget last focused in the
-        window the tab has left is no answer to any question the new window
-        will ask.
+        Defensive about a disposed window, because this also runs during
+        teardown, where disconnecting raises rather than returning quietly.
+        `_last_focus` goes with it: the watch is per-tab on a window-wide
+        signal, so what it holds is routinely another tab's view -- and that
+        is that tab's buffer held too.
         """
         if self._focus_window is not None and self._focus_handler_id is not None:
             try:
@@ -337,8 +275,6 @@ class TabController:
         self._focus_window = None
         self._focus_handler_id = None
         self._last_focus = None
-
-    # --- construction ------------------------------------------------------
 
     @property
     def is_markdown(self):
@@ -390,10 +326,8 @@ class TabController:
         self._refresh_delay_ms = int(store.get(settings.REFRESH_DELAY_MS))
         self._text_direction = store.get(settings.TEXT_DIRECTION)
         self._watch_external = bool(store.get(settings.WATCH_EXTERNAL_CHANGES))
-        # The desktop's own direction, which xedown's chrome inside the page
-        # follows -- the mode bar already gets this free from GTK. Read once:
-        # a desktop's text direction is fixed at login, and nothing in xed
-        # signals a change to it.
+        # Read once: a desktop's text direction is fixed at login, and
+        # nothing in xed signals a change to it.
         self._ui_direction = (
             direction.RTL
             if Gtk.Widget.get_default_direction() == Gtk.TextDirection.RTL
@@ -413,12 +347,9 @@ class TabController:
             self.modebar, "build-preview-requested", self._on_build_preview_requested
         )
 
-        # Before the WebView exists, because the handler is installed on the
-        # default web context and a page can ask for a `xedown-image:` URL
-        # from the moment it loads. `register_once` is idempotent for the
-        # life of the process; the listener is added exactly once per built
-        # tab (this method refuses to run twice, `_built` sees to that) and
-        # removed again in `deactivate`.
+        # Before the WebView exists: the handler lives on the default web
+        # context, and a page can ask for a `xedown-image:` URL the moment it
+        # loads. `register_once` is idempotent for the life of the process.
         imagescheme.register_once()
         imagescheme.note_failure_listener(self._on_remote_image_failed)
 
@@ -441,12 +372,8 @@ class TabController:
         self._connect(self.document, "changed", self._on_buffer_changed)
         self._connect(self.document, "modified-changed", self._on_modified_changed)
 
-        # See _on_window_set_focus's docstring: xed's own Escape handling
-        # can hand focus straight to the hidden source view without ever
-        # reaching this controller's own key routing. The watch follows the
-        # tab from window to window (see _attach_focus_watch), so the tab's
-        # own "hierarchy-changed" -- which is tracked normally, and so is
-        # torn down with everything else -- is what re-points it.
+        # "hierarchy-changed" is what re-points the focus watch after a tab
+        # is moved between windows; see `_attach_focus_watch`.
         self._connect(self.tab, "hierarchy-changed", self._attach_focus_watch)
         self._attach_focus_watch()
 
@@ -464,8 +391,6 @@ class TabController:
         # afterwards is a request, and requests are honoured at any size.
         if initial is Mode.PREVIEW and perflimits.classify(char_count).defer_initial:
             self._preview_deferred = True
-            # Computed once, here, rather than by `_apply_size_guard` on
-            # every keystroke -- see `_deferred_size_label`'s own comment.
             self._deferred_size_label = perflimits.describe_bytes(
                 len(self._render_text().encode("utf-8"))
             )
@@ -473,8 +398,6 @@ class TabController:
         self._apply_size_guard()
         self.set_mode(initial, initial=True)
         return False
-
-    # --- mode switching ----------------------------------------------------
 
     def toggle(self):
         self.set_mode(Mode.SOURCE if self.state.mode is Mode.PREVIEW else Mode.PREVIEW)
@@ -504,46 +427,21 @@ class TabController:
     def set_mode(self, mode, initial=False):
         """Show `mode`. `initial` is the build-time call, which is different.
 
-        Going to the mode you are already in does nothing: re-running the
-        branches below would re-grab focus and re-file the mode for no
-        change anyone would see. The build-time call is exempt, because that
-        is the call that first makes one of the two widgets visible.
+        `initial` suppresses three things that would each be a regression on
+        a file opening in Markdown mode: restoring the source scroll (which
+        would apply fraction 0.0 over the position xed just restored),
+        grabbing focus (xed opens several tabs at once, and grabbing focus in
+        a non-current notebook page moves the window's focus off the tab the
+        user is looking at), and writing to the mode store (opening a file
+        must not rewrite the memory it was just read from).
 
-        `initial` also suppresses three things that would each be a
-        regression on a file opening in Markdown mode: restoring the source
-        scroll (which applies fraction 0.0 and would scroll over the position
-        xed just restored), grabbing focus (xed opens several tabs at once,
-        and grabbing focus in a notebook page that is not current moves the
-        window's focus off the tab the user is looking at), and writing to
-        the mode store (opening a file must not rewrite the memory it was
-        just read from).
+        `has_focus_inside()` is read ahead of every state change that could
+        move focus, because it is only meaningful *before* the switch: focus
+        on a mode button is what makes Orca announce the toggle's own state
+        change, and this must not speak a second time on top of it.
 
-        It also decides, before anything below moves focus, whether this
-        switch gets a spoken announcement (see `_announce_mode`): both
-        directions of Ctrl+Shift+M measured completely silent on their own
-        (Task 5 of the Orca verification plan, once `row-97-focus-mode-bar`
-        got a marker of its own -- Task 4's version of this same claim was
-        inferred by subtracting a misattributed utterance from a
-        contaminated window, not measured cleanly), which is the gap this
-        checks for. `self.modebar.has_focus_inside()` is read ahead of every
-        state change that could move focus, because it is only meaningful
-        *before* the switch: if the user tabbed to a mode button and
-        activated it, that focus is what makes Orca announce the toggle's own
-        state change, and this must not add a second announcement on top of
-        it. Exactly one thing runs earlier -- the deferral-clear block just
-        below -- and it is safe there because `has_focus_inside` inspects
-        only the two mode toggle buttons, and retiring the chip touches
-        neither of them.
-
-        This is also the one place that clears `_preview_deferred`, because
-        it is where every route into Preview converges -- the mode bar's own
-        Preview segment (`_on_mode_selected`), Ctrl+Shift+M (`toggle()`), and
-        the chip's own button (`_on_build_preview_requested`) all end up
-        here rather than each having to remember to touch the flag
-        themselves. The build-time call from `_build_if_markdown` cannot
-        undo its own deferral by accident: when it defers, it passes
-        `Mode.SOURCE`, never `Mode.PREVIEW`, to this method, so the guard
-        below (`mode is Mode.PREVIEW`) never sees that call.
+        The one place `_preview_deferred` is cleared, because every route
+        into Preview converges here.
         """
         if not self._built:
             return
@@ -551,12 +449,9 @@ class TabController:
             return
         if mode is Mode.PREVIEW and self._preview_deferred:
             self._preview_deferred = False
-            # Cleared with the flag it belongs to, rather than relying on
-            # deferral being once-only per tab. It is once-only today --
-            # both places that set the flag run at most once -- so a stale
-            # label is currently unreachable, but that is an invariant two
-            # files away from here, and the cost of not depending on it is
-            # this line.
+            # Cleared with the flag it belongs to rather than relying on
+            # deferral being once-only per tab, which is an invariant two
+            # files away from here.
             self._deferred_size_label = None
             self._apply_size_guard()
         announce = not initial and not self.modebar.has_focus_inside()
@@ -580,20 +475,16 @@ class TabController:
             self.preview.widget.set_no_show_all(False)
             self.preview.widget.show_all()
             if not initial:
-                # Required for the selection the user makes to be the one
-                # copy acts on, and it also fixes Page_Down scrolling a
-                # hidden text view. Skipped on the build-time call: see the
-                # docstring.
+                # So the selection the user makes is the one copy acts on;
+                # also stops Page_Down scrolling the hidden text view.
                 self.preview.widget.grab_focus()
         else:
             # Before the widgets swap, not after: the marks come out of a page
             # that is still the visible one, and a bar left open would hang
             # over an editor it does not control.
             self.close_search(focus_preview=False)
-            # Mirror the frame's mitigation on the other widget: without
-            # this, a bare show_all() on the tab while in source mode would
-            # re-reveal the WebView (packed expand=True) alongside the
-            # source editor.
+            # Without this, a bare show_all() in source mode would re-reveal
+            # the WebView (packed expand=True) beside the source editor.
             self.preview.widget.set_no_show_all(True)
             self.preview.widget.hide()
             self.frame.set_no_show_all(False)
@@ -608,10 +499,7 @@ class TabController:
     def _announce_mode(self, mode):
         """Tell a screen reader which mode is now showing.
 
-        Only reached when `set_mode` decided, before it moved anything, that
-        the mode bar did not already have focus -- see that method's own
-        docstring for why the check has to happen that early. The text comes
-        from `a11y.NAMES`, never a literal: `test_a11y.py`'s
+        The text comes from `a11y.NAMES`, never a literal: `test_a11y.py`'s
         `test_every_accessible_name_in_the_host_modules_comes_from_names`
         exists specifically to catch an inlined string here.
         """
@@ -623,21 +511,16 @@ class TabController:
         """Re-render the preview from the document as it is now.
 
         Nothing to do in Markdown mode: the preview is already stale and
-        switching to it renders. Rendering into a hidden WebView to reach the
-        same state would be work the user cannot see happen -- exactly the
-        eager, unseen rendering that turning `auto_refresh` off is meant to
-        avoid, done anyway just with an extra step in front of it.
+        switching to it renders. Rendering into a hidden WebView would be
+        exactly the eager, unseen work turning `auto_refresh` off avoids.
         """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return
-        # Refresh means "try again", and that includes the remote images that
-        # did not arrive: the fetcher remembers failures precisely so that a
-        # re-render every 250ms does not re-dial a dead host four times a
-        # second, and this is one of the three moments (with the Load button
-        # and a reconnect) at which a reader has said to forget them.
-        # Successes are kept. Asked only of a tab that is actually fetching:
-        # for a blocked document the answer could not change anything, and
-        # `get_fetcher()` would build a thread pool to be told so.
+        # Refresh means "try again", including images that did not arrive:
+        # the fetcher caches failures so a 250ms re-render does not re-dial a
+        # dead host, and this is one of the moments a reader says to forget
+        # them. Asked only of a fetching tab, so a blocked one does not build
+        # a thread pool just to be told nothing can change.
         if self._fetch_remote():
             imagescheme.get_fetcher().invalidate_failures()
         self._cancel_refresh()
@@ -662,15 +545,11 @@ class TabController:
     def _document_char_count(self):
         """How long the document is, without copying it.
 
-        `GtkTextBuffer.get_char_count` is O(1); `_render_text()` copies the
-        whole buffer into a Python string. This is consulted on every
-        keystroke, so the difference matters -- fetching a megabyte per
-        keypress to decide whether a megabyte is too big to render would
-        be its own performance bug, in the guard meant to prevent one.
-
-        Defensive about the buffer being unavailable during teardown, and
-        answers 0 there: an unmeasurable document is unconstrained, which
-        is what `perflimits.classify` does with 0 anyway.
+        `get_char_count` is O(1) where `_render_text()` copies the whole
+        buffer, and this runs on every keystroke: fetching a megabyte per
+        keypress to decide whether a megabyte is too big would be its own
+        performance bug, inside the guard meant to prevent one. Answers 0
+        during teardown, which `perflimits.classify` treats as unconstrained.
         """
         try:
             return int(self.document.get_char_count())
@@ -680,26 +559,15 @@ class TabController:
     def _apply_size_guard(self):
         """Ask `perflimits` about the document as it stands, and show the chip.
 
-        Called from the build path, from `_on_document_loaded` (both its
-        ordinary reload branch and the build/load race branch), and from
-        every buffer change, because a document can cross the live-refresh
-        threshold by being typed into or pasted over -- the guard is about
-        the text right now, not the file that was opened.
+        Runs on every buffer change too, because a document can cross the
+        live-refresh threshold by being typed into: the guard is about the
+        text right now, not the file that was opened. Only
+        `decision.live_refresh` is acted on here; `defer_initial` matters
+        only where a mode is still being chosen.
 
-        `decision.live_refresh` is the only half acted on here.
-        `defer_initial` is read at the two places that can still choose a
-        mode -- `_build_if_markdown` and `_on_document_loaded`'s race
-        branch -- and nowhere else, because pasting into a tab that is
-        already showing a preview has no initial build left to defer.
-
-        Counted in characters: that is what the parser processes, and the
-        count is free. The chip's label is *not* recomputed here -- it is
-        `self._deferred_size_label`, set once, at the moment deferral
-        happens. This method runs from `_on_buffer_changed`, i.e. on every
-        keystroke while a document stays deferred, so it must never touch
-        the buffer itself: `perflimits.describe_bytes`'s own docstring says
-        that label is "built once, when the chip appears -- never on the
-        per-keystroke path", and this is that path.
+        This is the per-keystroke path, so it must never touch the buffer:
+        the chip's label is read from `_deferred_size_label`, never
+        recomputed.
         """
         decision = perflimits.classify(self._document_char_count())
         self._size_allows_live_refresh = decision.live_refresh
@@ -714,49 +582,25 @@ class TabController:
 
         The guard overrides `AUTO_REFRESH` rather than consulting it: a
         reader who turned live refresh on expressed a preference about
-        ordinary documents, not a request to have the editor freeze on a
-        large one. The override is derived and per-tab, so it neither
-        writes to the settings store nor persists -- the same reader
-        opening a small document in the next tab gets live refresh as
-        configured, and the refresh cue already says which state a tab is
-        in.
+        ordinary documents, not a request to freeze the editor on a large
+        one. Derived and per-tab, so nothing is written to the settings
+        store and the next small document refreshes as configured.
         """
         return self._auto_refresh and self._size_allows_live_refresh
 
     def _note_preview_shown(self, text):
         """Record that Preview has now shown the reader real content.
 
-        Called from the two, and only the two, places that ever put
-        rendered Markdown in front of the reader: `_reload_preview` (a
-        full page) and `_refresh_body_now` (a body swap in place). Once
-        `self._preview_has_shown_content` is True it stays True for the
-        rest of this tab's life -- see its own comment in `__init__` for
-        why this, rather than tracking build/load ordering, is the
-        question `_on_document_loaded` actually needs answered.
+        `text` is the text the caller just rendered, handed in rather than
+        re-derived, and that is the whole point of the argument: the buffer
+        is not that text. `_render_text` returns `_disk_text` whenever the
+        buffer is clean and the file has moved on, so a reader can be looking
+        at 300k characters that `get_char_count` truthfully reports as zero.
+        Asking the buffer here left the flag False over exactly that preview,
+        and the reader's next Reload then read as "never showed anything" and
+        switched them out of Preview.
 
-        `text` is the document text those two just rendered, handed in
-        rather than re-derived here, and that is the whole point of the
-        argument: the buffer is *not* that text. `_render_text` returns
-        `_disk_text` whenever the buffer is clean and the file on disk has
-        moved on, which is the ordinary state under
-        `WATCH_EXTERNAL_CHANGES` (on by default, and forbidden from
-        writing into the buffer) -- so a reader can be looking at 300k
-        characters of externally-written content that
-        `GtkTextBuffer.get_char_count` truthfully reports as zero. Asking
-        the buffer here left the flag False over exactly that preview, and
-        the reader's next Reload -- the natural way to bring the buffer
-        back in step -- read as "never showed anything" and switched them
-        out of it. An empty string still sets nothing: a blank page is not
-        a preview of anything, which is exactly the state a raced or
-        genuinely-empty initial build leaves this in.
-
-        Mode is still checked here rather than trusted from the caller:
-        every call site already only calls in while `self.state.mode is
-        Mode.PREVIEW` (checked immediately before the call, or --
-        `_reload_preview` from `set_mode`'s own Preview branch -- true by
-        construction, since `self.state.mode = mode` runs first), but
-        re-checking is free and makes this method correct on its own
-        terms rather than on trust.
+        An empty string sets nothing: a blank page is not a preview.
         """
         if text and self.state.mode is Mode.PREVIEW:
             self._preview_has_shown_content = True
@@ -808,8 +652,6 @@ class TabController:
             return False
 
         GLib.idle_add(apply_scroll)
-
-    # --- search ------------------------------------------------------------
 
     @property
     def is_searching(self):
@@ -903,8 +745,6 @@ class TabController:
     def _on_search_close(self, _bar):
         self.close_search()
 
-    # --- the verified host hazard -----------------------------------------
-
     def _on_tab_state_changed(self, *_args):
         """xed forces the frame visible on save and revert. Undo that.
 
@@ -955,36 +795,22 @@ class TabController:
     def _tab_is_quiet(self):
         """True when the tab is not in the middle of one of xed's own jobs.
 
-        Everything this feature does is founded on two things being settled:
-        the buffer's text and the file's bytes. While xed is loading, saving,
-        reverting or printing, **neither is** -- the loader replaces the
-        buffer in pieces and toggles its modified flag as it goes, and the
-        saver has not finished writing the file. Every conclusion drawn from
-        that half-state is wrong, and one of them was actively destructive:
-        a bar raised mid-revert replaced the `XedProgressInfoBar` xed had put
-        in the tab's single info-bar slot, which broke xed's own save/load
-        state machine and left the tab wedged in `SAVING_ERROR`, where every
-        later save was refused. Confirmed live -- the CRITICAL landed in the
-        same log turn as the `set_info_bar` call that caused it.
+        While xed is loading, saving, reverting or printing, neither the
+        buffer's text nor the file's bytes are settled, and conclusions drawn
+        from that half-state are wrong. One was destructive: a bar raised
+        mid-revert replaced the `XedProgressInfoBar` in the tab's single
+        info-bar slot, breaking xed's save/load state machine and wedging the
+        tab in `SAVING_ERROR`, where every later save was refused.
 
         The two states allowed are exactly the two in which the bar's own
-        button can work: `FileRevert`'s sensitivity in xed is
-        `(state == NORMAL || state == EXTERNALLY_MODIFIED_NOTIFICATION) &&
-        !document_is_untitled`, and `_xed_tab_revert` asserts the same pair.
-        Raising a bar whose Reload… xed would refuse would be worse than
-        raising none.
+        Reload… can work -- `FileRevert`'s sensitivity in xed is
+        `(NORMAL || EXTERNALLY_MODIFIED_NOTIFICATION) && !untitled`.
 
-        `EXTERNALLY_MODIFIED_NOTIFICATION` is deliberately allowed even
-        though xed's own externally-modified bar sits in the slot there: xed
-        raises no progress bar and calls no `info_bar_set_progress` in that
-        state, so nothing is broken by replacing it, and xedown's bar carries
-        the same warning and offers the same Revert. One consequence is worth
-        knowing: xed's own bar is what returns the tab to `NORMAL`, so
-        replacing it can leave the tab parked in this state, where
-        `_xed_tab_save_async` ignores the modification time -- a later
-        external change followed by a save would then not raise xed's "save
-        anyway?" confirmation. Pre-existing rather than introduced here, and
-        the user has been told about the divergence either way.
+        Allowing `EXTERNALLY_MODIFIED_NOTIFICATION` replaces xed's own bar,
+        which is safe (no progress bar lives there) but can park the tab in
+        that state, where `_xed_tab_save_async` ignores the modification time
+        and a later save skips xed's "save anyway?" confirmation.
+        Pre-existing, and documented for the user either way.
         """
         if self.tab is None:
             return False
@@ -1007,35 +833,19 @@ class TabController:
         return False
 
     def _on_window_set_focus(self, _window, widget):
-        """A second forced-state hazard, in the same family as save/revert
-        forcing the frame visible: pressing Escape while xedown's own
-        preview search bar (or xed's own native find bar, over the source
-        view) has focus does not reach this controller's own key routing
-        at all -- confirmed live, with an independent GTK signal witness
-        connected directly to the window, that neither this controller's
-        window-level handler nor the search entry's own `stop-search`
-        binding ever fires. Whatever inside xed handles Escape for its own
-        find bar operates underneath ordinary "key-press-event" dispatch,
-        and it hands keyboard focus straight to `self.view` -- including
-        while that view sits inside the hidden frame -- by some route that
-        does not run the view's own "focus-in-event" either (confirmed live:
-        a handler on that signal never fires here, even though
-        `window.get_focus()` reports the view immediately afterwards).
-        `Gtk.Window.set_focus()` is the one choke point every route to
-        changing `window.get_focus()` has to go through -- it is what
-        `get_focus()` itself reads back -- so this is the reliable place to
-        catch it regardless of which internal path xed took.
+        """Catch xed handing focus to the hidden source view.
 
-        The source view legitimately holding focus is exactly what "Preview
-        is showing" means it should never do, so the focus is always
-        reclaimed for the preview when this fires. Closing the search bar
-        over it is narrower: that only happens when the focus xed just
-        stole was one of xedown's own widgets -- anywhere inside the search
-        bar, or the preview itself -- which `_reclaim_focus_from_hidden_view`
-        decides from `_last_focus` below. Focus arriving from anything else
-        (xed's own find bar closing, a dialog dismissing, a mode-bar button)
-        is not this tab's Escape to react to, and must leave an open search
-        alone.
+        On xed 3.8.9, Escape in a find bar never reaches ordinary
+        "key-press-event" dispatch and hands focus straight to `self.view`
+        without running its "focus-in-event" either -- both confirmed live.
+        `Gtk.Window.set_focus()` is the one choke point every route to
+        changing `window.get_focus()` must pass through, so it is the only
+        reliable place to catch this whatever path xed took.
+
+        Focus is always reclaimed for the preview. Closing the search bar is
+        narrower and happens only when what xed stole focus from was one of
+        xedown's own widgets: focus arriving from xed's own find bar or a
+        dialog is not this tab's Escape to react to.
         """
         previous = self._last_focus
         if widget is not None:
@@ -1047,15 +857,11 @@ class TabController:
     def _reclaim_focus_from_hidden_view(self, previous_focus):
         """Take the focus back, and close the search if it was ours to close.
 
-        "xedown's own" is the whole search bar, not only its entry: the case
-        toggle, the two step buttons and the close button are all places a
-        user can tab to and press Escape from, and closing the bar from one
-        of them is what `shortcuts.route_key`'s own CLOSE_SEARCH branch does
-        (it closes on any non-editable focus while searching). The two rules
-        have to agree, because which of them runs is not this plugin's
-        choice: on xed 3.8.9 Escape never reaches ordinary key dispatch at
-        all, so this focus path is the live one -- a divergence here would
-        be a divergence a user could see.
+        "xedown's own" is the whole search bar, not only its entry: every
+        control in it is somewhere a user can press Escape from. This rule
+        must agree with `shortcuts.route_key`'s CLOSE_SEARCH branch, because
+        which of the two runs is not this plugin's choice -- and on xed
+        3.8.9 it is this focus path that runs.
         """
         if not self._built or self.state.mode is not Mode.PREVIEW:
             return False
@@ -1072,15 +878,11 @@ class TabController:
             self.preview.widget.grab_focus()
         return False
 
-    # --- changes made outside xed ------------------------------------------
-
     def _start_watch(self):
         """Watch this document's file, if there is one and none is watched.
 
-        A document with no path cannot be Markdown (`is_markdown_path(None)`
-        is False), so in practice this only declines for a tab being torn
-        down -- and for a document that has never been saved, which has
-        nothing on disk to watch.
+        Declines for a document that has never been saved, which has nothing
+        on disk to watch.
         """
         if self._watch is not None:
             return
@@ -1104,11 +906,10 @@ class TabController:
     def _page_language(self):
         """The desktop's language as a BCP-47 tag, or None.
 
-        `GLib.get_language_names()` returns the user's languages most
-        specific first, so the first one that parses is the best answer.
-        This is the *reader's* language rather than the document's -- xedown
-        does not detect what language a document is written in, and guessing
-        would be worse than the default voice. Documented as such.
+        `GLib.get_language_names()` is most-specific first, so the first tag
+        that parses is the best answer. This is the *reader's* language, not
+        the document's: xedown does not detect what a document is written in,
+        and guessing would be worse than the default voice.
         """
         for name in GLib.get_language_names():
             tag = a11y.lang_tag(name)
@@ -1119,47 +920,24 @@ class TabController:
     def _on_file_settled(self):
         """The file stopped changing. Decide what that means, once.
 
-        Reached from `FileWatch`, which has already coalesced a save's several
-        file events into this one call, and from `_on_modified_changed` when
-        the buffer goes clean. Everything that decides is in `diskstate`; this
-        method does no comparing of its own.
+        All the deciding is in `diskstate`; this method compares nothing.
 
-        `UNCHANGED` usually does nothing beyond the bar dismissal below,
-        silently: it is what a save from xed itself looks like, and what a
-        `touch` looks like. The exception is a cached disk text, which means
-        the file has come back into agreement with the buffer on its own --
-        `git checkout --` on the open file, an agent undoing its own edit, a
-        rebase landing where it started. That is as reconciling as a save,
-        and the cache has to go with it: left in place it would keep the
-        preview rendering an intermediate version that is now on neither disk
-        nor buffer, with nothing to mark it stale, and the user's next
-        keystroke would raise the bar over a file that matches what they
-        already had.
+        `UNCHANGED` clears any cached `_disk_text`, because the file has come
+        back into agreement with the buffer on its own (`git checkout --`, an
+        agent undoing its edit). Left in place the cache would keep rendering
+        an intermediate version now on neither disk nor buffer. It also always
+        dismisses the external-change bar, cache or not: `WARN` raises that
+        bar without touching `_disk_text`, so a reconciling write can arrive
+        with the cache None and the bar still standing.
 
-        `UNCHANGED` also always dismisses the external-change bar, whether or
-        not `_disk_text` was cached. It means disk and buffer agree right
-        now, so a bar still claiming they differ can only be lying -- and
-        that can happen with no cache to clear: the bar is raised by `WARN`,
-        which never touches `_disk_text`, so a later write that reconciles
-        the file with the modified buffer reaches here with the cache still
-        None while the bar is still standing over a file that no longer
-        disagrees with it.
+        `UNREADABLE` does nothing at all -- a file mid-write, deleted or moved
+        has agreed with nothing, so the last good render stays and the next
+        settle asks again.
 
-        `UNREADABLE` does nothing in every case. A file mid-write, deleted, or
-        moved away has agreed with nothing, and the brief requires all three to
-        be handled without an error dialog and without leaving the preview
-        stuck -- so the last good render stays. The next settle asks again, and
-        the watch has already re-armed on the path by the time this runs, so a
-        file that comes back is seen.
-
-        Guarded on `_watch_external` here, and only here, so the one guard
-        covers both callers: `FileWatch` cannot reach this while the setting
-        is off, since `_start_watch` never runs, but `_on_modified_changed`
-        calls this directly on every transition to unmodified regardless of
-        the setting. Without this check, typing a character and undoing it
-        after an external rewrite would still read the file, cache
-        `_disk_text`, and arm a bar on the next keystroke -- with watching
-        supposedly off.
+        Guarded on `_watch_external` here so the one guard covers both
+        callers: `_on_modified_changed` calls in on every transition to
+        unmodified regardless of the setting, so without this, typing a
+        character and undoing it would arm a bar with watching switched off.
         """
         if not self._built or not self._watch_external:
             return
@@ -1196,16 +974,11 @@ class TabController:
         self._dismiss_external_bar()
         self.state.preview_stale = True
         if self.state.mode is Mode.PREVIEW:
-            # In place, not a reload: the scroll position survives, which is
-            # the whole value of watching a file being rewritten. That path
-            # already falls back to a full reload when an error page is
-            # showing, so that case needs nothing here.
-            #
-            # Deliberately not gated on `_auto_refresh`. That setting governs
-            # re-rendering after a change to the buffer; a change on disk is
-            # not one, and the documented rule for the reload-from-disk family
-            # is that it always re-renders while the preview is showing.
-            # `watch_external_changes` is this feature's own control.
+            # In place, not a reload, so the scroll position survives -- the
+            # whole value of watching a file being rewritten. Deliberately not
+            # gated on `_auto_refresh`: that setting governs re-rendering
+            # after a *buffer* change, and `watch_external_changes` is this
+            # feature's own control.
             self._refresh_body_now()
         else:
             # Nothing is rendered while the source is showing. The staleness
@@ -1215,16 +988,11 @@ class TabController:
     def _show_external_change_bar(self):
         """Say the file changed, and offer xed's Revert.
 
-        Re-entrant by design: `_on_file_settled` can reach `WARN` several
-        times over a burst of writes, and `_on_modified_changed` can reach it
-        for the same divergence from the other direction. Rebuilding an
-        identical bar would take the focus out of whatever the user had it in,
-        so a bar already saying exactly this is left where it is.
-
-        The guard below is only trustworthy because `_on_info_bar_destroyed`
-        keeps `_external_bar`/`_info_bar` pointing at a live widget or at
-        None -- never at one already destroyed. See its docstring for the
-        xed-side hazard that makes that promise necessary.
+        Re-entrant by design: a burst of writes reaches `WARN` repeatedly,
+        and rebuilding an identical bar would take focus out of whatever the
+        user had it in. The guard is only trustworthy because
+        `_on_info_bar_destroyed` keeps these pointing at a live widget or
+        None, never at a destroyed one.
         """
         if self._external_bar is not None and self._external_bar is self._info_bar:
             return
@@ -1264,16 +1032,10 @@ class TabController:
     def _reload_from_disk(self):
         """Hand off to xed's own Revert. xedown never discards the user's text.
 
-        Guarded on this tab being the window's active one, because xed's
-        revert command acts on `xed_window_get_active_tab` rather than on any
-        tab handed to it -- activating it from a background tab would revert
-        somebody else's document. In practice the bar is only clickable in the
-        visible tab, so the guard costs nothing and forecloses the one way
-        this could go badly wrong.
-
-        Cancelling xed's dialog leaves everything as it was. The bar has
-        already retired by the time that dialog opens, and the next settled
-        change puts it back if the file still differs.
+        Guarded on this tab being the window's active one: xed's revert acts
+        on `xed_window_get_active_tab`, not on any tab handed to it, so
+        activating it from a background tab would revert somebody else's
+        document.
         """
         window = self._toplevel()
         action = self._find_revert_action()
@@ -1286,25 +1048,17 @@ class TabController:
     def _on_modified_changed(self, *_args):
         """The buffer gained or lost unsaved edits.
 
-        Both directions matter, and each covers a hole the other leaves.
+        **Gaining** edits turns an `UPDATE` the user has overtaken into a
+        `WARN`, so the preview does not change under them unexplained.
 
-        **Gaining them** turns an `UPDATE` the user has now overtaken with
-        their own edit into a `WARN`. `_render_text` has already gone back to
-        showing the buffer in the same turn, and without the bar the user
-        would simply watch the preview change under them with no explanation.
+        **Losing** them re-reads the file rather than trusting `_disk_text`,
+        which may have moved on; otherwise undoing back to a clean buffer
+        leaves a preview of text that is no longer anywhere.
 
-        **Losing them** -- a revert, or an undo back to clean -- retires the
-        bar and asks the question again from scratch, re-reading the file
-        rather than trusting `_disk_text`, which may have moved on since.
-        Without it, a user who undid their way back to a clean buffer would be
-        left looking at a preview of text that is no longer anywhere.
-
-        Neither direction means anything while xed is loading, saving or
-        reverting: the loader sets and clears the modified flag as it
-        replaces the buffer, so this signal fires several times during one
-        revert with no user anywhere near it. Acting on those transient
-        toggles is what raised a bar into the tab's info-bar slot mid-revert
-        and wedged xed's own state machine -- see `_tab_is_quiet`.
+        Neither means anything mid-load or mid-save: the loader toggles the
+        modified flag as it replaces the buffer, so this fires several times
+        during one revert with no user near it. Acting on those transient
+        toggles is what wedged xed's state machine -- see `_tab_is_quiet`.
         """
         if not self._built:
             return
@@ -1314,21 +1068,16 @@ class TabController:
         if self.document.get_modified():
             if self._disk_text is not None:
                 if self.state.mode is Mode.PREVIEW:
-                    # The bar text says "your unsaved edits are still
-                    # showing", but nothing has re-rendered yet in this same
-                    # turn: the preview is still displaying `_disk_text`
-                    # until the debounce timer fires, and with
-                    # `auto_refresh: false` it never would. This corrects a
-                    # display already known to be wrong, not a debounced
-                    # reaction to a keystroke, so it deliberately skips the
-                    # `_auto_refresh` gate `_on_buffer_changed` uses.
+                    # The bar claims the user's edits are showing while the
+                    # preview is still on `_disk_text`, and with
+                    # `auto_refresh: false` nothing would ever fix that. This
+                    # corrects a display already known wrong, so it skips the
+                    # `_auto_refresh` gate.
                     self._refresh_body_now()
                 self._show_external_change_bar()
             return
         self._dismiss_external_bar()
         self._on_file_settled()
-
-    # --- content updates ---------------------------------------------------
 
     def _on_buffer_changed(self, *_args):
         self._apply_size_guard()
@@ -1360,11 +1109,9 @@ class TabController:
         immediate save-time refresh (see `_on_document_saved`) — neither
         case wants a full page reload."""
         if not self._page_is_document:
-            # An error page is showing. Swapping the body would post into a
-            # page with no `window.xedown` and do nothing at all -- and the
-            # line at the end of this method would then mark the preview
-            # fresh, stranding the error page for good. A reload is the only
-            # route back to a document.
+            # An error page has no `window.xedown`, so a body swap would do
+            # nothing while still marking the preview fresh -- stranding the
+            # error page for good. A reload is the only route back.
             self._reload_preview(restore_scroll=self._current_preview_scroll())
             return
         text = self._render_text()
@@ -1390,12 +1137,8 @@ class TabController:
         # `text`, not the buffer: under an external change they are two
         # different strings. See `_note_preview_shown`.
         self._note_preview_shown(text)
-        # After the swap, never before: the counting happens as the body is
-        # built, so a render that raised part-way through would leave a
-        # partial count describing a page nobody will see. Nothing is needed
-        # here for that case -- `render_fragment` only marks the stats
-        # rendered on its way out, and the error page the branch above loads
-        # brings its own unrendered stats, which withdraws the offer.
+        # After the swap: a render that raised part-way would otherwise leave
+        # a partial count describing a page nobody will see.
         self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
@@ -1403,15 +1146,12 @@ class TabController:
     def _reload_preview(self, error=None, restore_scroll=0.0):
         if self.preview is None:
             return
-        # Built even for the error branch below, which never passes it to a
-        # renderer: an unrendered stats object is exactly the "no document,
-        # no offer" answer the chip needs, and it saves the caller having to
-        # tell the two branches apart a second time.
+        # Built even for the error branch: an unrendered stats object is
+        # exactly the "no document, no offer" answer the chip needs.
         stats = images.RenderStats()
         if error is not None:
-            # No document text went into this page, and that is what the
-            # empty string says to `_note_preview_shown` below: an error
-            # page has shown the reader nothing of their document.
+            # The empty string tells `_note_preview_shown` that an error page
+            # showed the reader nothing of their document.
             text = ""
             html = errors.error_page(
                 "Cannot render this document",
@@ -1440,23 +1180,18 @@ class TabController:
             ("file://" + base_dir + "/") if base_dir else None,
             restore_scroll=restore_scroll,
         )
-        # Asks the page actually being loaded, not the caller's own belief
-        # about which branch produced it: render_document never raises, so
-        # `error is None` is true even when it caught something internally
-        # and returned an error page of its own.
+        # Asks the page, not the caller's belief about which branch made it:
+        # `render_document` never raises, so `error is None` stays true even
+        # when it caught something and returned an error page itself.
         self._page_is_document = not errors.is_error_page(html)
         if self._page_is_document:
-            # Both guards earn their place: `text` is empty for the error
-            # branch above, and `_page_is_document` also catches the page
-            # `render_document` turns into an error internally, where
-            # `text` was real but nothing of it reached the reader.
+            # Both guards earn their place: `text` is empty on the error
+            # branch, and this also catches the page `render_document` turned
+            # into an error internally, where `text` was real but nothing of
+            # it reached the reader.
             self._note_preview_shown(text)
-        # Unconditional, because `stats.rendered` already carries the same
-        # distinction the line above reads out of the HTML: it is False for
-        # both error-page routes -- the caller's own, and the one
-        # `render_document` takes internally after the body was already
-        # counted -- so this withdraws the offer rather than leaving it
-        # standing over a page that has no images in it.
+        # Unconditional: `stats.rendered` is False for both error-page routes,
+        # so this withdraws the offer rather than leaving it standing.
         self._note_remote_images(stats)
         self.state.preview_stale = False
         self._update_refresh_cue()
@@ -1465,16 +1200,11 @@ class TabController:
             # so a reply already in flight from that page cannot land after
             # this one and put a count back on a document nobody can see.
             token = self.search.invalidate()
-            # Re-arm the page's pending request with the same new token --
-            # not preview.search(), which would also ask the page right now.
-            # load_html's navigation to the error page is asynchronous, so
-            # at this exact point the OLD (still real) page can still be the
-            # one actually loaded; asking it would come back with a real
-            # answer carrying this same new token, which the session would
-            # then accept and use to overwrite the "no matches" answer below.
-            # rearm_search only updates the pending-request bookkeeping, so
-            # the *next* page's own load is what reissues it, with a token
-            # this session still believes.
+            # Re-arm rather than `preview.search()`, which would ask *now*:
+            # navigation to the error page is async, so the old page can still
+            # be loaded and would answer with this new token, overwriting the
+            # "no matches" below. This only updates bookkeeping, so the next
+            # page's own load reissues it.
             self.preview.rearm_search(
                 self.search.query, self.search.case_sensitive, token
             )
@@ -1487,35 +1217,31 @@ class TabController:
     def _render_text(self):
         """The user's version of this document.
 
-        Their edits if they have any, the file on disk if they do not. With no
-        external change the two are the same text, so this rule only has
-        visible consequences after one -- and then it says the right thing in
-        both directions: an untouched buffer follows the file, and the first
-        keystroke takes the preview back to what the user is actually typing.
+        Their edits if they have any, the file on disk if they do not, which
+        only diverges after an external change.
 
-        `_disk_text` is deliberately *not* cleared by that keystroke. The
-        `get_modified()` test below already stops it being rendered, and
-        keeping it is what lets `_on_modified_changed` know the file diverged
-        when an `UPDATE` turns into a `WARN`.
+        `_disk_text` is deliberately *not* cleared by the first keystroke: the
+        `get_modified()` test already stops it being rendered, and keeping it
+        is what lets `_on_modified_changed` turn an `UPDATE` into a `WARN`.
         """
         if self._disk_text is not None and not self.document.get_modified():
             return self._disk_text
         return self._buffer_text()
 
     def _on_document_saved(self, *_args):
-        """A save does not change the buffer, so it never warrants a full
-        page reload — that would re-parse the whole bundle and jump the
-        preview back to the top for no reason. It can still be the moment a
-        never-built tab first becomes eligible (Save As to a .md name), and
-        it can still leave a change unrendered if the debounce window was
-        still pending, so cover both without reloading the page itself."""
+        """Handle a save without reloading the page.
+
+        A save does not change the buffer, so a full reload would only jump
+        the preview back to the top. It can still be when a never-built tab
+        becomes eligible (Save As to a .md name), or leave a debounced change
+        unrendered.
+        """
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
-        # A save reconciles the two: whatever the user has is now what is on
-        # disk. The monitor will fire for xedown's own write, and `diskstate`
-        # will answer UNCHANGED for it -- which is why no ignore-flag is
-        # needed anywhere in this feature.
+        # A save reconciles buffer and disk. The monitor still fires for
+        # xed's own write and `diskstate` answers UNCHANGED, which is why this
+        # feature needs no ignore-flag anywhere.
         self._disk_text = None
         self._dismiss_external_bar()
         path = self._document_path()
@@ -1537,56 +1263,33 @@ class TabController:
         change — all of which genuinely replace the buffer contents, so
         (unlike a save) this always warrants a full reload when visible.
 
-        Also fires for the tab's own *initial* file load, and that firing
-        can land in either branch below: xed's file read is asynchronous,
-        and nothing orders it against `activate()`'s own
-        `GLib.idle_add(self._build_if_markdown)`. If the load wins, this
-        runs first and hits `not self._built`, which just re-queues the
-        build -- by the time it runs, the buffer already holds the real
-        text, so `_build_if_markdown`'s own deferral decision is correct
-        unaided. If the *build* wins instead, `_build_if_markdown` reads
-        an empty buffer, `perflimits.classify(0)` comes back unconstrained,
-        and a document large enough to defer opens straight into an
-        unrequested Preview render of nothing -- and this is that same
-        load landing afterwards, on an already-built tab, carrying the
-        content that decision should have seen.
+        Also fires for the tab's *initial* load, which is unordered against
+        `activate()`'s queued build. If the build wins that race it measures
+        an empty buffer, so a document large enough to defer opens straight
+        into an unrequested Preview render of nothing -- and this is that
+        load arriving afterwards with the content the decision needed.
 
-        `self._preview_has_shown_content` is what tells that apart from an
-        ordinary revert or externally-accepted reload of a tab the reader
-        has actually been looking at: two narrower attempts at this same
-        question preceded it (was this the tab's first `loaded` event; did
-        the build measure an empty buffer) and each was found to have a
-        surviving lifecycle where a *later*, genuine revert still got
-        treated as part of opening -- New -> Save As for the first, a
-        genuinely empty file typed into for an hour before its first
-        revert for the second. Asking "has Preview ever actually shown
-        real content" instead of inferring it from build/load ordering
-        closes both at once: see `_note_preview_shown`'s own docstring.
+        `_preview_has_shown_content` is what separates that race from an
+        ordinary revert of a tab the reader has been looking at.
         """
         if not self._built:
             GLib.idle_add(self._build_if_markdown)
             return
         self._disk_text = None
         self._dismiss_external_bar()
-        # No watch repoint here, unlike `_on_document_saved` just above:
-        # `loaded` fires for a revert or reload, both of which reuse the
-        # tab's existing path -- there is no Save-As-style path change for
-        # the watch to follow.
+        # No watch repoint: `loaded` fires for a revert or reload, which
+        # reuse the tab's existing path.
         self.state.preview_stale = True
         if (
             not self._preview_has_shown_content
             and self.state.mode is Mode.PREVIEW
             and perflimits.classify(self._document_char_count()).defer_initial
         ):
-            # The race described above, resolved the same way
-            # `_build_if_markdown` would have resolved it outright: this
-            # tab has shown nothing but an empty page so far, so there is
-            # no real preview to pull the reader out of, only the one
-            # `_build_if_markdown` would have deferred to begin with.
-            # `initial=True` matches that build-time call for the same
-            # reasons it uses it -- no stolen focus, no scroll restore, and
-            # no write to the remembered mode for a choice the reader
-            # never made.
+            # The race above, resolved as `_build_if_markdown` would have:
+            # nothing real has been shown, so there is no preview to pull the
+            # reader out of. `initial=True` for the same reasons the build
+            # call uses it -- no stolen focus, no scroll restore, and no
+            # remembered mode written for a choice nobody made.
             self._preview_deferred = True
             self._deferred_size_label = perflimits.describe_bytes(
                 len(self._render_text().encode("utf-8"))
@@ -1608,55 +1311,24 @@ class TabController:
         """Apply a settings change to this tab, immediately.
 
         The store is a long-lived global holding a strong reference to every
-        listener, so a missed disconnect keeps this controller — and the
-        WebView, document and tab it references — alive for the life of the
-        process. `deactivate()` owns that; nothing here may introduce state
-        that outlives it.
+        listener, so a missed disconnect keeps this controller -- and the
+        WebView, document and tab it references -- alive for the life of the
+        process. `deactivate()` owns that.
 
-        `CUSTOM_STYLESHEET` is deliberately absent. Both routes to a
-        different user stylesheet — the setting moving, or the file changing —
-        arrive through `stylewatcher` instead, so this handler never handles
-        that key itself. And because both this handler and
-        `_on_user_stylesheet_changed` rebuild `self._style` from the store
-        rather than patching a single field, neither depends on arriving
-        before the other: whichever runs second still rebuilds from current
-        settings, so a single broadcast that moves several keys at once
-        cannot leave a reload carrying stale metrics.
+        What needs a whole new page: the theme (its stylesheet is inlined in
+        <head>) and `REMOTE_IMAGES` (a permitted page names the private image
+        scheme in its CSP <meta>). What does not: width and text size are
+        custom properties the page already reads, and `IMAGE_FALLBACK`,
+        `CODE_COPY_BUTTONS` and `TEXT_DIRECTION` touch only the body.
 
-        A theme change needs the whole page again, because the stylesheet is
-        inlined in <head> and `update_body` only swaps the article. Width and
-        text size do not: they are two custom properties the loaded page
-        already reads, so they are poked in place.
+        Every key is re-read before the reload branch, so one broadcast
+        moving several keys cannot leave a reload carrying outgoing values,
+        or render the body twice for values the first render already had.
 
-        `IMAGE_FALLBACK` and `CODE_COPY_BUTTONS` are handled here rather than
-        through a reload: the first changes only the body, the second only
-        the page's own config. Both are re-read before the theme branch, so
-        a broadcast that moves several keys at once cannot leave a reload
-        carrying the outgoing values.
-
-        `TEXT_DIRECTION` joins them for the same reason: it is one attribute
-        on the article, and no stylesheet changed, so there is nothing in
-        <head> to rebuild. It costs one re-render of the Markdown, which is
-        the right price for a setting nobody changes twice a day and reuses
-        machinery that is already correct about mode and staleness.
-
-        `REMOTE_IMAGES` — the other half of the pair of names `IMAGE_FALLBACK`
-        was split from — behaves the opposite way to all three: it is the
-        *fetch policy*, and a permitted page names the private image scheme
-        in its own Content-Security-Policy, which is a <meta> in <head>.
-        Only a whole new page can carry a new one, so it rides with the
-        theme in the reload branch rather than with the body-only three.
-
-        `AUTO_REFRESH` and `REFRESH_DELAY_MS` are cached rather than read at
-        use time so the debounce path stays a timer schedule and nothing
-        more. The delay is read when a change is scheduled, which is what
-        makes a new value reach a tab that is already open; a timer already
-        in flight keeps the delay it was scheduled with, and the observable
-        difference is one render. Switching auto-refresh back on over a
-        stale preview is itself a body render, so it shares the same
-        multi-key-broadcast hazard as the theme reload above: a broadcast
-        that also moves `REMOTE_IMAGES` or `TEXT_DIRECTION` must not render
-        the body a second time for values the first render already carried.
+        `CUSTOM_STYLESHEET` is deliberately absent: both routes to it arrive
+        through `stylewatcher`. Both handlers rebuild `self._style` from the
+        store rather than patching a field, so neither depends on arriving
+        first.
         """
         if self._style is None:
             return
@@ -1688,16 +1360,11 @@ class TabController:
             self._disk_text = None
 
         reloaded = False
-        # Two independent branches below can each want a body render out of
-        # one broadcast (the auto-refresh catch-up here, and the
-        # image-display/direction branch further down) -- this flag is how
-        # the second one knows the first already happened, so one broadcast
-        # never renders the body twice.
+        # Two branches below can each want a body render out of one
+        # broadcast; this is how the second knows the first already ran.
         refreshed = False
-        # `REMOTE_IMAGES` rides with the theme: both live in <head> (the
-        # stylesheet and the CSP), and both are therefore a whole page or
-        # nothing. Sharing the branch also means one broadcast that moves
-        # both still reloads exactly once.
+        # `REMOTE_IMAGES` rides with the theme: both live in <head>, so both
+        # are a whole page or nothing, and one branch reloads exactly once.
         if settings.PREVIEW_THEME in changed or settings.REMOTE_IMAGES in changed:
             self.state.preview_stale = True
             if self._built and self.state.mode is Mode.PREVIEW:
@@ -1736,26 +1403,17 @@ class TabController:
             and store.get(settings.REMEMBER_MODE_PER_FILE)
             and not self._preview_deferred
         ):
-            # Switched on: make it true of the tabs already open, not only of
-            # ones opened later.
-            #
-            # Except for a tab whose preview is still deferred. Its mode is
-            # `Mode.SOURCE` because the size guard put it there, not because
-            # the reader chose it, and filing that as a remembered choice is
-            # permanent: `_initial_mode` would return SOURCE next time, so
-            # `_build_if_markdown`'s `initial is Mode.PREVIEW` guard would be
-            # False, the deferral would never fire, and the chip offering the
-            # preview would never appear for that file again. Withdrawing the
-            # offer for good is not what toggling a setting off and on asks
-            # for. The moment the reader takes the offer, `set_mode` clears
-            # the flag and files PREVIEW through the ordinary path.
+            # Switched on: make it true of tabs already open. Except a
+            # deferred one, whose SOURCE mode the size guard chose, not the
+            # reader: filing that would make `_initial_mode` return SOURCE
+            # next time, so the deferral never fires and the chip offering
+            # the preview never appears for that file again.
             self._remember_mode(self.state.mode)
         self._update_refresh_cue()
 
         if reloaded:
-            # The reload already carried both values in its own config block
-            # and re-rendered the body with them. Poking the outgoing page
-            # would land on nothing: load_html is asynchronous.
+            # The reload already carried these values; poking the outgoing
+            # page would land on nothing, since load_html is asynchronous.
             return
 
         if (
@@ -1763,12 +1421,9 @@ class TabController:
         ) and self.preview is not None:
             self.preview.set_config(self._copy_buttons, self._image_display)
 
-        # The two settings that change the emitted body, and only the body:
-        # the CSS for every image mode is already in the loaded page, and the
-        # direction is one attribute on the article. Neither needs a reload.
-        # Skipped when the catch-up branch above already rendered: both
-        # values were re-read before it ran, so it already carries them, and
-        # a render here would only repeat that one for nothing.
+        # Body-only: the CSS for every image mode is already in the page and
+        # direction is one attribute. Skipped when the catch-up branch above
+        # rendered, which already carried both values.
         if (
             self._image_display != previous_display
             or self._text_direction != previous_direction
@@ -1787,10 +1442,8 @@ class TabController:
         """
         if self._style is None:
             return
-        # Rebuilt rather than patched, so a reload this triggers carries
-        # current metrics even when this delivery races a settings broadcast
-        # that also moved CONTENT_WIDTH_REM or TEXT_SIZE_PX (see
-        # _on_settings_changed's docstring).
+        # Rebuilt rather than patched, so a reload carries current metrics
+        # even when this races a broadcast that also moved them.
         self._style = stylesheets.PreviewStyle.from_settings(
             settings.get_settings(), user=user
         )
@@ -1801,16 +1454,12 @@ class TabController:
     def _on_mode_selected(self, _bar, mode_value):
         self.set_mode(Mode(mode_value))
 
-    # --- link and image handling -------------------------------------------
-
     def _fetch_remote(self):
         """Whether this tab may fetch remote images right now.
 
-        The global setting or this tab's own grant, in that order. Read from
-        the store at render time rather than cached in a field like
-        `_image_display`: it is asked once per render, not once per image,
-        and a value that cannot be stale is one less thing for
-        `_on_settings_changed` to keep in step.
+        Read from the store at render time rather than cached: it is asked
+        once per render, not per image, and a value that cannot go stale is
+        one less thing for `_on_settings_changed` to keep in step.
         """
         return (
             settings.get_settings().get(settings.REMOTE_IMAGES) == "https"
@@ -1821,13 +1470,11 @@ class TabController:
         """Offer to load what this render refused to fetch, or withdraw the
         offer.
 
-        `stats.rendered` is the renderer's own witness that the HTML being
-        shown is the document. It matters because the counts alone are not
-        enough: a full-page render builds the body first and can still fail
-        afterwards, so an error page arrives carrying a real count from a
-        document nobody is looking at. Withdrawing the offer in that case is
-        the point -- a "3 remote images [Load]" chip over a page with no
-        images in it offers something that is not there.
+        `stats.rendered` is the renderer's witness that the HTML on screen is
+        the document: counts alone are not enough, because a full-page render
+        builds the body first and can still fail after, leaving an error page
+        carrying a real count. A "3 remote images [Load]" chip over a page
+        with no images in it offers something that is not there.
         """
         if self.modebar is not None:
             self.modebar.set_remote_images(
@@ -1837,33 +1484,23 @@ class TabController:
     def _on_load_images_requested(self, _bar):
         """The reader has chosen to load this document's remote images.
 
-        A full page reload rather than a body swap, because the permission
-        is carried by the page's own Content-Security-Policy, which is a
-        <meta> in <head>: a body full of `xedown-image:` sources swapped
-        into a page that was loaded while blocked would be refused by that
-        page's own policy, image by image. Outside Preview there is nothing
-        loaded to reload -- the staleness below is what makes the switch
-        back render with the new permission.
+        A full reload, not a body swap: the permission is carried by the
+        page's own CSP <meta>, so `xedown-image:` sources swapped into a page
+        loaded while blocked would be refused image by image.
         """
-        # A debounce timer armed a moment before the click would otherwise
-        # fire into the page that is about to be replaced, swapping in a body
-        # full of `xedown-image:` sources that the *old* page's CSP refuses
-        # -- so the reader sees a raw private-scheme URL flash up in a
-        # placeholder immediately after pressing Load. The reload below
-        # renders the same text anyway; there is nothing to lose by dropping
-        # the pending refresh.
+        # A debounce timer armed just before the click would swap that body
+        # into the *old* page, whose CSP refuses it -- flashing a raw
+        # private-scheme URL in a placeholder. The reload renders the same
+        # text anyway.
         self._cancel_refresh()
         self._remote_unblocked = True
-        # The offer has been accepted, so it stops being made now rather
-        # than at the next render: with the permission granted there are no
-        # blocked images left to count, and in Markdown mode no render is
-        # coming until the reader switches back.
+        # Withdrawn now rather than at the next render: in Markdown mode no
+        # render is coming until the reader switches back.
         if self.modebar is not None:
             self.modebar.set_remote_images(0)
-        # A URL this document names may already be marked failed -- from
-        # another tab, or from this one while it was offline. Pressing Load
-        # is exactly the "try again" the cache's failure half is dropped
-        # for; successes are kept.
+        # A URL here may already be marked failed, from another tab or from
+        # this one while offline. Load is exactly the "try again" the
+        # failure half of the cache is dropped for.
         imagescheme.get_fetcher().invalidate_failures()
         self.state.preview_stale = True
         if self._built and self.state.mode is Mode.PREVIEW:
@@ -1874,36 +1511,24 @@ class TabController:
     def _on_build_preview_requested(self, _bar):
         """The reader asked for the deferred preview. Give it to them.
 
-        No special-casing of the flag here: `set_mode` is the funnel every
-        route into Preview goes through (this button, the mode bar's own
-        Preview segment, Ctrl+Shift+M), and clearing `_preview_deferred` --
-        which is what hides the chip -- is its job, not this handler's. The
-        size guard on *live refresh* is untouched -- a document big enough
-        to defer is big enough to keep off the keystroke path, and
-        `_live_refresh_allowed` still says so.
+        No special-casing of the flag: clearing `_preview_deferred` is
+        `set_mode`'s job, as the funnel every route into Preview goes
+        through. The *live refresh* guard stays on -- a document big enough
+        to defer is big enough to keep off the keystroke path.
         """
         self.set_mode(Mode.PREVIEW)
 
     def _on_image_error(self, source):
         """The page says an image did not load. Say why, when xedown knows.
 
-        For a local image there is nothing to add: the reason was decided at
-        render time and the placeholder already carries it. A
-        `xedown-image:` source is the case this exists for -- the page
-        cannot know why a fetch failed, and "could not be loaded" is not an
-        answer anyone can act on.
+        A local image needs nothing added: its reason was decided at render
+        time and the placeholder already carries it. This exists for a
+        `xedown-image:` source, where the page cannot know why a fetch failed.
 
-        The fetcher's own cache is asked rather than any record of this
-        controller's: it already holds every failure, bounded by
-        `CACHE_BYTES`, and it is the same answer whichever tab asks.
-
-        This is the route that lands. `_on_remote_image_failed` below hears
-        about the same failure earlier, but the page only builds the
-        placeholder these messages are written into when the image's `error`
-        event fires -- which is after the scheme request has been failed, so
-        the earlier message usually has nothing to match yet. Here the
-        placeholder certainly exists: the page posted this while creating
-        it.
+        This is the route that usually lands: `_on_remote_image_failed` hears
+        the same failure earlier, before the page has built the placeholder
+        to write into. Here the placeholder certainly exists, because the
+        page posted this while creating it.
         """
         if self.preview is None:
             return
@@ -1924,18 +1549,9 @@ class TabController:
     def _on_remote_image_failed(self, view, url, result):
         """Tell this tab's page why one of its images did not arrive.
 
-        Routed by the WebView the request came from, so a failure lands in
-        the tab that asked for it and nowhere else; a destroyed view reports
-        None, which is the whole check needed. Both parts are an
-        optimisation rather than a guard -- `imagescheme` records that
-        finishing a destroyed view's request is safe, and this listener is
-        dropped in `deactivate()`, so a torn-down controller is never
-        reached at all.
-
-        Writes the same sentence `_on_image_error` does, and the two are
-        idempotent in either order: this one lands when the placeholder is
-        already in the page, that one covers the ordinary case where it is
-        not there yet.
+        Routed by the WebView the request came from, so a failure lands only
+        in the tab that asked for it. Writes the same sentence
+        `_on_image_error` does, and the two are idempotent in either order.
         """
         if view is None or self.preview is None or view is not self.preview.widget:
             return
@@ -1999,27 +1615,19 @@ class TabController:
     def _set_info_bar(self, message, button=None, on_activate=None):
         """Put one of xedown's own info bars in the tab's single slot.
 
-        Two of xedown's own bars never coexist -- there is one slot, and
-        `Xed.Tab.set_info_bar` is how it is filled -- so the newer replaces
-        the older. xed fills the same slot with bars of its own, and whichever
-        was set last is the one on screen; there is nothing to reconcile,
-        because in the one case where both can appear they offer the same
-        thing by the same route.
-
-        Returns the bar, so a caller that needs to recognise its own later can
-        keep hold of it. Returns None when there is no tab to put it in.
+        There is one slot, so the newer bar replaces the older -- xed's own
+        included, and in the one case where both can appear they offer the
+        same thing by the same route. Returns the bar so a caller can
+        recognise its own later, or None when there is no tab.
         """
         if self.tab is None:
             return None
         if not self._tab_is_quiet():
-            # The slot is xed's while it is working: during a load or a save
-            # it holds a `XedProgressInfoBar` that xed goes on calling
-            # `info_bar_set_progress` against, and `Xed.Tab.set_info_bar`
-            # destroys whatever is already there. Taking the slot mid-job
-            # broke xed's state machine outright -- see `_tab_is_quiet`. The
-            # callers above are the last line of defence; this is the choke
-            # point that makes it true of every caller, including
-            # `_show_error`.
+            # The slot is xed's while it works: it holds a
+            # `XedProgressInfoBar` it keeps calling into, and `set_info_bar`
+            # destroys whatever is there. Taking it mid-job broke xed's state
+            # machine outright -- see `_tab_is_quiet`. This is the choke point
+            # that makes that true of every caller.
             return None
         self._dismiss_info_bar()
         bar = Gtk.InfoBar()
@@ -2027,10 +1635,9 @@ class TabController:
         bar.get_content_area().add(Gtk.Label(label=message))
         if button is not None:
             bar.add_button(button, Gtk.ResponseType.APPLY)
-        # `add_button` hands back the button it just made. `Gtk.InfoBar` has
-        # no `get_widget_for_response` -- that is a `Gtk.Dialog` method, and
-        # calling it here raised `AttributeError` on every info bar the
-        # plugin showed, including the one a refused link produces.
+        # `Gtk.InfoBar` has no `get_widget_for_response` -- that is a
+        # `Gtk.Dialog` method, and calling it raised `AttributeError` on every
+        # info bar the plugin showed. `add_button` hands the button back.
         close_button = bar.add_button("Close", Gtk.ResponseType.CLOSE)
         close_accessible = close_button.get_accessible()
         if close_accessible is not None:
@@ -2052,10 +1659,8 @@ class TabController:
         self._set_info_bar(message)
 
     def _on_info_bar_response(self, bar, response):
-        # `Xed.Tab.set_info_bar` does not accept None (its `info_bar`
-        # argument is marshaled as non-nullable), so the bar is retired by
-        # destroying it directly rather than trying to clear the tab's
-        # info-bar slot.
+        # `Xed.Tab.set_info_bar` marshals its argument as non-nullable, so a
+        # bar is retired by destroying it, not by clearing the slot.
         action = self._info_bar_action if self._info_bar is bar else None
         if self._info_bar is bar:
             self._info_bar = None
@@ -2086,29 +1691,18 @@ class TabController:
     def _on_info_bar_destroyed(self, bar):
         """Drop every field naming `bar`, however it came to be destroyed.
 
-        `Xed.Tab.set_info_bar` destroys whatever bar already occupies the
-        tab's one slot before storing a new one -- disassembly of
-        `xed_tab_set_info_bar` shows a plain `gtk_widget_destroy` on the old
-        bar, with no "response" signal involved. xed takes that route for
-        bars of its *own* -- its "file changed on disk" bar appears the
-        moment the source view takes keyboard focus (see the "source buffer
-        keeps its old text" entry in docs/known-issues.md), which is exactly
-        when a user switches to Markdown mode to look at xedown's bar -- and
-        that silently destroys xedown's bar out from under it without ever
-        running `_on_info_bar_response`. Left unhandled,
-        `_info_bar` and `_external_bar` would go on pointing at a destroyed
-        widget forever, and `_show_external_change_bar`'s idempotence guard
-        (`self._external_bar is self._info_bar`) would keep comparing two
-        equal dangling pointers and read "already showing" for the rest of
-        the tab's life -- wedging every later warning off for good.
+        `xed_tab_set_info_bar` plain `gtk_widget_destroy`s the bar already in
+        the slot, with no "response" signal -- and xed takes that route for
+        bars of its own, destroying xedown's out from under it. Left
+        unhandled, these fields would point at a destroyed widget forever and
+        `_show_external_change_bar`'s idempotence guard would compare two
+        dangling pointers, reading "already showing" and wedging every later
+        warning off for the life of the tab.
 
-        Harmlessly re-entrant: `_on_info_bar_response` and `_dismiss_info_bar`
-        both null these same fields out *before* calling `bar.destroy()`
-        themselves, precisely so that this handler firing as part of that
-        same call finds nothing left of `bar` to clear. It only ever has
-        work to do when the destroy came from somewhere else. It only clears
-        fields that already name `bar` -- it never assigns into them -- so it
-        cannot resurrect a bar a newer one has already replaced.
+        Harmlessly re-entrant: the two callers null these fields *before*
+        calling `bar.destroy()`, so this finds nothing left to clear. It only
+        clears fields already naming `bar`, never assigns, so it cannot
+        resurrect a bar a newer one replaced.
         """
         if self._info_bar is bar:
             self._info_bar = None

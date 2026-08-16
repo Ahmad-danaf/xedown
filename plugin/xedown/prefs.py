@@ -65,7 +65,7 @@ class Group:
 
 _THEME_CHOICES = tuple((theme.identifier, theme.label) for theme in themes.THEMES)
 
-# Wording is carried over from docs/settings.md rather than newly invented,
+# Wording is carried over from docs/preferences.md rather than newly invented,
 # so the window and the documentation cannot drift into saying different
 # things about the same setting.
 GROUPS = (

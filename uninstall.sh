@@ -21,16 +21,37 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --purge) PURGE=1; shift ;;
     --force) FORCE=1; shift ;;
-    -h|--help) sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,6p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
 
 xed_is_running() { pgrep -x xed >/dev/null 2>&1; }
 
-# --- nothing to do is not an error ---------------------------------------
+disable_plugin() {
+  if xed_is_running || ! command -v gsettings >/dev/null 2>&1; then
+    return
+  fi
+  local current updated
+  current="$(gsettings get "$XED_SCHEMA" "$XED_KEY" 2>/dev/null || true)"
+  if [ -n "$current" ]; then
+    # `|| say ...` on the whole chain, not bare: under `set -e` a failing
+    # gsettings would otherwise abort the uninstall halfway, leaving the
+    # files in place with no message about why.
+    { updated="$(python3 - "$current" <<'PYTHON'
+import ast, sys
+current = [name for name in ast.literal_eval(sys.argv[1]) if name != "xedown"]
+print(repr(current))
+PYTHON
+)" && gsettings set "$XED_SCHEMA" "$XED_KEY" "$updated" \
+      && say "Removed xedown from xed's plugin list."
+    } || say "Could not update xed's plugin list; remove xedown from it by hand."
+  fi
+}
+
 
 if [ ! -e "$PLUGIN_DIR/xedown" ] && [ ! -e "$PLUGIN_DIR/xedown.plugin" ]; then
+  disable_plugin
   say "xedown is not installed in $PLUGIN_DIR — nothing to do."
   if [ "$PURGE" = 1 ] && [ -d "$CONFIG_DIR" ]; then
     rm -rf "$CONFIG_DIR"
@@ -39,8 +60,6 @@ if [ ! -e "$PLUGIN_DIR/xedown" ] && [ ! -e "$PLUGIN_DIR/xedown.plugin" ]; then
   exit 0
 fi
 
-# --- refuse to delete anything that is not ours --------------------------
-#
 # Both paths above are computed from XDG_DATA_HOME or HOME, and a computed
 # path is exactly the kind that becomes a catastrophe when a variable is
 # empty. Nothing here deletes a directory that has not first been shown to
@@ -67,32 +86,20 @@ fi
 
 say "Removing xedown $VERSION from $PLUGIN_DIR"
 
-# --- take it out of xed's plugin list ------------------------------------
 
-if ! xed_is_running && command -v gsettings >/dev/null 2>&1; then
-  current="$(gsettings get "$XED_SCHEMA" "$XED_KEY" 2>/dev/null || true)"
-  if [ -n "$current" ]; then
-    # `|| say ...` on the whole chain, not bare: under `set -e` a failing
-    # gsettings would otherwise abort the uninstall halfway, leaving the
-    # files in place with no message about why.
-    { updated="$(python3 - "$current" <<'PYTHON'
-import ast, sys
-current = [name for name in ast.literal_eval(sys.argv[1]) if name != "xedown"]
-print(repr(current))
-PYTHON
-)" && gsettings set "$XED_SCHEMA" "$XED_KEY" "$updated" \
-      && say "Removed xedown from xed's plugin list."
-    } || say "Could not update xed's plugin list; untick Xedown by hand."
-  fi
-fi
+disable_plugin
 
-# --- the files -----------------------------------------------------------
 
 rm -rf "$PLUGIN_DIR/xedown"
 rm -f "$PLUGIN_DIR/xedown.plugin"
 say "Removed the plugin files."
 
-# --- what belongs to the reader ------------------------------------------
+if xed_is_running; then
+  say ""
+  say "Close xed, then run this script again to remove the stale entry from"
+  say "xed's active-plugin list. The second run works with no plugin files present."
+fi
+
 
 if [ "$PURGE" = 1 ]; then
   if [ -d "$CONFIG_DIR" ]; then

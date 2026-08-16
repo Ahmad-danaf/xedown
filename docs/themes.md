@@ -36,7 +36,7 @@ creates the shared settings store, and every tab after that reuses it — so a
 hand edit takes effect only after you restart xed; closing and reopening the
 file is not enough. Choosing the theme in the settings window instead applies
 it to every open preview in every window immediately, with no restart.
-[docs/settings.md](settings.md) covers how the file is read and what happens
+[preferences.md](preferences.md) covers how the file is read and what happens
 when it is malformed.
 
 ## Contrast

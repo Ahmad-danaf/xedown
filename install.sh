@@ -2,7 +2,7 @@
 # Installs xedown into your xed plugins directory.
 #
 #   ./install.sh                       # from this checkout, or a sibling archive
-#   ./install.sh --from xedown-0.3.0.tar.gz
+#   ./install.sh --from xedown-1.0.0.tar.gz
 #   ./install.sh --enable              # also switch the plugin on
 #   ./install.sh --no-enable           # never ask about switching it on
 #   ./install.sh --force               # install despite a failed requirement
@@ -25,7 +25,7 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
 
 usage() {
-  sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 while [ "$#" -gt 0 ]; do
@@ -278,7 +278,8 @@ preflight_gate() {
     0) return 0 ;;
     1) say ""; say "Installing anyway: nothing above prevents xedown from running,"
        say "but this machine is outside what xedown is tested on."
-       say "See docs/compatibility.md."; say ""; return 0 ;;
+       say "See https://github.com/Ahmad-danaf/xedown/blob/main/docs/compatibility.md"
+       say ""; return 0 ;;
     2) if [ "$FORCE" = 1 ]; then
          say ""; say "Installing anyway because --force was given."
          say "xedown may not load at all until the above is fixed."; say ""

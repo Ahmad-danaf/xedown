@@ -40,8 +40,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- version, from one source of truth ----------------------------------
-#
 # __version__ is the source of truth; the .plugin descriptor is what xed
 # actually shows in Preferences. They drift silently and nobody notices
 # until a user reports the wrong version, so disagreement is fatal here.
@@ -71,7 +69,6 @@ ARCHIVE="$DIST_DIR/xedown-$VERSION.tar.gz"
 
 echo "==> Building xedown $VERSION"
 
-# --- stage ---------------------------------------------------------------
 
 cp -r "$ROOT/plugin/xedown" "$STAGING/"
 cp "$ROOT/plugin/xedown.plugin" "$STAGING/"
@@ -83,8 +80,6 @@ cp "$ROOT/LICENSE" "$STAGING/xedown/LICENSE"
 find "$STAGING" -name '__pycache__' -type d -prune -exec rm -rf {} +
 find "$STAGING" -name '*.py[cod]' -delete
 
-# --- refuse to ship something incomplete ---------------------------------
-#
 # Each of these is a promise the release makes: no pip step, offline syntax
 # highlighting, both third-party licences included. A missing one is a
 # broken promise, not a missing nicety.
@@ -168,8 +163,6 @@ if [ -n "$UNEXPECTED" ]; then
   exit 1
 fi
 
-# --- pack, reproducibly --------------------------------------------------
-#
 # Same commit in, byte-identical archive out: fixed timestamps taken from
 # the commit itself, sorted entries, no owner names, and gzip -n so the
 # compressor does not stamp its own mtime into the header.
@@ -184,7 +177,6 @@ tar --sort=name \
     -C "$STAGING" -cf - xedown xedown.plugin \
   | gzip -n -9 > "$ARCHIVE"
 
-# --- prove it works on its own -------------------------------------------
 
 echo "==> Verifying the archive renders with nothing else on the path"
 echo "    (a 'xed/GTK typelibs unavailable' note below is expected and correct:"
@@ -229,8 +221,6 @@ print(f"    vendored Markdown {markdown.__version__} loaded from the archive")
 print(f"    rendered {len(page)} bytes with tables, tasks, strikethrough and highlighting")
 PYTHON
 
-# --- the installer travels with the archive ------------------------------
-#
 # The archive's root IS the user's plugins directory, so the installer
 # cannot live inside it without littering a directory xedown does not own.
 # It is published as a second release asset instead, which is also why
@@ -240,7 +230,6 @@ PYTHON
 cp "$ROOT/install.sh" "$ROOT/uninstall.sh" "$DIST_DIR/"
 chmod +x "$DIST_DIR/install.sh" "$DIST_DIR/uninstall.sh"
 
-# --- report ---------------------------------------------------------------
 
 SIZE="$(du -h "$ARCHIVE" | cut -f1)"
 SHA="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"

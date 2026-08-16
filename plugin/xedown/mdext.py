@@ -30,31 +30,23 @@ _IDCOUNT_RE = re.compile(r"^(.*)_([0-9]+)$")
 def unique_id(candidate, used, memo):
     """`toc.unique`'s answer, without its quadratic walk.
 
-    The vendored function resolves a slug collision by restarting its
-    `_1, _2, _3...` probe from the beginning every time, so the nth
-    duplicate of one slug costs n steps -- 1,529 ms for 1600 identical
-    headings against 212 ms for 1600 distinct ones. The shape that hits
-    it is a changelog, with `### Fixed` under every released version.
+    The vendored function restarts its `_1, _2, _3...` probe from the
+    beginning on every collision, so the nth duplicate of one slug costs n
+    steps -- 1,529 ms for 1600 identical headings against 212 ms for 1600
+    distinct. A changelog with `### Fixed` under every version hits it.
 
-    `memo` maps an input string to the last id returned for it, and is
-    what makes this linear. Resuming there is safe, and gives byte-identical
-    output, because of an invariant the vendored loop establishes: it
-    advances from one candidate to the next only when the current one is
-    already in `used`, and adds its answer on the way out. So after a call
-    for `s` returns `s_k`, every one of `s, s_1, ... s_k` is in `used`, and
-    resuming a later call at `s_k` skips only values already proven
-    occupied. It can never skip a *free* value, which is the only way the
-    answer could differ.
+    `memo` (input string -> last id returned) is what makes this linear.
+    Resuming there is safe because the vendored loop only advances past a
+    candidate already in `used`, so after `s` returns `s_k` every one of
+    `s, s_1, ... s_k` is occupied: resuming at `s_k` can never skip a *free*
+    value, which is the only way the answer could differ.
 
-    Byte-identical output is a requirement, not a nicety: anchors are part
-    of the rendered document's contract and in-page links resolve against
-    them. `tests/unit/test_toc_unique.py` differential-tests this against
-    the vendored function and pins that function's behaviour, so a
-    re-vendor that changes it fails loudly instead of leaving a
-    replacement that quietly no longer matches.
+    Byte-identical output is a requirement -- anchors are part of the
+    document's contract. `tests/unit/test_toc_unique.py` differential-tests
+    against the vendored function and pins its behaviour, so a re-vendor
+    that changes it fails loudly.
 
-    Single-threaded by construction -- rendering happens on the GTK main
-    thread -- so `memo` needs no locking. It is created per document.
+    `memo` needs no locking: rendering is on the GTK main thread.
     """
     identifier = memo.get(candidate, candidate)
     while identifier in used or not identifier:
@@ -68,29 +60,20 @@ def unique_id(candidate, used, memo):
     return identifier
 
 
-# A backslash immediately followed by a newline is a hard line break in
-# CommonMark, the same as two trailing spaces (the vendored `linebreak`
-# pattern, `LINE_BREAK_RE = r'  \n'`, already handles that spelling). The
-# vendored `escape` inline pattern (priority 180, `ESCAPE_RE = r'\\(.)'`
-# compiled with `re.DOTALL`) runs first and *does* match a backslash before
-# a newline, but declines it -- `\n` is not in `Markdown.ESCAPED_CHARS` --
-# which leaves the raw "\\\n" text untouched for this pattern to claim at a
-# lower priority. A backslash that escapes another backslash
-# (`"a\\\\\nb"`) is consumed whole by `escape` before this pattern ever
-# sees it, so that case is unaffected.
+# A backslash before a newline is a CommonMark hard break, like two trailing
+# spaces. The vendored `escape` pattern (priority 180) matches it first but
+# declines it -- `\n` is not in `Markdown.ESCAPED_CHARS` -- leaving the raw
+# text for this lower-priority pattern. An escaped backslash is consumed
+# whole by `escape` first, so that case is unaffected.
 _BACKSLASH_BREAK_PATTERN = r"\\\n"
 
 # A list marker allowed to interrupt a paragraph: up to three spaces of
 # indent, then `-`, `*`, `+`, `1.` or `1)`, then a space and real content.
 #
-# `1.`/`1)` rather than `\d+[.)]` is GFM's own rule, and it is what keeps
-# prose that wraps onto a line starting with a number ("...was\n1985. What a
-# year.") a paragraph rather than an `<ol start="1985">`. `1)` was added
-# alongside `1.` for the same reason and under the same restriction (task 14 /
-# F20) -- CommonMark accepts both spellings of an ordered marker, and
-# "1985) what a year" must stay prose exactly as "1985. what a year" does.
-# The lookahead is GFM's rule that an empty list item cannot interrupt.
-# Three spaces is the tolerance the vendored list processors already use.
+# `1.`/`1)` rather than `\d+[.)]` is GFM's own rule, and what keeps prose
+# wrapping onto "1985. What a year." a paragraph rather than an
+# `<ol start="1985">`. The lookahead is GFM's rule that an empty item cannot
+# interrupt; three spaces is the vendored processors' own tolerance.
 _INTERRUPTING_MARKER = re.compile(r"^[ ]{0,3}(?:[*+-]|1[.)])[ ]+(?=\S)")
 
 
@@ -108,37 +91,28 @@ def find_list_interrupt(block):
     return None
 
 
-# A list item exactly as the vendored list processors define one: a marker,
-# then at least one space, then real content. Deliberately *not* wider than
-# they are -- a content-less marker (`-` alone on a line) is a list item in
-# CommonMark but not to `OListProcessor.RE`, and treating it as one here
-# would open a level of nesting the parser downstream refuses to enter, and
-# swallow the sub-items into a paragraph (task 15 / F5).
+# A list item exactly as the vendored processors define one, deliberately no
+# wider: a bare `-` is an item to CommonMark but not to `OListProcessor.RE`,
+# and treating it as one opens a nesting level the parser then refuses to
+# enter, swallowing the sub-items into a paragraph.
 _LIST_ITEM = re.compile(
     r"^(?P<indent>[ ]*)(?P<marker>[*+-]|\d{1,9}[.)])(?P<gap>[ ]+)(?=\S)"
 )
 
-# A thematic break, which outranks a list item in CommonMark and is claimed
-# at priority 50 by `HRProcessor` here -- the same shape as its own
-# `SEARCH_RE`, anchored to one line because that is all this pass has. The
-# v0.2 design could say "we never have to tell `---` from `- - -`, because
-# we are never shown any of them"; that holds at priority 12 and not in a
-# preprocessor. `- - -` is a marker, a space and content to the regex above,
-# and treating it as an item would indent a rule into a literal `- -` list.
+# A thematic break, which outranks a list item and is claimed by
+# `HRProcessor` (50). Needed because `- - -` reads as marker-space-content to
+# the regex above, and indenting it would turn a rule into a literal `- -`
+# list -- a distinction the pre-v0.3 design never had to make.
 _THEMATIC_BREAK = re.compile(
     r"^[ ]{0,3}(?=(?P<run>(-+[ ]{0,2}){3,}|(_+[ ]{0,2}){3,}|(\*+[ ]{0,2}){3,}))"
     r"(?P=run)[ ]*$"
 )
 
-# A setext underline: a run of `=` or `-` and nothing else.
-# `SetextHeaderProcessor` (60) is *above* `HRProcessor` (50) in the
-# registry, so it is tried first and a run of three or more hyphens is not
-# reliably a rule -- it escapes setext only when it is not line two of its
-# block, which `RE = ^.*?\n[=-]+[ ]*(\n|$)` and a `.match` require.
-# Position in the block is not something this pass can know once the
-# parser starts re-queueing halves, so every `=`/`-` run is treated as an
-# underline, which is the stricter of the two answers. `- - -` and `***`
-# are not runs of `[=-]` and stay rules.
+# A setext underline. `SetextHeaderProcessor` (60) outranks `HRProcessor`
+# (50), so a run of hyphens is not reliably a rule: it escapes setext only
+# when it is not line two of its block, which this pass cannot know once the
+# parser re-queues halves. Every `=`/`-` run is treated as an underline, the
+# stricter answer; `- - -` and `***` are not such runs and stay rules.
 _SETEXT_UNDERLINE = re.compile(r"^(?:=+|-+)[ ]*$")
 
 # An ATX heading as `SpacedHashHeaderProcessor` (70) defines one: at most
@@ -153,46 +127,31 @@ STOP = "stop"
 def _ends_list_tracking(content, column, level, tab_length):
     """How a block splitter inside a list ends this pass's tracking of one.
 
-    `REWIND`, `STOP` or None. Three processors *split* the block they are
-    given and re-queue the halves: `hr` (50), `setextheader` (60) and
-    `hashheader` (70). Each is claimed near the left margin and not at
-    `tab_length` columns in, which is what makes them the hazard for a pass
-    that moves marker lines to the right: `ListIndentProcessor` dedents
-    every tight line under a nested marker by `tab_length`, and one of
-    these three arriving at the margin can take the list with it.
+    `REWIND`, `STOP` or None. Three processors split their block and re-queue
+    the halves -- `hr` (50), `setextheader` (60), `hashheader` (70) -- each
+    claimed near the left margin. `ListIndentProcessor` dedents every tight
+    line by `tab_length`, so one of these reaching the margin can take the
+    list with it.
 
     **`column` and `level` are in the coordinates this pass emits, not the
-    ones it read.** `column` is where the line will actually be written --
-    `_place_continuation` decides that and is called for this and for the
-    emission itself, so the two cannot drift -- and `level` is the emitted
-    nesting depth of the item the line follows. Measuring in source
-    coordinates is what let a rule at four columns under a three-column
-    sub-item read as "over-indented, harmless" while the sub-item above it
-    had already been rewritten to four: the two spaces disagreed and the
-    rule reached the margin anyway.
+    ones it read**, because `_place_continuation` decides both this and the
+    emission. Measuring in source coordinates let a rule at four columns
+    under a three-column sub-item read as harmless while the sub-item had
+    already been rewritten to four, and the rule reached the margin anyway.
 
-    Given those, `landing` is the column the line reaches after the
-    dedents. `looseDetab` takes `tab_length` off a line only when the line
-    has that much to give, so a line runs out of indentation before it runs
-    out of levels -- hence the `min`.
+    `landing` is where the line ends up after the dedents; `looseDetab` only
+    takes `tab_length` off a line that has it to give, hence the `min`.
 
-    - **A setext underline** absorbs the line *above* it into the heading,
-      so a marker line this pass has moved becomes the heading's text: `- b`
-      renders as an `<h1>` reading "- b" rather than as an item. Nothing
-      about its column saves it, so it always `REWIND`s.
-    - **A rule or an ATX heading at the margin** -- close enough to be
-      claimed where it stands -- cuts the block at its own line. The half
-      above is a whole list, re-parsed with its nesting intact, so there is
-      nothing to undo; but the list is over as far as the parser is
-      concerned, so tracking must `STOP` or a later line is measured
-      against an item that no longer exists. `### Heading` directly under a
-      list line is a shape real READMEs contain, and rewinding it would
-      cost real sublists.
-    - **A rule or an ATX heading that only reaches the margin after the
-      dedents** descends into the item instead, and cuts a sub-item away
-      from the parent it was just nested under -- `REWIND`. Landing further
-      in than that, it is claimed by nothing above `ulist`, and the fix can
-      stay: None.
+    - **A setext underline** absorbs the line *above* into the heading, so a
+      moved marker line becomes heading text. Always `REWIND`.
+    - **A rule or ATX heading at the margin** cuts the block at its own line.
+      The half above keeps its nesting, so nothing is undone, but the list is
+      over: `STOP`, or a later line is measured against a dead item.
+      Rewinding instead would cost real sublists, since `### Heading` under a
+      list line is a shape real READMEs contain.
+    - **One that only reaches the margin after the dedents** descends into
+      the item and cuts a sub-item from its parent: `REWIND`. Further in than
+      that, nothing above `ulist` claims it: None.
     """
     if _SETEXT_UNDERLINE.match(content) is not None:
         return REWIND
@@ -219,109 +178,77 @@ def _place_continuation(line, indent, column, depth, own_block, tab_length):
         return indent
     offset = indent - column
     if own_block:
-        # A block of its own inside the item: `ListIndentProcessor` will
-        # dedent it by `tab_length * depth`, so put it there. An offset of
-        # one to three columns past the continuation column is
-        # insignificant to every block construct, and dropping it is what
-        # keeps a document that already indents `tab_length` per level
-        # byte-identical through this pass. Four or more is the indent of a
-        # code block and is content, so it is carried through.
+        # `ListIndentProcessor` dedents a block of its own by
+        # `tab_length * depth`, so put it there. An offset of one to three
+        # columns is insignificant to every block construct and dropping it
+        # keeps an already-`tab_length` document byte-identical; four or more
+        # is a code block's indent and is content.
         return tab_length * depth + (offset if offset >= tab_length else 0)
     if offset < tab_length and line[indent] == ">":
         return tab_length * (depth - 1) + offset
     return indent
 
 
-# The markers GFM lets a list use to interrupt a paragraph -- the same rule
-# `_INTERRUPTING_MARKER` above encodes, needed again here as a set because
-# this pass has already matched the marker and only has to classify it. A
-# marker that cannot interrupt is prose that happens to look like a marker
-# ("...was\n1985. What a year."), and must not open an item.
+# `_INTERRUPTING_MARKER`'s rule again as a set, because this pass has already
+# matched the marker and only has to classify it. Anything else is prose that
+# looks like a marker ("...was\n1985. What a year.") and must not open an item.
 _INTERRUPTING_MARKERS = frozenset({"-", "*", "+", "1.", "1)"})
 
 
 def normalize_list_indentation(lines, tab_length=4):
     """Re-indent list content onto `tab_length`-per-level nesting.
 
-    CommonMark nests by *continuation column*: content indented to where the
-    parent item's own content starts belongs to that item, so `- Flask` /
-    `  - apiflask` is a sublist. The vendored parser nests by a fixed
-    `tab_length` instead -- `ListIndentProcessor` tests
-    `block.startswith(' ' * tab_length)` and `OListProcessor.CHILD_RE`
-    accepts a marker at 0-3 spaces as a *sibling* -- so a two-space sublist
-    is flattened into its parent (task 15 / F5) and content indented past
-    the continuation column, but under the four spaces the parser wants, is
-    left as literal text (F6). `tab_length=2` is not the fix: it would read
-    one four-space indent as two levels.
+    CommonMark nests by *continuation column*, so `- Flask` / `  - apiflask`
+    is a sublist. The vendored parser nests by a fixed `tab_length` instead
+    (`ListIndentProcessor` tests `startswith(' ' * tab_length)`, and
+    `OListProcessor.CHILD_RE` reads a marker at 0-3 spaces as a *sibling*),
+    so a two-space sublist is flattened into its parent and content past the
+    continuation column but under four spaces is left as literal text.
+    `tab_length=2` is not the fix: it would read one four-space indent as two
+    levels.
 
-    This pass is the translation between the two models, and it rewrites
-    nothing but leading whitespace. An item's marker line moves to
-    `tab_length * (depth - 1)`; a block of its own inside that item moves to
-    `tab_length * depth`, carrying any offset of four or more columns past
-    the continuation column, since that offset is a code block's indent and
-    is content. Every other line stays exactly where it was written, bar the
-    one exception the hazards below name. A document that already indents
-    `tab_length` per level comes through byte-identical.
+    This pass translates between the two models and rewrites nothing but
+    leading whitespace. A marker line moves to `tab_length * (depth - 1)`; a
+    block of its own inside the item moves to `tab_length * depth`, carrying
+    any offset of four or more columns, which is a code block's indent. Every
+    other line stays where it was written, bar the exceptions below, and an
+    already-`tab_length` document comes through byte-identical.
 
-    It runs as a preprocessor rather than a block processor because the
-    decision needs the whole document's line-by-line list nesting, which no
-    single block carries. That is the position the v0.2 design
-    (`docs/superpowers/specs/2026-08-10-xedown-v0.2-gfm-lists-design.md`,
-    section 4) names as the trap, and the trap is closed here by *where in
-    the preprocessor chain this sits* rather than by re-deriving structure:
-    at priority 18 both stashing preprocessors have already run, so a fenced
-    code block (`fenced_code_block`, 25) and a raw HTML block (`html_block`,
-    20) have been lifted out into the HTML stash and replaced by
-    placeholders before this sees a single line. Indentation that is content
-    is not text this pass declines to touch; by the time it runs, it is not
-    text. That argument reaches exactly as far as the stashing
-    preprocessors do and no further: `_FENCED_BLOCK_RE` tolerates three
-    spaces of indent, so a fence indented four or more inside a list item is
-    never stashed, and this pass can and does move its body. That shape
-    diverges from cmark-gfm both before and after this change -- the fence
-    is not recognised as a fence at all -- so nothing regresses, but the
-    guarantee above is about fences the stashing preprocessor matched, not
-    about every line that looks like one.
+    A preprocessor rather than a block processor, because the decision needs
+    the whole document's nesting, which no single block carries. What makes
+    that safe is its position at priority 18: `fenced_code_block` (25) and
+    `html_block` (20) have already lifted their content into the HTML stash,
+    so indentation that is content is not text by the time this runs. That
+    reaches exactly as far as those stashing passes do -- `_FENCED_BLOCK_RE`
+    tolerates only three spaces of indent, so a fence indented four or more
+    inside a list item is never stashed and this pass does move its body.
+    That shape diverges from cmark-gfm before and after, so nothing
+    regresses.
 
-    It is deliberately **not** idempotent, and nothing calls it twice: a
-    preprocessor runs once per conversion. The continuation columns it reads
-    are the *source* document's, while the indentation it writes is the
-    parser's fixed `tab_length` model, so its output is in the other
-    coordinate system and feeding that back in translates a second time (a
-    code block inside a two-column item drifts 6 -> 8 -> 10). Making it a
-    fixed point would mean emitting an item whose content column is
-    `tab_length * depth`, which is not what a marker line's content column
-    is.
+    Deliberately **not** idempotent, and nothing calls it twice: it reads
+    source continuation columns and writes the parser's fixed model, so
+    feeding its output back in translates a second time (a code block in a
+    two-column item drifts 6 -> 8 -> 10).
 
-    Three hazards remain that indentation alone can spring, and each is
-    closed by narrowness rather than by inspection:
+    Three hazards remain, each closed by narrowness rather than inspection:
 
-    - A line that is *not* a marker keeps its own indentation, except for a
-      blockquote marker (F6's case) and except in a block of its own. A
-      tight item's continuation lines are handed to the parser raw --
-      `OListProcessor.get_items` appends them without dedenting -- so moving
-      one changes which block processor claims the *whole* block. Dedenting
-      `  ---` under `- a` would turn a list and a rule into an `<h2>` whose
-      text is `- a`; dedenting `  # x` would lift the heading out of the
-      item. A `>` line can be claimed by nothing above `quote` (20) that it
-      could not be claimed by already, which is what makes it the one safe
-      exception -- and the useful one, since `BlockQuoteProcessor.RE`
-      tolerates exactly three spaces.
-    - An over-indented line stays over-indented. Four or more spaces past
-      the continuation column is indented code in CommonMark, and code
-      cannot interrupt a paragraph, so such a line is prose that must not be
-      pulled down into `OListProcessor.INDENT_RE`'s four-to-seven-space
-      window and turned into a nested item.
-    - A rule, a setext underline or an ATX heading tight inside a list ends
-      the tracking, and sometimes undoes it. Declining to *move* the rule is
-      not enough: `HRProcessor` (50) splits the block at the rule and
-      re-queues both halves, so whatever follows re-enters the chain with no
-      list context, and `tab_length` spaces there mean indented code (80)
-      rather than a sub-item -- `- a` / `  ---` / `  - b` would put the
-      bullet in a code box. `_ends_list_tracking` says which of the two is
-      needed and why. With a blank line around it the rule is its own block,
-      `ListIndentProcessor` still carries the item across, and the list
-      survives -- which is why the guard asks whether a blank line preceded.
+    - A non-marker line keeps its own indentation, except a blockquote marker
+      and except in a block of its own. Tight continuation lines reach the
+      parser raw, so moving one changes which processor claims the *whole*
+      block: dedenting `  ---` under `- a` makes an `<h2>` reading "- a".
+      A `>` line is the one safe exception, since nothing above `quote` (20)
+      could claim it that could not already.
+    - An over-indented line stays over-indented: four or more spaces past the
+      continuation column is indented code, which cannot interrupt a
+      paragraph, so it must not be pulled into `OListProcessor.INDENT_RE`'s
+      four-to-seven-space window.
+    - A rule, setext underline or ATX heading tight inside a list ends the
+      tracking. Declining to move it is not enough: `HRProcessor` (50) splits
+      the block and re-queues both halves, so what follows re-enters with no
+      list context, where `tab_length` spaces mean indented code -- `- a` /
+      `  ---` / `  - b` would put the bullet in a code box. With a blank line
+      around it the rule is its own block and the list survives, which is why
+      the guard asks whether a blank line preceded.
     """
     out = []
     # The source content column of every open list item, outermost first.
@@ -365,15 +292,10 @@ def normalize_list_indentation(lines, tab_length=4):
         )
         if ending is not None:
             # A block splitter inside a list -- see the third hazard above.
-            # Either way the list is over for this pass; `REWIND`
-            # additionally puts back the lines already emitted for this
-            # block and hands the rest over untouched, so the block renders
-            # exactly as it did before this pass existed. Rewinding rather
-            # than merely stopping is what the deeper forms need: by the
-            # time the splitter is reached the marker lines above it have
-            # already been moved, and leaving them moved is what turns
-            # `- b` / `    ---` into an `<h2>` reading `- b` with the next
-            # sub-item in a code box.
+            # Either way the list is over for this pass. `REWIND` also puts
+            # back the lines already emitted for this block, because by now
+            # the marker lines above have been moved, and leaving them moved
+            # turns `- b` / `    ---` into an `<h2>` reading "- b".
             if ending is REWIND:
                 out[block_start:] = block_source
                 verbatim = True
@@ -408,10 +330,9 @@ def normalize_list_indentation(lines, tab_length=4):
             open_items.append(
                 indent + len(match.group("marker")) + len(match.group("gap"))
             )
-            # An outermost item is left exactly where it was written. Its
-            # marker is already inside the nought-to-three columns every
-            # vendored list processor tolerates, so moving it buys nothing,
-            # and moving it *left* can walk a marker out from under an
+            # An outermost item stays where it was written: its marker is
+            # already inside the 0-3 columns every vendored list processor
+            # tolerates, and moving it *left* can walk it out from under an
             # indented code block that was holding it.
             out.append(
                 line if not depth else " " * (tab_length * depth) + line[indent:]
@@ -423,37 +344,27 @@ def normalize_list_indentation(lines, tab_length=4):
             placed = _place_continuation(
                 line, indent, column, depth, own_block, tab_length
             )
-            # Leading whitespace is spaces by now -- `normalize_whitespace`
-            # (30) expanded tabs long before this pass -- so rebuilding the
-            # line from a column is lossless.
+            # `normalize_whitespace` (30) expanded tabs long before this, so
+            # rebuilding the line from a column is lossless.
             out.append(" " * placed + line[indent:])
         after_marker = is_item
         after_blank = False
     return out
 
 
-# The language class for a fenced code block is the first whitespace- or
-# comma-delimited token of its info string (task 13 / F2). "```rust,no_run"
-# and "```js title=\"x\"" are ordinary doc-tool info strings -- GFM defines
-# only the first word as the language name, and the vendored
-# `FENCED_BLOCK_RE` (fenced_code.py:58) narrows that further, to a single
-# *bare* word: a comma, a space or a brace anywhere in the info string makes
-# the *whole opening-fence match* fail, so the fence never opens at all. The
-# closing fence is then left unmatched, and goes on to open one of its own
-# for whatever follows -- the desynchronisation this task exists to stop.
+# GFM takes only the first token of an info string as the language name. The
+# vendored `FENCED_BLOCK_RE` narrows that to a single *bare* word, so a comma,
+# space or brace anywhere in the info string fails the whole opening-fence
+# match: the fence never opens, its closing fence opens one of its own for
+# whatever follows, and the document desynchronises from there.
 _FENCE_LANG_TOKEN = re.compile(r"[^\s,]+")
 
-# The shape the vendored fence regex used to require of the *entire* info
-# string, now used the other way around: as a check on the one token pulled
-# out of it. `class="language-..."` reaches the rendered page unexamined --
-# `sanitizer._ALLOWED_CLASS_PREFIXES` is a prefix check for blocking style
-# injection, not a semantic validator, and is not the layer that catches a
-# malformed token. A token that fails this (a stray `{` left over from an
-# unclosed attribute list, an embedded quote, ...) gets no class at all,
-# not an escaped-but-nonsensical one: cmark-gfm's *raw* output would put it
-# in `lang=` on `<pre>`, but `lang` is not an attribute the sanitizer allows
-# there, so cmark's *sanitized* output -- the audit's actual yardstick --
-# has nothing at all in that case either.
+# The shape the vendored regex required of the whole info string, applied to
+# the one token pulled out of it. `class="language-..."` reaches the page
+# unexamined: `sanitizer._ALLOWED_CLASS_PREFIXES` blocks style injection and
+# is not a semantic validator. A malformed token gets no class at all rather
+# than an escaped-but-nonsensical one, which matches cmark-gfm's *sanitized*
+# output -- its `lang=` on `<pre>` is not an attribute the sanitizer allows.
 _PLAUSIBLE_LANG = re.compile(r"[\w#.+-]+")
 
 
@@ -482,10 +393,8 @@ def fence_lang(info):
 def _dedent_fence_body(code, width):
     """Strip up to `width` leading spaces from each line of a fence body.
 
-    CommonMark strips the opening fence's own indentation (0-3 spaces, task
-    13 / F3) from every content line, capped per line at however much
-    leading whitespace that particular line actually has -- a shorter line
-    never goes negative.
+    CommonMark strips the opening fence's own 0-3 spaces from every content
+    line, capped per line at the whitespace that line actually has.
     """
     if not width:
         return code
@@ -498,33 +407,19 @@ def _dedent_fence_body(code, width):
     return "\n".join(stripped)
 
 
-# Same shape as the vendored `FencedBlockPreprocessor.FENCED_BLOCK_RE`
-# (fenced_code.py:56-67), widened in one way and narrowed in another:
+# The vendored `FencedBlockPreprocessor.FENCED_BLOCK_RE`, with two changes:
 #
-#  - `(?P<indent>[ ]{0,3})` in front of the fence -- CommonMark tolerates up
-#    to three leading spaces on both the opening and the closing fence, the
-#    same tolerance the vendored list processors already use elsewhere in
-#    this file (task 13 / F3). Four or more stays indented code: at four
-#    spaces, `[ ]{0,3}` can consume at most three, which always leaves at
-#    least one space directly in front of the fence characters, so the
-#    match fails there regardless of how the group backtracks.
-#  - `(?P<info>[^\n]*)` in place of `(\.?(?P<lang>[\w#.+-]*)[ ]*)?` -- any
-#    text is now a valid info string, not just a bare word. `fence_lang`
-#    above pulls the language out of it afterwards.
+#  - `(?P<indent>[ ]{0,3})` allows CommonMark's three spaces of fence indent.
+#    Four or more stays indented code, because `[ ]{0,3}` always leaves at
+#    least one space in front of the fence characters however it backtracks.
+#  - `(?P<info>[^\n]*)` makes any text a valid info string, not just a bare
+#    word; `fence_lang` above pulls the language out afterwards.
 #
-# The `{attrs}` branch is carried forward unchanged (same group name and
-# position as the vendored regex) because it is live, not dead: `attr_list`
-# is loaded (`vendoring.MARKDOWN_EXTENSIONS`) and "```{.python #myid}" is
-# how a document sets an id on a fenced block. Without this branch, the
-# widened `info` alternative below would swallow the whole "{.python #myid}"
-# as info-string text instead, and its first token -- "{.python", not a
-# plausible language identifier -- would previously have surfaced as a
-# malformed class (`_plausible_lang` now blocks that too, independently).
+# The `{attrs}` branch is kept because it is live: `attr_list` is loaded, and
+# "```{.python #myid}" is how a document sets an id on a fence. Without it the
+# widened `info` alternative would swallow the whole thing as info text.
 #
-# The bare `hl_lines="..."` branch (outside of `{attrs}`) is the one piece
-# actually dropped rather than carried forward: grepped `renderer.py`,
-# `preview.js`, `preview.css` and the highlight.js bundle build script for a
-# consumer and found none anywhere in xedown -- genuinely dead code here.
+# The bare `hl_lines="..."` branch is dropped: nothing in xedown consumes it.
 _FENCED_BLOCK_RE = re.compile(
     r"""
     ^(?P<indent>[ ]{0,3})(?P<fence>~{3,}|`{3,})[ ]*  # opening fence
@@ -540,12 +435,10 @@ _FENCED_BLOCK_RE = re.compile(
 def _handle_fence_attrs(attrs):
     """Pull an id and a class list out of a `{...}` attribute list.
 
-    A narrowed `FencedBlockPreprocessor.handle_attrs` (fenced_code.py:165):
-    `hl_lines`/pygments/bool-option keys are dropped along with the rest of
-    that dead branch (see `_FENCED_BLOCK_RE` above) rather than carried
-    forward. Any other key/value pair (`{data-x=1}`) is silently ignored,
-    the same as the vendored preprocessor does whenever `attr_list` itself
-    is not loaded to render it as a key/value pair on the tag.
+    A narrowed `FencedBlockPreprocessor.handle_attrs`, dropping the
+    `hl_lines`/pygments keys with the rest of that dead branch. Any other
+    pair (`{data-x=1}`) is ignored, as the vendored preprocessor does when
+    `attr_list` is not loaded.
     """
     id_value = None
     classes = []
@@ -570,25 +463,17 @@ def make_extensions(markdown_module):
     HashHeaderProcessor = markdown_module.blockprocessors.HashHeaderProcessor
     code_escape = markdown_module.util.code_escape
     escape_attrib_html = markdown_module.serializers._escape_attrib_html
-    # `markdown_module.extensions.sane_lists` is not yet an attribute of the
-    # `extensions` package at this point -- nothing has imported that
-    # submodule yet, since `make_extensions` runs *before* the `Markdown()`
-    # call that would load it as one of `vendoring.MARKDOWN_EXTENSIONS`.
-    # `importlib.import_module`, keyed off `markdown_module.__name__` (which
-    # is already the vendored package, resolved once by
-    # `vendoring.import_markdown()`), reaches the same vendored submodule
-    # without a bare top-level `import markdown...` in this file -- which
-    # would risk resolving to a non-vendored copy if this module happened to
-    # be imported before the vendoring guard runs.
+    # Not yet an attribute of the `extensions` package: `make_extensions`
+    # runs before the `Markdown()` call that would import the submodule.
+    # Keyed off `markdown_module.__name__` so it reaches the *vendored* copy
+    # without a top-level `import markdown...`, which could resolve to a
+    # non-vendored one if this module were imported before the guard runs.
     _sane_lists = importlib.import_module(
         f"{markdown_module.__name__}.extensions.sane_lists"
     )
     SaneOListProcessor = _sane_lists.SaneOListProcessor
     SaneUListProcessor = _sane_lists.SaneUListProcessor
-    # Same reasoning as `SaneOListProcessor` above: `attr_list` is one of
-    # `vendoring.MARKDOWN_EXTENSIONS`, but not yet imported as a submodule
-    # at this point, since that only happens once `Markdown()` itself loads
-    # it -- after `make_extensions` has already returned.
+    # Same reasoning as `SaneOListProcessor` above.
     get_attrs_and_remainder = importlib.import_module(
         f"{markdown_module.__name__}.extensions.attr_list"
     ).get_attrs_and_remainder
@@ -653,17 +538,12 @@ def make_extensions(markdown_module):
             )
 
     class SpacedHashHeaderProcessor(HashHeaderProcessor):
-        """CommonMark requires a space (or end of line) after the `#`
-        markers; the vendored regex has no such requirement, so `#NoSpace`
-        becomes an `<h1>` and `####### Seven` becomes an `<h6>` with a
-        literal `#` left in its text (task 12 / F9, F10).
+        """Require CommonMark's space after the `#` markers.
 
-        `test` and `run` are inherited unchanged from the vendored
-        processor -- both just use `self.RE` -- so overriding `RE` alone is
-        enough. `[ ]+` is required after the hashes, except when they run
-        straight into the end of the line: a bare `#` (or `###` alone) is a
-        valid, empty ATX heading in CommonMark, and must keep rendering as
-        one.
+        The vendored regex does not, so `#NoSpace` becomes an `<h1>` and
+        `####### Seven` an `<h6>` with a literal `#` in its text. Overriding
+        `RE` alone is enough, since `test` and `run` both just use it. The
+        end-of-line alternative keeps a bare `#` a valid empty ATX heading.
         """
 
         RE = re.compile(
@@ -673,9 +553,8 @@ def make_extensions(markdown_module):
 
     class HashHeaderOverrideExtension(Extension):
         def extendMarkdown(self, md):
-            # Same name and priority as the vendored processor it replaces
-            # (`Registry.register` swaps an existing name in place), so it
-            # sits exactly where `hashheader` already sat in the chain.
+            # Same name and priority, so `Registry.register` swaps it in
+            # place and it sits exactly where `hashheader` sat.
             md.parser.blockprocessors.register(
                 SpacedHashHeaderProcessor(md.parser), "hashheader", 70
             )
@@ -725,23 +604,15 @@ def make_extensions(markdown_module):
             )
 
     class ParenUListProcessor(SaneUListProcessor):
-        """The other half of task 14 / F20, which task 15 surfaced.
+        """Teach an unordered list to spot a nested `1)` item.
 
-        `INDENT_RE` is how a list processor spots a *nested* item of either
-        type, so `ulist` carries its own copy of the ordered-marker shape --
-        and `sane_lists` leaves it at `OListProcessor.__init__`'s `\\d+\\.`,
-        which does not know `)`. Widening `olist` alone therefore left
-        `- a` / `  1) b` with no nested `<ol>`: the `1)` line went to
-        `get_items`' fallback and stayed literal text.
+        `INDENT_RE` is how a list processor spots a nested item of *either*
+        type, and `sane_lists` leaves `ulist`'s copy at the vendored
+        ordered-marker shape, which does not know `)`. Widening `olist` alone
+        left `- a` / `  1) b` with no nested `<ol>`.
 
-        It stayed hidden while a two-space sublist was flattened anyway --
-        the line landed at three columns, `xedown_list_interrupt` (12)
-        recognised the marker there and split the item, and the nesting came
-        out right by a route that had nothing to do with `INDENT_RE`. Once
-        `xedown_list_indent` moves that line to four columns the fallback is
-        the only route left, so the gap became visible. `RE` and `CHILD_RE`
-        are untouched: an unordered list's own item is `[*+-]`, never a
-        number, and `sane_lists` narrows `CHILD_RE` for a reason.
+        `RE` and `CHILD_RE` stay untouched: an unordered list's own item is
+        `[*+-]`, never a number.
         """
 
         def __init__(self, parser):
@@ -825,8 +696,7 @@ def make_extensions(markdown_module):
 
     class FencedCodeOverrideExtension(Extension):
         def extendMarkdown(self, md):
-            # Same name and priority as the vendored `fenced_code_block` it
-            # replaces.
+            # Same name and priority as the vendored `fenced_code_block`.
             md.preprocessors.register(
                 FencedCodePreprocessor(md), "fenced_code_block", 25
             )
@@ -834,18 +704,13 @@ def make_extensions(markdown_module):
     class ListIndentationPreprocessor(Preprocessor):
         """Run `normalize_list_indentation` over the document's lines.
 
-        A fresh `Preprocessor` under a name of xedown's own, registered at
-        18. Introspecting the assembled `Markdown()` pipeline shows
-        `md.preprocessors` holding exactly three entries --
-        `normalize_whitespace` (30), xedown's own `fenced_code_block` (25)
-        and `html_block` (20) -- so 18 is below every one of them and this
-        pass is the last thing to touch the raw lines. That order is the
-        design, not a free choice: `normalize_whitespace` has already
-        expanded tabs (so a column count is a space count), and the two
-        stashing preprocessors have already removed the text whose
-        indentation is content. `tab_length` is read off the `Markdown`
-        instance rather than assumed, since it is what every vendored list
-        processor builds its own regexes from.
+        Priority 18 puts this below all three other preprocessors, so it is
+        the last thing to touch the raw lines. That order is the design:
+        `normalize_whitespace` (30) has already expanded tabs, so a column is
+        a space, and `fenced_code_block` (25) and `html_block` (20) have
+        already stashed the text whose indentation is content. `tab_length`
+        is read off the `Markdown` instance because that is what every
+        vendored list processor builds its regexes from.
         """
 
         def run(self, lines):
@@ -860,16 +725,12 @@ def make_extensions(markdown_module):
     class ListInterruptProcessor(BlockProcessor):
         """Split a paragraph block where a list starts inside it.
 
-        Registered below every other block processor and just above
-        `paragraph`, so every block it is offered has already been declined
-        by `setextheader`, `hr`, `olist`, `ulist` and the rest: priority 12
-        guarantees that no existing heading, rule, fence, indented code
-        block, table or nested list is ever destroyed by this processor,
-        which is also what makes a first-line guard against blocks that are
-        already lists unnecessary. It does not guarantee what happens to the
-        lower half `run` pushes back onto the queue: that half re-enters the
-        chain at priority 100, where a processor registered above 12 can
-        still claim it.
+        Priority 12 is below every other block processor and just above
+        `paragraph`, so anything offered here has already been declined by
+        `setextheader`, `hr`, `olist` and the rest -- which is why no
+        first-line guard against blocks that are already lists is needed. It
+        says nothing about the lower half `run` re-queues: that re-enters the
+        chain at 100, where a processor above 12 can still claim it.
         """
 
         def test(self, parent, block):
@@ -890,26 +751,21 @@ def make_extensions(markdown_module):
                 ListInterruptProcessor(md.parser), "xedown_list_interrupt", 12
             )
 
-    # The heading-anchor cliff. `toc.unique` is a module-level function
-    # called from `TocTreeprocessor.run`, and `run` is forty lines of
-    # vendored logic -- subclassing it would copy that logic into xedown,
-    # where the next re-vendor would silently make the copy wrong. So the
-    # treeprocessor already registered under "toc" keeps its own `run`, and
-    # only the collision resolver is swapped, for the duration of one call.
-    #
-    # This is a replacement registered from xedown's own code, which is the
-    # sanctioned route; the vendored file is untouched. See `unique_id`
-    # above for why the answer is byte-identical.
+    # `toc.unique` is module-level and called from `TocTreeprocessor.run`,
+    # which is forty lines of vendored logic: subclassing would copy that
+    # logic here, where the next re-vendor would silently make it wrong. The
+    # registered treeprocessor keeps its own `run` and only the collision
+    # resolver is swapped, for one call. See `unique_id` for why the answer
+    # is byte-identical.
     toc_module = importlib.import_module(f"{markdown_module.__name__}.extensions.toc")
 
     class FastTocExtension(Extension):
         def extendMarkdown(self, md):
-            # `Registry` implements `__contains__` and `__getitem__` but
-            # NOT `.get` -- checked against the vendored `util.Registry`.
+            # The vendored `util.Registry` has `__contains__` and
+            # `__getitem__` but no `.get`.
             if "toc" not in md.treeprocessors:
-                # `markdown.extensions.toc` is not loaded. Nothing to speed
-                # up, and nothing to break. `test_toc_unique.py` asserts the
-                # normal case, so this cannot go unnoticed.
+                # `toc` is not loaded: nothing to speed up or break.
+                # `test_toc_unique.py` asserts the normal case.
                 return
             processor = md.treeprocessors["toc"]
             original_run = processor.run

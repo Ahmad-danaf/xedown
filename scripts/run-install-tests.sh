@@ -255,6 +255,7 @@ scenario_soft_findings_warn_and_install() {
   assert_output_contains "3.9.0"
   assert_output_contains "fedora"
   assert_output_contains "Wayland"
+  assert_output_contains "https://github.com/Ahmad-danaf/xedown/blob/main/docs/compatibility.md"
 }
 
 scenario_enable_adds_to_active_plugins() {
@@ -360,6 +361,24 @@ scenario_uninstall_with_nothing_installed() {
   assert_output_contains "not installed"
 }
 
+scenario_force_uninstall_can_clean_stale_plugin_entry() {
+  run_install --enable
+  export STUB_XED_RUNNING=1
+  run_uninstall --force
+  assert_status 0
+  assert_not_installed
+  assert_plugins_setting "['docinfo', 'time', 'xedown']"
+  assert_output_contains "run this script again"
+
+  export STUB_XED_RUNNING=0
+  run_uninstall
+  assert_status 0
+  assert_not_installed
+  assert_plugins_setting "['docinfo', 'time']"
+  assert_output_contains "Removed xedown from xed's plugin list"
+  assert_output_contains "not installed"
+}
+
 scenario_uninstall_refuses_while_xed_runs() {
   run_install --no-enable
   export STUB_XED_RUNNING=1
@@ -399,6 +418,7 @@ scenario non-interactive-never-enables
 scenario uninstall-keeps-preferences
 scenario purge-removes-preferences
 scenario uninstall-with-nothing-installed
+scenario force-uninstall-can-clean-stale-plugin-entry
 scenario uninstall-refuses-while-xed-runs
 scenario uninstall-refuses-a-directory-that-is-not-xedown
 

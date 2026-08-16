@@ -2,7 +2,7 @@
 # Drives a real xed instance through the scenarios CI cannot reach.
 # Requires xed and an X display. Restores your plugin settings on exit.
 #
-#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.3.0.tar.gz scripts/run-integration-tests.sh
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-1.0.0.tar.gz scripts/run-integration-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being probed is the artifact users download. Build it with
 #         scripts/build-release.sh first. Without this, the working tree is

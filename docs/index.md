@@ -1,45 +1,42 @@
 # xedown documentation
 
-- Installation — see [README.md](../README.md); build the release archive with
-  `scripts/build-release.sh`
-- Manual smoke test — [manual-smoke-test.md](manual-smoke-test.md), which also
-  describes the automated harnesses that run before it:
-  `scripts/run-integration-tests.sh` (live widget-tree behaviour),
-  `scripts/run-shutdown-tests.sh` (clean shutdown after each of twelve
-  scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
-  says, in an isolated display)
-- Known issues — [known-issues.md](known-issues.md)
-- Compatibility — [compatibility.md](compatibility.md), exactly which
-  distribution, editor, Python, WebKit and display server versions xedown is
-  tested on, what it requires outright, and what it does not promise. The same
-  matrix is what `install.sh` checks before it installs anything
-- Markdown compatibility — [markdown-compatibility.md](markdown-compatibility.md),
-  every known difference from GitHub's own rendering and why each one is the
-  way it is, measured by diffing xedown against cmark-gfm over a corpus of 31
-  real READMEs that `scripts/fetch-corpus.sh` reproduces from pinned commit
-  SHAs
-- Performance — [performance.md](performance.md), what rendering costs by
-  document shape and size, the two size limits that keep a very large document
-  from being re-rendered as you type or built into a preview nobody asked for,
-  how each was measured against the same corpus, which renders they govern and
-  which they do not, and why the limits are counted in characters rather than
-  bytes. `tests/perf/run_bench.py --all` reproduces every table except the
-  tables sweep across the one-second crossing, whose loop is written out in
-  that file's *Reproducing any of this* section
-- Security — [../SECURITY.md](../SECURITY.md), the network boundary around
-  remote images and the properties that are enforced and tested, not merely
-  intended
-- Screen-reader evidence — [orca-verification/](orca-verification/), the raw
-  measurements behind every claim in the README's *Accessibility* section
-- Test fixtures — [../tests/fixtures/README.md](../tests/fixtures/README.md), the
-  documents the manual smoke test and `tests/unit/test_fixtures.py` are both run
-  against
-- Settings — [settings.md](settings.md), the settings file's location, keys,
-  defaults and recovery behaviour, and
-  [the settings window](settings.md#the-settings-window) that edits them live
-- Preview appearance — [themes.md](themes.md), the four built-in themes, your
-  own stylesheet, content width and text size, and the contrast policy.
-  `scripts/render-themes.sh` renders every fixture in every theme, light and
-  dark, plus the extremes of width and size, for review in a browser
-- Architecture — planned
-- Troubleshooting — planned
+## Using xedown
+
+- [Installation](installation.md) — requirements, release installation,
+  upgrades, manual installation, and installer checks
+- [Uninstalling](uninstall.md) — keep or purge preferences and mode history
+- [Preferences](preferences.md) — every visible preference, default, storage
+  file, and live-application rule
+- [Preview appearance](themes.md) — the four themes, custom CSS, width, text
+  size, and contrast policy
+- [Remote images and privacy](remote-images.md) — what loading discloses,
+  per-tab and global permission, and fetch limits
+- [Accessibility](accessibility.md) — keyboard operation, contrast, what was
+  measured with a screen reader, and what is known not to work
+- [Troubleshooting](troubleshooting.md) — installation, rendering, images,
+  stylesheets, file watching, large files, and settings failures
+
+## Compatibility, limitations, and security
+
+- [Compatibility](compatibility.md) — exact live-tested runtime, CI-only
+  coverage, required APIs, and unverified nearby versions
+- [Known issues](known-issues.md) — accepted limitations and workarounds
+- [Markdown compatibility](markdown-compatibility.md) — measured differences
+  from GitHub's cmark-gfm rendering
+- [Performance](performance.md) — benchmark evidence and large-document guards
+- [Security policy](../SECURITY.md) — vulnerability reporting, sanitization,
+  network boundaries, enforced fetch properties, and accepted residuals
+
+## Contributor and release evidence
+
+- [Contributing](../CONTRIBUTING.md) — development setup, tests, code layout,
+  and pull-request expectations
+- [Manual smoke test](manual-smoke-test.md) — final desktop verification before
+  a release
+- [Screen-reader measurements](orca-verification/measurements.md) and
+  [raw transcript](orca-verification/transcript.json) — evidence behind the
+  narrow Orca claims
+- [Fixture guide](../tests/fixtures/README.md) — reusable documents and images
+  used by tests and manual review
+- [Media capture checklist](assets/README.md) — required v1.0 screenshots and
+  workflow demo

@@ -81,24 +81,17 @@ _ALLOWED_DIR_VALUES = frozenset({"ltr", "rtl", "auto"})
 
 _ALLOWED_ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
 
-# `start` is a plain integer, in principle unbounded, so it cannot be
-# checked against an allowlist of values the way `align` and `dir` are.
-# Python-Markdown derives it literally from the digits before the first
-# list item's `.` marker (`vendor/markdown/blockprocessors.py:402,429`) --
-# it is never parsed to `int`, so an author can write an arbitrarily long
-# digit run and have it land here unexamined. The cap below is not a
-# security boundary (an oversized number can neither execute nor fetch);
-# it exists so an absurd literal doesn't reach the page just because
-# nothing said not to. Ten digits comfortably covers any real list (it
-# exceeds a signed 32-bit int) while excluding runs no document could
-# have a legitimate reason to write.
+# `start` is an unbounded integer, so it cannot be checked against a value
+# allowlist the way `align` and `dir` are. Python-Markdown never parses it to
+# `int`, so an arbitrarily long digit run lands here unexamined. The ten-digit
+# cap is not a security boundary -- an oversized number can neither execute
+# nor fetch -- it just keeps an absurd literal off the page.
 #
-# `[0-9]` rather than `\d`: Python's `\d` is Unicode-aware and matches any
-# Unicode decimal digit -- Arabic-Indic (٧), fullwidth (１), and others --
-# not just ASCII 0-9. This project's own test corpus includes Arabic and
-# Hebrew READMEs, so that is not a hypothetical input here. An explicit
-# ASCII range says what it means at the point of use, unlike a
-# module-level `re.ASCII` flag that a later edit could lose.
+# `[0-9]` rather than `\d`: Python's `\d` is Unicode-aware and matches
+# Arabic-Indic (٧) and fullwidth (１) digits too, and this project's own
+# corpus includes Arabic and Hebrew READMEs. An explicit range says so at the
+# point of use, where a module-level `re.ASCII` flag could be lost by a later
+# edit.
 _START_RE = re.compile(r"-?[0-9]+")
 _MAX_START_DIGITS = 10
 
@@ -132,11 +125,10 @@ ALLOWED_URI_SCHEMES = frozenset({"http", "https", "mailto", "file"})
 # reach into the plugin's own styling.
 _ALLOWED_CLASS_PREFIXES = ("language-", "hljs", "task-list", "footnote", "headerlink")
 
-# Raster image types only. "svg+xml" is deliberately excluded: SVG is itself
-# an HTML-like, scriptable document format (it can carry <script>, event
-# handler attributes, etc.), so letting it through the data-image allowance
-# would undermine the <svg>-content-drop above via a `src="data:..."` side
-# door. This is an explicit allowlist, not a denylist of "text/html" alone.
+# Raster types only. "svg+xml" is excluded because SVG is itself a
+# scriptable document format, so allowing it here would undermine the
+# <svg>-content-drop above through a `src="data:..."` side door. An explicit
+# allowlist, not a denylist of "text/html" alone.
 _SAFE_DATA_IMAGE_SUBTYPES = frozenset(
     {"png", "jpeg", "jpg", "gif", "webp", "avif", "bmp"}
 )
@@ -419,23 +411,19 @@ class _Sanitizer(HTMLParser):
             return
         if isinstance(outcome, RemoteImage):
             candidate = str(outcome.uri)
-            # Re-checked like every other emitted URI. The scheme is ours, so
-            # it is allowed here and only here -- never through
-            # ALLOWED_URI_SCHEMES, which is what document content is measured
-            # against.
+            # Allowed here and only here -- never through
+            # ALLOWED_URI_SCHEMES, which is what document content is
+            # measured against.
             if not candidate.startswith(remoteimages.SCHEME + ":"):
                 return
             rendered.insert(0, f'class="{REMOTE_IMAGE_CLASS}"')
             rendered.insert(0, f'src="{html_module.escape(candidate, quote=True)}"')
             self.parts.append(f"<img {' '.join(rendered)} />")
             return
-        # The callback is trusted code (the only production callback returns
-        # links.uri_for_path(...) or a data: URI this module already
-        # validated) -- but this module's whole job is rebuilding HTML from
-        # an explicit scheme allowlist, and re-checking its own output costs
-        # nothing. Without this, a future callback that ever returned
-        # something unvalidated would emit it unchecked. Fail closed: an
-        # unsafe value emits nothing rather than a broken-but-safe img.
+        # The callback is trusted code, but re-checking its output costs
+        # nothing and this module's whole job is an explicit scheme
+        # allowlist. Fail closed: an unsafe value emits nothing rather than
+        # a broken-but-safe img.
         candidate = str(outcome)
         if not _is_safe_uri(candidate, allow_data_image=True):
             return

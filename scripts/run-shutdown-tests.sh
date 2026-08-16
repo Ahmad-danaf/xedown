@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of twelve scenarios.
+# Verifies that xed shuts down cleanly after each lifecycle scenario.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -21,7 +21,7 @@
 #         tree on the way out either way, so this never leaves the editor
 #         configured to load a plugin that is no longer on disk.
 #
-#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.3.0.tar.gz scripts/run-shutdown-tests.sh
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-1.0.0.tar.gz scripts/run-shutdown-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being tested is the artifact users download. Build it with
 #         scripts/build-release.sh first. The archive is staged and

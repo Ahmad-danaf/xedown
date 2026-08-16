@@ -365,7 +365,7 @@ unpresented speech; Orca receives nothing to present. WebKit2's
 (off by default; xedown never sets it) was tried as the most likely cause —
 a temporary, reverted one-line change forced it on — and made no measurable
 difference; the WebView still produced zero AT-SPI activity. The actual
-cause is inside WebKit2GTK's own AT-SPI bridge, a C/C++ codebase outside
+cause is inside WebKitGTK's own AT-SPI bridge, a C/C++ codebase outside
 xedown's Python and outside what this project can instrument.
 
 **What to do about it:** nothing xedown-side is known to fix this. This is
@@ -374,7 +374,7 @@ presented as fixed — enabling caret browsing, the one hypothesis tested,
 changed nothing.
 
 **Status:** outstanding, upstream of xedown. Revisit if a future WebKitGTK
-version changes this, or if someone instruments WebKit2GTK itself.
+version changes this, or if someone instruments WebKitGTK itself.
 
 ## The stale indicator and the manual-refresh cue are not announced
 
@@ -570,7 +570,7 @@ percent-encoded). The gap already existed for `data:` images before this
 measurement was written, and closing it would take away something that has
 always worked rather than refusing something new. Every inline payload
 xedown *can* measure — PNG, JPEG, GIF, WebP, BMP — is held to the cap; see
-[settings.md](settings.md#remote-images).
+[remote-images.md](remote-images.md).
 
 **What to do about it:** link to the image with an ordinary Markdown link
 instead of embedding it, or convert it to one of the fetchable formats.
@@ -590,7 +590,7 @@ per process, against that process's own `WebKit2.WebContext`. `xed
 --standalone` starts a second process with its own `WebContext`, so it gets
 its own registration and its own in-memory cache — the same reason it
 already has its own settings store; see
-[settings.md](settings.md#limitations).
+[preferences.md](preferences.md#settings-files).
 
 **What to do about it:** nothing needed. Neither process's cache is written
 to disk, so there is nothing to reconcile, and closing either one loses only

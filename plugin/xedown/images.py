@@ -51,13 +51,10 @@ def classify_image(reference, base_dir, fetch_remote=False):
     caller from the global setting and any per-document override -- not a
     policy this function consults on its own.
     """
-    # No caller in this codebase can reach this today: the sanitizer never
-    # hands `on_image` a reference at all unless `_is_safe_uri` already
-    # accepted it, which requires a non-empty string. But the guarantee is
-    # this module's own, not its callers' -- `images.py` exists to be
-    # called and tested directly, so `None`/`""` must resolve to a status
-    # rather than raise or read a bogus path (an empty reference would
-    # otherwise resolve to `base_dir` itself and be reported "unreadable").
+    # Unreachable from the sanitizer, which only calls in with a reference
+    # `_is_safe_uri` accepted -- but the guarantee is this module's own, and
+    # an empty reference would otherwise resolve to `base_dir` itself and be
+    # reported "unreadable".
     if not isinstance(reference, str) or not reference:
         return ImageDecision(
             UNRESOLVED, reference=reference if isinstance(reference, str) else ""
@@ -128,18 +125,18 @@ def classify_image(reference, base_dir, fetch_remote=False):
             detail=exc.strerror or str(exc),
         )
     except ValueError as exc:
-        # `os.stat` raises ValueError, not OSError, on an embedded NUL
-        # byte. `resolve_to_path` normally catches that first, but its
-        # guard depends on `os.path.realpath`'s own handling, which has
-        # changed between Python versions. A render must not depend on that.
+        # `os.stat` raises ValueError, not OSError, on an embedded NUL.
+        # `resolve_to_path` normally catches it first, but its guard depends
+        # on `os.path.realpath`'s handling, which has changed between Python
+        # versions.
         return ImageDecision(
             UNREADABLE, reference=reference, path=path, detail=str(exc)
         )
 
-    # Not a size check: a FIFO blocks a read until something writes to the
-    # other end, and the GTK main thread is what would block. The same
-    # reasoning as `stylesheets.load_user_stylesheet`. This also disposes of
-    # directories, sockets and device nodes.
+    # Not a size check: a FIFO blocks a read until something writes, and the
+    # GTK main thread is what would block. Same reasoning as
+    # `stylesheets.load_user_stylesheet`; also disposes of directories,
+    # sockets and device nodes.
     if not stat.S_ISREG(info.st_mode):
         return ImageDecision(
             UNREADABLE, reference=reference, path=path, detail="not a regular file"
@@ -153,11 +150,10 @@ def classify_image(reference, base_dir, fetch_remote=False):
     )
 
 
-# The five characters the URL and base64 specifications both call ASCII
-# whitespace. Deliberately not `str.strip()`, which also strips U+00A0 and
-# the rest of Unicode's whitespace: a media type ending `;base64\xa0` is NOT
-# base64 to a browser, and treating it as if it were is how a percent-encoded
-# payload would slip past the measurement below.
+# The five characters URL and base64 both call ASCII whitespace. Deliberately
+# not `str.strip()`, which also strips U+00A0: a media type ending
+# `;base64\xa0` is not base64 to a browser, and treating it as if it were is
+# how a percent-encoded payload would slip past the measurement below.
 _ASCII_WHITESPACE = "\t\n\f\r "
 _ASCII_WHITESPACE_BYTES = _ASCII_WHITESPACE.encode("ascii")
 
@@ -200,17 +196,14 @@ def _data_uri_verdict(reference):
         body = urllib.parse.unquote_to_bytes(payload)
         if _declares_base64(head):
             # Forgiving-base64, as the specification calls it: ASCII
-            # whitespace is ignored rather than fatal, and the payload is
-            # trimmed to a whole 4-character quantum (base64 encodes 3 bytes
-            # per 4 characters) before decoding.
+            # whitespace is ignored, and the payload is trimmed to a whole
+            # 4-character quantum before decoding.
             #
-            # The whole payload is decoded -- no fixed prefix budget. A JPEG's
-            # frame header sits after any APP1/EXIF segment, and phone and
-            # camera JPEGs routinely carry a 10-60 KB embedded thumbnail
-            # there, so a fixed cutoff is either restrictive (an ordinary
-            # photo's header falls past it and gets refused as unmeasurable)
-            # or unsafe (an attacker pads the segment to push a bomb's
-            # declared size past whatever cutoff was chosen).
+            # The whole payload is decoded, with no fixed prefix budget: a
+            # JPEG's frame header sits after any APP1/EXIF segment, where
+            # camera JPEGs carry a 10-60 KB thumbnail. Any cutoff is either
+            # restrictive (an ordinary photo is refused as unmeasurable) or
+            # unsafe (padding pushes a bomb's declared size past it).
             stripped = body.translate(None, _ASCII_WHITESPACE_BYTES)
             trimmed = stripped[: len(stripped) - (len(stripped) % 4)]
             body = base64.b64decode(trimmed)

@@ -106,20 +106,18 @@ class KeyAction(enum.Enum):
     CLOSE_SEARCH = "close-search"
 
 
-# `Insert` is copy's legacy alias. It costs one key name and is only ever
-# consulted while the preview is the visible surface. GDK names this key
-# `Insert` (capitalised), but the GTK layer lowercases it before passing to
-# route_key, which is why the tuple holds "insert" (lowercase).
+# Copy's legacy alias, consulted only while the preview is showing. GDK names
+# the key `Insert`, but the GTK layer lowercases it before calling
+# `route_key`, which is why this is lowercase.
 COPY_KEYS = ("c", "insert")
 SELECT_ALL_KEYS = ("a",)
 FIND_KEYS = ("f",)
 HANDLED_KEYS = frozenset(COPY_KEYS + SELECT_ALL_KEYS + FIND_KEYS)
 
-# The one key xedown answers for with no modifier held, and the reason it can
-# be: it is claimed only while the preview is showing AND xedown's own search
-# bar is open, which is a state the user put the window in deliberately.
-# `HANDLED_KEYS` and this set are what `__init__.py` short-circuits on, so a
-# key added here is a key xedown starts inspecting on every unmodified press.
+# The one key xedown answers for with no modifier, and only while the preview
+# is showing AND its own search bar is open -- a state the user asked for.
+# `__init__.py` short-circuits on this set, so a key added here is one xedown
+# starts inspecting on every unmodified press.
 CLOSE_KEYS = ("escape",)
 UNMODIFIED_KEYS = frozenset(CLOSE_KEYS)
 
