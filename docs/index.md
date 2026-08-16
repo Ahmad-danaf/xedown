@@ -9,6 +9,10 @@
   scenarios) and `scripts/run-orca-tests.sh` (what a screen reader actually
   says, in an isolated display)
 - Known issues — [known-issues.md](known-issues.md)
+- Compatibility — [compatibility.md](compatibility.md), exactly which
+  distribution, editor, Python, WebKit and display server versions xedown is
+  tested on, what it requires outright, and what it does not promise. The same
+  matrix is what `install.sh` checks before it installs anything
 - Markdown compatibility — [markdown-compatibility.md](markdown-compatibility.md),
   every known difference from GitHub's own rendering and why each one is the
   way it is, measured by diffing xedown against cmark-gfm over a corpus of 31
