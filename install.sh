@@ -292,6 +292,77 @@ preflight_gate() {
   esac
 }
 
+# --- switching it on -----------------------------------------------------
+#
+# `active-plugins` is xed's setting, not xedown's, so it is never written
+# without being asked. The list is edited in Python rather than by shell
+# string surgery: gsettings prints a Python-ish list literal, and rebuilding
+# it with sed is how the other entries get mangled.
+
+XED_SCHEMA="org.x.editor.plugins"
+XED_KEY="active-plugins"
+
+xed_is_running() { pgrep -x xed >/dev/null 2>&1; }
+
+plugins_list() { gsettings get "$XED_SCHEMA" "$XED_KEY" 2>/dev/null || true; }
+
+plugin_is_enabled() {
+  python3 - "$(plugins_list)" <<'PYTHON'
+import ast, sys
+try:
+    current = ast.literal_eval(sys.argv[1])
+except Exception:
+    sys.exit(2)
+sys.exit(0 if "xedown" in current else 1)
+PYTHON
+}
+
+enable_plugin() {
+  local updated
+  updated="$(python3 - "$(plugins_list)" <<'PYTHON'
+import ast, sys
+current = list(ast.literal_eval(sys.argv[1]))
+if "xedown" not in current:
+    current.append("xedown")
+print(repr(current))
+PYTHON
+)" || die "could not read $XED_SCHEMA $XED_KEY"
+  gsettings set "$XED_SCHEMA" "$XED_KEY" "$updated" \
+    || die "could not write $XED_SCHEMA $XED_KEY"
+}
+
+enable_step() {
+  if [ "$ENABLE" = "no" ]; then
+    return 0
+  fi
+  if ! command -v gsettings >/dev/null 2>&1; then
+    say "gsettings is not available, so xedown was not switched on."
+    return 0
+  fi
+  if plugin_is_enabled; then
+    say "xedown is already enabled in xed."
+    return 0
+  fi
+  if xed_is_running; then
+    say "xed is running, so xedown was not switched on: xed rewrites its"
+    say "plugin list when it exits and would discard the change."
+    say "Close xed and re-run with --enable, or tick Xedown in"
+    say "Preferences -> Plugins."
+    return 0
+  fi
+  if [ "$ENABLE" != "yes" ]; then
+    # No terminal means no question. A script running this must not hang,
+    # and must not silently change a desktop setting either.
+    [ -t 0 ] || return 0
+    local reply=""
+    printf 'Switch xedown on in xed now? [y/N] '
+    read -r reply || true
+    case "$reply" in [yY]*) ;; *) return 0 ;; esac
+  fi
+  enable_plugin
+  say "Enabled xedown in xed."
+}
+
 # --- main ----------------------------------------------------------------
 
 SOURCE="$(resolve_source)"
@@ -310,4 +381,10 @@ fi
 if [ -d "$CONFIG_DIR" ]; then
   say "Your settings in $CONFIG_DIR were not touched."
 fi
-say "Enable it in xed under Preferences -> Plugins, then tick Xedown."
+enable_step
+if ! plugin_is_enabled 2>/dev/null; then
+  say "Enable it in xed under Preferences -> Plugins, then tick Xedown."
+fi
+if xed_is_running; then
+  say "Restart xed to pick up this version."
+fi

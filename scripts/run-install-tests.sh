@@ -248,6 +248,42 @@ scenario_soft_findings_warn_and_install() {
   assert_output_contains "Wayland"
 }
 
+scenario_enable_adds_to_active_plugins() {
+  run_install --enable
+  assert_status 0
+  assert_installed
+  # Every other plugin the reader had enabled is still there.
+  assert_plugins_setting "['docinfo', 'time', 'xedown']"
+}
+
+scenario_enable_is_idempotent() {
+  printf "['docinfo', 'xedown']\n" > "$GSETTINGS_STORE"
+  run_install --enable
+  assert_status 0
+  assert_plugins_setting "['docinfo', 'xedown']"
+  assert_output_contains "already enabled"
+}
+
+scenario_enable_is_skipped_while_xed_runs() {
+  # xed rewrites active-plugins when it exits, so a change made underneath
+  # a running xed is silently discarded. Better to say so than to make it.
+  export STUB_XED_RUNNING=1
+  run_install --enable
+  assert_status 0
+  assert_installed
+  assert_plugins_setting "['docinfo', 'time']"
+  assert_output_contains "xed is running"
+}
+
+scenario_non_interactive_never_enables() {
+  # No --enable, no --no-enable, and no terminal: the quiet answer is the
+  # one that changes nothing about the reader's desktop.
+  run_install < /dev/null
+  assert_status 0
+  assert_installed
+  assert_plugins_setting "['docinfo', 'time']"
+}
+
 # --- main ----------------------------------------------------------------
 
 ROOT_PATH="$PATH"
@@ -259,6 +295,10 @@ scenario install-from-archive
 scenario hard-failure-refuses
 scenario force-overrides-a-hard-failure
 scenario soft-findings-warn-and-install
+scenario enable-adds-to-active-plugins
+scenario enable-is-idempotent
+scenario enable-is-skipped-while-xed-runs
+scenario non-interactive-never-enables
 
 if [ "$FAILURES" -ne 0 ]; then
   printf '\n%s scenario(s) failed\n' "$FAILURES" >&2
