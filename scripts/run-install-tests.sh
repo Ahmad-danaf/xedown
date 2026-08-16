@@ -18,7 +18,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKSPACE="$(mktemp -d)"
+# Guarded loudly: under `set -uo pipefail` (no `set -e`), an unchecked
+# `mktemp -d` failure would leave WORKSPACE empty, which would make
+# SANDBOX (below) collapse to a root-level path feeding `rm -rf`.
+WORKSPACE="$(mktemp -d)" || { printf 'mktemp -d failed\n' >&2; exit 1; }
 FAILURES=0
 CURRENT=""
 
@@ -28,6 +31,11 @@ trap cleanup EXIT
 # --- the sandbox ---------------------------------------------------------
 
 new_sandbox() {
+  # Belt-and-braces on top of the WORKSPACE guard above: this is where the
+  # dangerous `rm -rf` actually lives, and an empty WORKSPACE or CURRENT
+  # would make SANDBOX a root-level path (e.g. "/fresh-install") instead of
+  # a temp directory.
+  [ -n "$WORKSPACE" ] && [ -n "$CURRENT" ] || { printf 'new_sandbox: WORKSPACE or CURRENT is empty, refusing to proceed\n' >&2; exit 1; }
   SANDBOX="$WORKSPACE/$CURRENT"
   rm -rf "$SANDBOX"
   export HOME="$SANDBOX/home"
