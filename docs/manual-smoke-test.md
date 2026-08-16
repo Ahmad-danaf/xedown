@@ -239,6 +239,17 @@ explained inline below.
 | 135 | Copy `tests/fixtures/rtl.md` to a scratch file, add the line `<p align="left">هذا السطر محاذاته إلى اليسار.</p>` to it, and open it in Preview | That one paragraph sits against the **left** edge of the content column while every other paragraph on the page stays against the right — and the Arabic inside it still reads right to left, with its full stop on the left. Delete the scratch file afterwards |
 | 136 | Copy a document well past the defer threshold to a scratch file — `cp tests/compat/corpus/awesome-go.md /tmp/big.md` after `scripts/fetch-corpus.sh`, or any Markdown file over about 400,000 characters — and open it with Preview as the default mode | It opens in **Markdown** mode, not Preview, showing the source immediately. The mode bar carries a chip reading `Large document (396 KB)` next to a **Preview** button. Nothing was rendered: the window is responsive from the moment it appears, with no pause before the text draws. Click **Preview** and the preview builds — the editor does freeze for about a second while it does, which is the point: you asked for it, and the button's tooltip says so |
 | 137 | Switch that document back to Markdown mode, type a few words, then switch to Preview | Nothing re-renders while you type — no lag, no flicker. In Preview the mode bar shows a **Refresh** button marked stale rather than updating by itself, and the preview keeps showing the older text until you click it or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>. This holds even with `"auto_refresh": true`, which is the intended override — the size guard beats the preference, for this tab only. Delete `/tmp/big.md` afterwards |
+| 138 | With xed closed, run `./install.sh --enable`, then start xed and open a `.md` file | The install reports the version, xed starts with **Xedown** already ticked in *Preferences → Plugins*, and the file opens in Preview mode |
+| 139 | Close xed, run `./uninstall.sh`, start xed again | **Xedown** is gone from *Preferences → Plugins*, `.md` files open as plain text, and the uninstaller's output named `~/.config/xedown` as kept |
+
+Rows 138 and 139 are the only two rows that touch `install.sh` and
+`uninstall.sh` directly. `scripts/run-install-tests.sh` covers both scripts'
+logic — refusals, staged installs, replacement instead of merge, the
+`--purge` boundary — in a throwaway `HOME` with `xed` and `gsettings`
+stubbed out; what it cannot see is whether a real xed genuinely offers the
+plugin afterwards, or genuinely stops offering it. That is what these two
+rows check, against the same live xed the rest of this checklist runs
+against.
 
 Rows 136 and 137 are the two size limits seen from the reader's side; what
 rendering costs and how both numbers were derived is in

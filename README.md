@@ -110,35 +110,63 @@ Markdown modes inside the same tab.
 
 ## Requirements
 
-- xed 3.0 or newer
-- Python 3.10 or newer
-- `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-webkit2-4.1`
+xedown is tested on **Linux Mint 22.x**, with **xed 3.8.x**, **Python
+3.10–3.12** and **WebKit2GTK 4.1** on **X11**. Other systems may work and are
+not officially tested — see [docs/compatibility.md](docs/compatibility.md) for
+what that means and what is checked before an install.
 
-Markdown rendering and syntax highlighting are bundled with the plugin. There is
-nothing to install with `pip`.
+The packages a Mint system needs: `python3-gi`, `gir1.2-gtk-3.0`,
+`gir1.2-webkit2-4.1`. `./install.sh` checks for all three and names any that
+are missing.
+
+Markdown rendering and syntax highlighting are bundled with the plugin. There
+is nothing to install with `pip`.
 
 ## Installation
 
-From a release archive — nothing else required:
+From a release archive, with the installer published beside it:
+
+```bash
+./install.sh --from xedown-0.3.0.tar.gz
+```
+
+Or from a checkout:
+
+```bash
+./install.sh
+```
+
+`install.sh` checks that this machine can actually run xedown before it
+copies anything, refuses rather than installing something that would never
+load, and replaces any previous version rather than copying over it — so an
+upgrade leaves no files from the old version behind. Your settings in
+`~/.config/xedown` are never touched. It offers to switch the plugin on;
+`--enable` says yes without asking, `--no-enable` skips the question.
+
+Without the installer, nothing else is required:
 
 ```bash
 mkdir -p ~/.local/share/xed/plugins
 tar -xzf xedown-0.3.0.tar.gz -C ~/.local/share/xed/plugins
 ```
 
-Or from a checkout:
+Then enable **Xedown** in xed under *Preferences → Plugins*.
+
+## Uninstalling
 
 ```bash
-mkdir -p ~/.local/share/xed/plugins
-cp -r plugin/xedown plugin/xedown.plugin ~/.local/share/xed/plugins/
+./uninstall.sh            # removes the plugin, keeps your settings
+./uninstall.sh --purge    # also removes ~/.config/xedown
 ```
 
-Then enable **Xedown** in xed under *Preferences → Plugins*.
+Close xed first: it rewrites its plugin list when it exits, so removing
+xedown underneath a running xed is silently undone.
 
 To build the archive yourself, run `scripts/build-release.sh`. It refuses to
 build from a tree with uncommitted changes, produces the same bytes for the
-same commit, and unpacks the result into a scratch directory to check that it
-renders using only its own bundled dependencies.
+same commit, unpacks the result into a scratch directory to check that it
+renders using only its own bundled dependencies, and puts `install.sh` and
+`uninstall.sh` in `dist/` beside the archive.
 
 ## Usage
 

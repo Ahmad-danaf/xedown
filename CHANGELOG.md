@@ -22,6 +22,15 @@ published in [docs/performance.md](docs/performance.md).
 
 ### Added
 
+- `install.sh` and `uninstall.sh`. The installer checks that this machine can
+  run xedown before copying anything, names the package to install for
+  anything missing, and replaces any previous version rather than copying
+  over it — so an upgrade cannot leave a module from the old version behind.
+  It offers to switch the plugin on rather than doing it silently, and never
+  touches `~/.config/xedown`. The uninstaller keeps your settings unless you
+  pass `--purge`. Both are published beside the release archive.
+- [docs/compatibility.md](docs/compatibility.md): exactly which distribution,
+  editor, Python, WebKit and display server versions xedown is tested on.
 - **A collapsible section now collapses.** `<details>` and `<summary>` used to
   be discarded, so every collapsed section was permanently open and its
   summary label became a stray line of text. They render as the author wrote
@@ -49,6 +58,16 @@ published in [docs/performance.md](docs/performance.md).
   is a setting; both were measured against the 31-README corpus, and
   [docs/performance.md](docs/performance.md) shows the curve they came from
   and lists the paths they do not govern.
+
+### Changed
+
+- **The support claim narrowed to match the evidence.** The README promised
+  "xed 3.0 or newer", which had never been tested against anything but 3.8.9.
+  xedown is now documented as supported on Linux Mint 22.x with xed 3.8.x,
+  Python 3.10–3.12 and WebKit2GTK 4.1 on X11; everything else is "may work,
+  not officially tested" and installs with a warning. **No code changed** —
+  if xedown worked for you on another system yesterday, it still does. What
+  changed is that the promise now matches what has actually been measured.
 
 ### Fixed
 
