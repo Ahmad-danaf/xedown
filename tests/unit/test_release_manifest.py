@@ -106,6 +106,20 @@ def test_no_gated_module_has_been_deleted():
     ), f"REQUIRED gates modules that do not exist: {gated - on_disk}"
 
 
+def test_preflight_is_gated_even_though_nothing_imports_it():
+    # preflight.py is deliberately never imported by the package -- it runs
+    # as a standalone file (`$STAGE/xedown/preflight.py`, invoked by
+    # install.sh) precisely so that `__init__.py`'s `gi` guard never runs
+    # mid-install. That means `imported_modules()` can never reach it, so
+    # `test_every_module_the_package_imports_is_gated` cannot catch its
+    # absence from REQUIRED -- the import-graph gate is structurally blind
+    # to a module that is required at install time but imported by nobody.
+    # This is not a redundant belt-and-braces check: it is the only thing
+    # standing between a REQUIRED edit and shipping an archive whose
+    # install.sh fails the moment it tries to run the preflight it expects.
+    assert "xedown/preflight.py" in required_paths()
+
+
 def test_every_stylesheet_a_theme_names_is_gated():
     # Themes name their stylesheets by string, so a new theme's CSS file can
     # be shipped, referenced and never gated. `themes` and `stylesheets` are

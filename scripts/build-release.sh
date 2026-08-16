@@ -112,6 +112,7 @@ REQUIRED=(
   "xedown/modestore.py"
   "xedown/pageready.py"
   "xedown/perflimits.py"
+  "xedown/preflight.py"
   "xedown/prefs.py"
   "xedown/prefswindow.py"
   "xedown/preview.py"
@@ -225,6 +226,17 @@ print(f"    vendored Markdown {markdown.__version__} loaded from the archive")
 print(f"    rendered {len(page)} bytes with tables, tasks, strikethrough and highlighting")
 PYTHON
 
+# --- the installer travels with the archive ------------------------------
+#
+# The archive's root IS the user's plugins directory, so the installer
+# cannot live inside it without littering a directory xedown does not own.
+# It is published as a second release asset instead, which is also why
+# install.sh sources nothing and hardcodes no path inside this repository:
+# it has to work sitting next to a tarball in a downloads folder.
+
+cp "$ROOT/install.sh" "$ROOT/uninstall.sh" "$DIST_DIR/"
+chmod +x "$DIST_DIR/install.sh" "$DIST_DIR/uninstall.sh"
+
 # --- report ---------------------------------------------------------------
 
 SIZE="$(du -h "$ARCHIVE" | cut -f1)"
@@ -237,5 +249,10 @@ echo "  size    : $SIZE ($FILES entries)"
 echo "  sha256  : $SHA"
 echo
 echo "Install with:"
+echo "  ./install.sh --from $(basename "$ARCHIVE")"
+echo
+echo "Or without the installer:"
 echo "  mkdir -p ~/.local/share/xed/plugins"
 echo "  tar -xzf $(basename "$ARCHIVE") -C ~/.local/share/xed/plugins"
+echo
+echo "Publish all three: $(basename "$ARCHIVE"), install.sh, uninstall.sh"
