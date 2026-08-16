@@ -39,7 +39,14 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-cleanup() { [ -n "$STAGE" ] && rm -rf "$STAGE"; }
+cleanup() {
+  # `if`, not `[ -n "$STAGE" ] && rm -rf "$STAGE"`: this runs as the EXIT
+  # trap, and under `set -e` a failing AND-list is itself the trap's exit
+  # status, which silently overrides an otherwise-successful script exit.
+  if [ -n "$STAGE" ]; then
+    rm -rf "$STAGE"
+  fi
+}
 trap cleanup EXIT
 
 # --- where the plugin is coming from -------------------------------------
@@ -152,10 +159,24 @@ install_plugin() {
   fi
   if [ "$restore" = 1 ]; then
     rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
-    mv "$aside/xedown" "$PLUGIN_DIR/" 2>/dev/null || true
-    mv "$aside/xedown.plugin" "$PLUGIN_DIR/" 2>/dev/null || true
-    rmdir "$aside" 2>/dev/null || true
-    die "install failed; your previous install has been put back"
+    # Checked, not swallowed: a move-back failure must not be reported to
+    # the user as a successful restore, and must not leave the aside copy
+    # orphaned with no pointer to where it is.
+    local restored=1
+    if [ -e "$aside/xedown" ]; then
+      mv "$aside/xedown" "$PLUGIN_DIR/" || restored=0
+    fi
+    if [ -e "$aside/xedown.plugin" ]; then
+      mv "$aside/xedown.plugin" "$PLUGIN_DIR/" || restored=0
+    fi
+    if [ "$restored" = 1 ]; then
+      rmdir "$aside" 2>/dev/null || true
+      die "install failed; your previous install has been put back"
+    fi
+    die "install failed, and restoring your previous install also failed.
+Your previous install is still sitting in $aside -- move it back by hand:
+  mv $aside/xedown $PLUGIN_DIR/xedown
+  mv $aside/xedown.plugin $PLUGIN_DIR/xedown.plugin"
   fi
   die "install failed"
 }
