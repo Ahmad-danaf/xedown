@@ -92,7 +92,10 @@ find "$STAGING" -name '*.py[cod]' -delete
 REQUIRED=(
   # Every module the package imports, gated by
   # tests/unit/test_release_manifest.py rather than by hand: the array had
-  # drifted to five of twenty-seven before that test existed.
+  # drifted to five of twenty-seven before that test existed. Plus
+  # preflight.py, gated separately because nothing imports it by design (it
+  # runs standalone so __init__.py's gi guard never fires mid-install) --
+  # see test_preflight_is_gated_even_though_nothing_imports_it.
   "xedown/__init__.py"
   "xedown/a11y.py"
   "xedown/appearance.py"
