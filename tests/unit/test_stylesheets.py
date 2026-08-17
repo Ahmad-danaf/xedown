@@ -349,3 +349,45 @@ def test_the_watcher_module_imports_without_a_desktop():
     assert stylewatcher.DEBOUNCE_MS > 0
     assert stylewatcher.get_watcher() is stylewatcher.get_watcher()
     assert stylewatcher.get_watcher().current().problem is None
+
+
+# --- the page side: loading state, failure text, readiness -------------------
+
+
+def test_a_loading_remote_image_reserves_space():
+    css = vendoring.read_resource("preview.css")
+    assert ".xedown-remote.xedown-loading" in css
+    assert "min-height" in css
+
+
+def test_the_loading_shimmer_respects_reduced_motion():
+    css = vendoring.read_resource("preview.css")
+    reduced = css.split("prefers-reduced-motion", 1)
+    assert len(reduced) == 2, "no reduced-motion block at all"
+    assert "animation: none" in reduced[1]
+
+
+def test_the_page_reports_readiness_and_can_be_told_an_image_message():
+    script = vendoring.read_resource("preview.js")
+    assert "DOMContentLoaded" in script
+    assert '"ready"' in script or "'ready'" in script
+    assert "setImageMessage" in script
+
+
+def test_the_align_inherit_rule_does_not_override_a_cell_s_own_alignment():
+    # `[align] :is(...)` alone is specificity (0,1,1), which outranks a
+    # cell's own `[align="left"]` at (0,1,0) -- so `<td align="left">`
+    # inside `<div align="center">` would silently render centred, undoing
+    # the column alignment Python-Markdown writes on every aligned table
+    # cell. `:not([align])` excludes an element carrying its own alignment
+    # from the descendant rule entirely.
+    #
+    # This is a string check, not a rendering check: nothing in this suite
+    # renders CSS, so this cannot see computed `text-align` in a browser.
+    # It only pins that the selector text -- and therefore the comment
+    # explaining why it must stay this way -- isn't quietly simplified
+    # away.
+    css = vendoring.read_resource("preview.css")
+    assert (
+        "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align])" in css
+    )

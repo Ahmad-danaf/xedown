@@ -97,6 +97,35 @@ ADDITIONS = {
     # test_mark_is_not_an_allowed_element in tests/unit/test_sanitizer.py.
     "mark.xedown-match",
     "mark.xedown-match-current",
+    # v0.1 fetched nothing remote at all, so no v0.1 page ever contained the
+    # `xedown-remote` class this combined selector requires -- fetching a
+    # `https://` image is new in v0.3. The keyframes and the reduced-motion
+    # override belong to the same loading-skeleton feature.
+    ".xedown-remote.xedown-loading",
+    "@keyframes xedown-image-pulse 0%",
+    "@keyframes xedown-image-pulse 50%",
+    "@keyframes xedown-image-pulse 100%",
+    "@media (prefers-reduced-motion: reduce) .xedown-remote.xedown-loading",
+    # `align` is absent from sanitizer.ALLOWED_ATTRIBUTES until brief 8, so no
+    # v0.1 page ever carried it -- these rules can only fire on a document
+    # rendered by the version that started allowing it through.
+    '[align="left"]',
+    '[align="center"]',
+    '[align="right"]',
+    '[align="justify"]',
+    "[align] :is(p, h1, h2, h3, h4, h5, h6, blockquote, td, th):not([align])",
+    # `details`, `summary`, `dl`/`dt`/`dd`, `caption` and `abbr` are all
+    # absent from sanitizer.ALLOWED_ELEMENTS until brief 7, so none of these
+    # selectors can match anything a v0.1 page produced either.
+    "details",
+    "summary",
+    "details[open] > summary",
+    "details > :last-child",
+    "dl",
+    "dt",
+    "dd",
+    "caption",
+    "abbr[title]",
 }
 
 # Declarations v0.1 shipped that v0.2 deliberately DROPS, with no v0.2
@@ -185,6 +214,20 @@ DELIBERATE_DECLARATIONS = {
     ("a", "unicode-bidi"): (
         "brief 7: a link's text is its own bidi run, so a URL used as link "
         "text stops dragging the sentence's neutrals around"
+    ),
+    # v0.1's `code, pre, kbd { font-family }` group already declares `kbd`,
+    # so it cannot go in ADDITIONS -- brief 9 styles the key cap itself
+    # (border, background, padding) without touching that shared font.
+    ("kbd", "font-size"): ("brief 9: sized in em so it tracks text size"),
+    ("kbd", "padding"): ("brief 9: the cap's own inset"),
+    ("kbd", "border"): ("brief 9: the cap's outline"),
+    ("kbd", "border-bottom-width"): (
+        "brief 9: a thicker bottom edge is the cap's pressed-key affordance"
+    ),
+    ("kbd", "border-radius"): ("brief 9: the cap's corners"),
+    ("kbd", "background"): ("brief 9: the cap's own surface"),
+    ("kbd", "white-space"): (
+        "brief 9: a key combination like Ctrl+Shift+M must not wrap mid-cap"
     ),
 }
 

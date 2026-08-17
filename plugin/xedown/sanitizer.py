@@ -5,17 +5,34 @@ expressions or string replacement is not sound and is forbidden here.
 """
 
 import html as html_module
+import re
 from html.parser import HTMLParser
 
+from . import remoteimages
+
+# Every element here is inert: none can execute, and none can reference
+# anything off-document. That is the rule additions are measured against,
+# not "GitHub allows it" -- the ten added for the compatibility pass
+# (details, summary, kbd, dl/dt/dd, abbr, caption, colgroup/col) were
+# chosen because they carry no URI and no scripting surface, which is why
+# widening to them left ALLOWED_URI_SCHEMES untouched.
 ALLOWED_ELEMENTS = frozenset(
     {
         "a",
+        "abbr",
         "bdi",
         "blockquote",
         "br",
+        "caption",
         "code",
+        "col",
+        "colgroup",
+        "dd",
         "del",
+        "details",
         "div",
+        "dl",
+        "dt",
         "em",
         "h1",
         "h2",
@@ -26,6 +43,7 @@ ALLOWED_ELEMENTS = frozenset(
         "hr",
         "img",
         "input",
+        "kbd",
         "li",
         "ol",
         "p",
@@ -33,6 +51,7 @@ ALLOWED_ELEMENTS = frozenset(
         "s",
         "span",
         "strong",
+        "summary",
         "sup",
         "sub",
         "table",
@@ -49,7 +68,7 @@ ALLOWED_ELEMENTS = frozenset(
 # Elements whose *content* must be discarded along with the tag.
 _DROP_CONTENT_ELEMENTS = frozenset({"script", "style", "svg", "math", "template"})
 
-_VOID_ELEMENTS = frozenset({"br", "hr", "img", "input"})
+_VOID_ELEMENTS = frozenset({"br", "col", "hr", "img", "input"})
 
 # `dir` is here rather than per-element because it is meaningful on any of
 # them: it is how a document says "this run reads the other way" for a case
@@ -60,18 +79,44 @@ _GLOBAL_ATTRIBUTES = frozenset({"dir", "id", "title"})
 
 _ALLOWED_DIR_VALUES = frozenset({"ltr", "rtl", "auto"})
 
+_ALLOWED_ALIGN_VALUES = frozenset({"left", "center", "right", "justify"})
+
+# `start` is an unbounded integer, so it cannot be checked against a value
+# allowlist the way `align` and `dir` are. Python-Markdown never parses it to
+# `int`, so an arbitrarily long digit run lands here unexamined. The ten-digit
+# cap is not a security boundary -- an oversized number can neither execute
+# nor fetch -- it just keeps an absurd literal off the page.
+#
+# `[0-9]` rather than `\d`: Python's `\d` is Unicode-aware and matches
+# Arabic-Indic (٧) and fullwidth (１) digits too, and this project's own
+# corpus includes Arabic and Hebrew READMEs. An explicit range says so at the
+# point of use, where a module-level `re.ASCII` flag could be lost by a later
+# edit.
+_START_RE = re.compile(r"-?[0-9]+")
+_MAX_START_DIGITS = 10
+
 ALLOWED_ATTRIBUTES = {
     "a": frozenset({"href", "name"}),
-    "img": frozenset({"src", "alt", "width", "height"}),
+    "img": frozenset({"src", "alt", "width", "height", "align"}),
     "code": frozenset({"class"}),
     "span": frozenset({"class"}),
-    "div": frozenset({"class"}),
+    "div": frozenset({"class", "align"}),
     "li": frozenset({"class"}),
     "ul": frozenset({"class"}),
+    "ol": frozenset({"start"}),
     "input": frozenset({"type", "checked", "disabled"}),
     "td": frozenset({"align", "colspan", "rowspan"}),
     "th": frozenset({"align", "colspan", "rowspan"}),
     "sup": frozenset({"class"}),
+    "details": frozenset({"open"}),
+    "p": frozenset({"align"}),
+    "h1": frozenset({"align"}),
+    "h2": frozenset({"align"}),
+    "h3": frozenset({"align"}),
+    "h4": frozenset({"align"}),
+    "h5": frozenset({"align"}),
+    "h6": frozenset({"align"}),
+    "table": frozenset({"align"}),
 }
 
 ALLOWED_URI_SCHEMES = frozenset({"http", "https", "mailto", "file"})
@@ -80,11 +125,10 @@ ALLOWED_URI_SCHEMES = frozenset({"http", "https", "mailto", "file"})
 # reach into the plugin's own styling.
 _ALLOWED_CLASS_PREFIXES = ("language-", "hljs", "task-list", "footnote", "headerlink")
 
-# Raster image types only. "svg+xml" is deliberately excluded: SVG is itself
-# an HTML-like, scriptable document format (it can carry <script>, event
-# handler attributes, etc.), so letting it through the data-image allowance
-# would undermine the <svg>-content-drop above via a `src="data:..."` side
-# door. This is an explicit allowlist, not a denylist of "text/html" alone.
+# Raster types only. "svg+xml" is excluded because SVG is itself a
+# scriptable document format, so allowing it here would undermine the
+# <svg>-content-drop above through a `src="data:..."` side door. An explicit
+# allowlist, not a denylist of "text/html" alone.
 _SAFE_DATA_IMAGE_SUBTYPES = frozenset(
     {"png", "jpeg", "jpg", "gif", "webp", "avif", "bmp"}
 )
@@ -146,6 +190,56 @@ def _filter_dir(value):
     return normalized if normalized in _ALLOWED_DIR_VALUES else ""
 
 
+def _filter_align(value):
+    """`align`, or the empty string when it is not one of the four values.
+
+    An allowlist of values, the same shape as `_filter_dir`. `align`
+    cannot execute or fetch anything, so this is not a scripting defence
+    -- it is the same rule `class` and `dir` already follow: document
+    content does not reach the page unexamined, even when it is inert.
+    """
+    normalised = (value or "").strip().lower()
+    return normalised if normalised in _ALLOWED_ALIGN_VALUES else ""
+
+
+def _filter_start(value):
+    """`start`, or the empty string when it is not a small integer.
+
+    Unlike `align`, `start` has no enumerable set of good values -- it is
+    a counting number, in principle unbounded. So this checks shape (an
+    optional `-` then digits, nothing else -- no surrounding space, no
+    leading `+`) and caps the digit run rather than matching against a
+    fixed list. See `_MAX_START_DIGITS` for why the cap exists at all.
+    """
+    normalised = (value or "").strip()
+    if _START_RE.fullmatch(normalised) is None:
+        return ""
+    digits = normalised.lstrip("-")
+    return normalised if len(digits) <= _MAX_START_DIGITS else ""
+
+
+def _filter_attribute_value(name, value):
+    """The value to emit for `name`, or None to drop the attribute.
+
+    One dispatch shared by `_render_attributes` and `_emit_img`, which
+    previously each carried their own copy. Two copies of a security
+    filter is one more than the number that can be reviewed at once, and
+    the set of value-filtered attributes is still growing.
+
+    URI attributes are NOT handled here: they need the resolver callback
+    and the image pipeline, which are per-call-site concerns.
+    """
+    if name == "class":
+        return _filter_class(value) or None
+    if name == "dir":
+        return _filter_dir(value) or None
+    if name == "align":
+        return _filter_align(value) or None
+    if name == "start":
+        return _filter_start(value) or None
+    return value
+
+
 class ImagePlaceholder:
     """What to show in place of an image that cannot be displayed.
 
@@ -162,6 +256,22 @@ class ImagePlaceholder:
 
 _PLACEHOLDER_CLASSES = {"error": "xedown-image-error", "alt": "xedown-image-alt"}
 _DEFAULT_PLACEHOLDER_CLASS = _PLACEHOLDER_CLASSES["error"]
+
+
+class RemoteImage:
+    """An image to be fetched through xedown's private scheme.
+
+    Distinct from a plain `str` src so the sanitizer adds the marker class
+    itself. That is what keeps "document content can never produce an
+    `xedown-` class" true: `_filter_class` refuses the prefix from content,
+    and only this module ever writes one.
+    """
+
+    def __init__(self, uri):
+        self.uri = uri
+
+
+REMOTE_IMAGE_CLASS = "xedown-remote"
 
 
 class _Sanitizer(HTMLParser):
@@ -238,14 +348,11 @@ class _Sanitizer(HTMLParser):
                     if resolved is None:
                         continue
                     value = resolved
-            elif name == "class":
-                value = _filter_class(value)
-                if not value:
+            else:
+                filtered = _filter_attribute_value(name, value)
+                if filtered is None:
                     continue
-            elif name == "dir":
-                value = _filter_dir(value)
-                if not value:
-                    continue
+                value = filtered
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
         if tag == "input":
             # Task-list checkboxes are display only; never interactive.
@@ -279,14 +386,10 @@ class _Sanitizer(HTMLParser):
                     continue
                 reference = _strip_control_characters(html_module.unescape(value))
                 continue
-            if name == "class":
-                value = _filter_class(value)
-                if not value:
-                    continue
-            if name == "dir":
-                value = _filter_dir(value)
-                if not value:
-                    continue
+            filtered = _filter_attribute_value(name, value)
+            if filtered is None:
+                continue
+            value = filtered
             if name == "alt":
                 alt = value
             rendered.append(f'{name}="{html_module.escape(value, quote=True)}"')
@@ -306,13 +409,21 @@ class _Sanitizer(HTMLParser):
             escaped = html_module.escape(outcome.text or "", quote=False)
             self.parts.append(f'<span class="{css_class}">{escaped}</span>')
             return
-        # The callback is trusted code (the only production callback returns
-        # links.uri_for_path(...) or a data: URI this module already
-        # validated) -- but this module's whole job is rebuilding HTML from
-        # an explicit scheme allowlist, and re-checking its own output costs
-        # nothing. Without this, a future callback that ever returned
-        # something unvalidated would emit it unchecked. Fail closed: an
-        # unsafe value emits nothing rather than a broken-but-safe img.
+        if isinstance(outcome, RemoteImage):
+            candidate = str(outcome.uri)
+            # Allowed here and only here -- never through
+            # ALLOWED_URI_SCHEMES, which is what document content is
+            # measured against.
+            if not candidate.startswith(remoteimages.SCHEME + ":"):
+                return
+            rendered.insert(0, f'class="{REMOTE_IMAGE_CLASS}"')
+            rendered.insert(0, f'src="{html_module.escape(candidate, quote=True)}"')
+            self.parts.append(f"<img {' '.join(rendered)} />")
+            return
+        # The callback is trusted code, but re-checking its output costs
+        # nothing and this module's whole job is an explicit scheme
+        # allowlist. Fail closed: an unsafe value emits nothing rather than
+        # a broken-but-safe img.
         candidate = str(outcome)
         if not _is_safe_uri(candidate, allow_data_image=True):
             return
@@ -329,10 +440,11 @@ def sanitize(html, resolve_uri=None, on_image=None):
     not consulted for `<img>` when `on_image` is set.
 
     `on_image` is an optional callable taking (reference, alt) and returning
-    one of three things: a string, used as the `src`; an `ImagePlaceholder`,
-    emitted as `<span class="…">TEXT</span>`; or None, which emits nothing.
-    When it is not set, `<img>` is emitted through `resolve_uri` exactly as
-    before.
+    one of four things: a string, used as the `src`; a `RemoteImage`, emitted
+    as an `<img>` carrying xedown's own `xedown-remote` class; an
+    `ImagePlaceholder`, emitted as `<span class="…">TEXT</span>`; or None,
+    which emits nothing. When it is not set, `<img>` is emitted through
+    `resolve_uri` exactly as before.
     """
     parser = _Sanitizer(resolve_uri=resolve_uri, on_image=on_image)
     parser.feed(html or "")

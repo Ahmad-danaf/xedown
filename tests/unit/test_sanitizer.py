@@ -1,5 +1,6 @@
 import pytest
-from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, sanitize
+from xedown import sanitizer
+from xedown.sanitizer import ALLOWED_ELEMENTS, ImagePlaceholder, RemoteImage, sanitize
 
 
 def test_keeps_ordinary_markup():
@@ -322,6 +323,94 @@ def test_dir_goes_with_an_element_that_is_dropped():
     assert "dir=" not in sanitize('<script dir="rtl">x</script>')
 
 
+def test_align_survives_on_a_div():
+    assert 'align="center"' in sanitizer.sanitize('<div align="center">x</div>')
+
+
+def test_align_survives_on_a_heading_and_a_table():
+    assert 'align="center"' in sanitizer.sanitize('<h1 align="center">T</h1>')
+    assert 'align="right"' in sanitizer.sanitize('<table align="right"></table>')
+
+
+def test_align_survives_on_an_image():
+    # img goes through _emit_img, a separate attribute loop from every
+    # other element. It is the reason Task 6 extracted the shared filter.
+    out = sanitizer.sanitize('<img src="a.png" align="center" alt="x">')
+    assert 'align="center"' in out
+
+
+def test_align_takes_an_allowlist_of_values():
+    for good in ("left", "center", "right", "justify"):
+        assert f'align="{good}"' in sanitizer.sanitize(f'<p align="{good}">x</p>')
+    for bad in ("middle", "javascript:alert(1)", "", "center; x", "CENTER)"):
+        assert "align" not in sanitizer.sanitize(f'<p align="{bad}">x</p>')
+
+
+def test_align_is_case_insensitive_like_dir():
+    assert 'align="center"' in sanitizer.sanitize('<p align="CENTER">x</p>')
+
+
+def test_align_is_not_allowed_on_arbitrary_elements():
+    # An allowlist per element, not a global attribute: `align` on a span
+    # or a list item is not something a README needs and not something
+    # this pass promised.
+    assert "align" not in sanitizer.sanitize('<span align="center">x</span>')
+    assert "align" not in sanitizer.sanitize('<li align="center">x</li>')
+
+
+def test_div_keeps_class_alongside_the_new_align_entry():
+    # ALLOWED_ATTRIBUTES["div"] gained "align" by editing the existing
+    # entry, not by a second "div" key -- a duplicate key would silently
+    # drop "class", which the renderer's own markup depends on.
+    out = sanitizer.sanitize('<div class="hljs" align="center">x</div>')
+    assert 'class="hljs"' in out
+    assert 'align="center"' in out
+
+
+def test_ol_start_survives_sanitization():
+    # Python-Markdown already emits <ol start="7"> for a list that begins
+    # at 7 (vendor/markdown/blockprocessors.py:402); ALLOWED_ATTRIBUTES
+    # simply had no "ol" entry to let it through.
+    assert 'start="7"' in sanitizer.sanitize('<ol start="7"><li>x</li></ol>')
+
+
+def test_ol_start_rejects_a_non_numeric_value():
+    assert "start" not in sanitizer.sanitize('<ol start="abc"><li>x</li></ol>')
+
+
+def test_ol_start_accepts_a_negative_value():
+    # HTML permits a countdown list; a leading "-" is not a scripting
+    # surface, so it is honoured like any other digit run.
+    assert 'start="-5"' in sanitizer.sanitize('<ol start="-5"><li>x</li></ol>')
+
+
+def test_ol_start_rejects_an_empty_value():
+    assert "start" not in sanitizer.sanitize('<ol start=""><li>x</li></ol>')
+
+
+def test_ol_start_rejects_an_absurdly_long_digit_run():
+    # Not a security boundary -- an oversized number can't execute or
+    # fetch -- but an unbounded literal is still content reaching the page
+    # unexamined, so it is capped well above anything a real list needs.
+    huge = "1" * 40
+    assert "start" not in sanitizer.sanitize(f'<ol start="{huge}"><li>x</li></ol>')
+
+
+def test_ol_start_is_not_allowed_on_a_ul():
+    assert "start" not in sanitizer.sanitize('<ul start="7"><li>x</li></ul>')
+
+
+def test_ol_start_rejects_non_ascii_digits():
+    # Python's `\d` is Unicode-aware; `[0-9]` is not. An Arabic-Indic,
+    # fullwidth, or mixed-script digit run must not reach the page just
+    # because it satisfies `\d` -- this project's own test corpus has
+    # Arabic and Hebrew READMEs, so this is not a hypothetical input.
+    for value in ("٧", "１７", "1٧"):
+        assert "start" not in sanitizer.sanitize(f'<ol start="{value}"><li>x</li></ol>')
+    assert 'start="7"' in sanitizer.sanitize('<ol start="7"><li>x</li></ol>')
+    assert 'start="-5"' in sanitizer.sanitize('<ol start="-5"><li>x</li></ol>')
+
+
 def test_bdi_survives_and_keeps_its_text():
     result = sanitize("<p>افتح <bdi>/usr/local/share</bdi> ثم تابع.</p>")
     assert "<bdi>" in result and "</bdi>" in result
@@ -352,3 +441,163 @@ def test_a_mark_in_the_source_document_never_reaches_the_page():
     assert "<mark" not in html
     # The tag goes; the words the author wrote stay.
     assert "highlight" in html
+
+
+def test_the_private_scheme_is_never_accepted_from_document_content():
+    # THE bypass. If `xedown-image:` ever enters ALLOWED_URI_SCHEMES, a
+    # hostile document can mint its own fetchable URL and the whole
+    # preference becomes decorative. This test is the guard on that.
+    html = '<img src="xedown-image:https%3A%2F%2Fevil.example%2Fpixel.png">'
+    assert "xedown-image" not in sanitize(html)
+    assert "xedown-image" not in sanitize(html, on_image=lambda ref, alt: ref)
+
+
+def test_the_private_scheme_is_not_in_the_allowlist():
+    from xedown import remoteimages, sanitizer
+
+    assert remoteimages.SCHEME not in sanitizer.ALLOWED_URI_SCHEMES
+
+
+def test_a_remote_image_result_carries_xedowns_own_class():
+    html = '<img src="https://e.com/a.png" alt="a diagram">'
+    out = sanitize(html, on_image=lambda ref, alt: RemoteImage("xedown-image:x"))
+    assert 'class="xedown-remote"' in out
+    assert 'alt="a diagram"' in out
+    assert 'src="xedown-image:x"' in out
+
+
+def test_document_content_cannot_produce_the_remote_class():
+    html = '<img src="a.png" class="xedown-remote">'
+    out = sanitize(html, on_image=lambda ref, alt: "file:///tmp/a.png")
+    assert "xedown-remote" not in out
+
+
+def test_a_remote_image_with_an_unusable_uri_emits_nothing():
+    html = '<img src="https://e.com/a.png">'
+    out = sanitize(html, on_image=lambda ref, alt: RemoteImage("javascript:alert(1)"))
+    assert "<img" not in out
+
+
+def test_class_filtering_is_identical_on_img_and_non_img():
+    # _render_attributes and _emit_img filter `class` separately. Before
+    # extracting that duplication, pin the behaviour both must keep.
+    assert 'class="hljs"' in sanitizer.sanitize('<span class="hljs">x</span>')
+    assert "class" not in sanitizer.sanitize('<span class="evil">x</span>')
+
+
+def test_dir_filtering_is_identical_on_img_and_non_img():
+    assert 'dir="rtl"' in sanitizer.sanitize('<p dir="rtl">x</p>')
+    assert "dir" not in sanitizer.sanitize('<p dir="sideways">x</p>')
+
+
+def test_img_keeps_a_valid_dir_and_drops_an_invalid_one():
+    kept = sanitizer.sanitize('<img src="a.png" dir="rtl" alt="x">')
+    dropped = sanitizer.sanitize('<img src="a.png" dir="sideways" alt="x">')
+    assert 'dir="rtl"' in kept
+    assert "dir" not in dropped
+
+
+def test_align_filtering_is_identical_on_img_and_non_img():
+    assert 'align="center"' in sanitizer.sanitize('<p align="center">x</p>')
+    assert "align" not in sanitizer.sanitize('<p align="middle">x</p>')
+    kept = sanitizer.sanitize('<img src="a.png" align="center" alt="x">')
+    dropped = sanitizer.sanitize('<img src="a.png" align="middle" alt="x">')
+    assert 'align="center"' in kept
+    assert "align" not in dropped
+
+
+def test_img_never_receives_a_class_attribute_from_content():
+    # Unlike `dir`, `class` is not in ALLOWED_ATTRIBUTES["img"] and is not a
+    # _GLOBAL_ATTRIBUTES entry either, so a content-authored <img class=...>
+    # is dropped by the `name not in allowed` check before either emit
+    # path's class-filtering branch is ever reached -- true whether `<img>`
+    # goes through _render_attributes (no on_image) or _emit_img (on_image
+    # set), and true for both an allowlisted and a non-allowlisted value.
+    assert "class" not in sanitizer.sanitize('<img src="a.png" class="hljs" alt="x">')
+    assert "class" not in sanitizer.sanitize('<img src="a.png" class="evil" alt="x">')
+    assert "class" not in sanitizer.sanitize(
+        '<img src="a.png" class="hljs" alt="x">',
+        on_image=lambda ref, alt: "file:///tmp/a.png",
+    )
+
+
+def test_details_and_summary_survive():
+    # Before this, a collapsible section rendered as its label run inline
+    # into permanently-visible body text -- the single most damaging thing
+    # the allowlist did to a real README.
+    out = sanitizer.sanitize("<details><summary>More</summary><p>hidden</p></details>")
+    assert "<details>" in out
+    assert "<summary>More</summary>" in out
+    assert "<p>hidden</p>" in out
+
+
+def test_nested_details_survive_both_levels():
+    out = sanitizer.sanitize(
+        "<details><summary>Outer</summary>"
+        "<details><summary>Inner</summary>deep</details></details>"
+    )
+    assert out.count("<details>") == 2
+    assert out.count("</details>") == 2
+
+
+def test_details_keeps_open_and_drops_a_handler():
+    out = sanitizer.sanitize(
+        '<details open onclick="steal()"><summary>S</summary>b</details>'
+    )
+    assert "open" in out
+    assert "onclick" not in out
+    assert "steal" not in out
+
+
+def test_definition_lists_survive():
+    out = sanitizer.sanitize("<dl><dt>Term</dt><dd>Definition</dd></dl>")
+    assert "<dl>" in out and "<dt>Term</dt>" in out and "<dd>Definition</dd>" in out
+
+
+def test_kbd_survives():
+    assert "<kbd>Ctrl</kbd>" in sanitizer.sanitize("Press <kbd>Ctrl</kbd>")
+
+
+def test_abbr_survives_with_its_title():
+    out = sanitizer.sanitize('<abbr title="HyperText">HTML</abbr>')
+    assert "<abbr" in out and 'title="HyperText"' in out
+
+
+def test_abbr_drops_a_handler():
+    out = sanitizer.sanitize('<abbr title="x" onmouseover="steal()">HTML</abbr>')
+    assert "onmouseover" not in out and "steal" not in out
+
+
+def test_table_caption_and_colgroup_survive():
+    out = sanitizer.sanitize(
+        "<table><caption>Cap</caption><colgroup><col></colgroup>"
+        "<tr><td>1</td></tr></table>"
+    )
+    assert "<caption>Cap</caption>" in out
+    assert "<colgroup>" in out
+    assert "<col />" in out
+
+
+def test_the_new_elements_add_no_uri_surface():
+    # The point of choosing these ten elements is that none of them can
+    # reference anything. If that stops being true, this fails.
+    for markup in (
+        '<details src="http://evil/x">a</details>',
+        '<kbd href="http://evil/x">a</kbd>',
+        '<abbr src="http://evil/x">a</abbr>',
+        '<col src="http://evil/x">',
+    ):
+        assert "evil" not in sanitizer.sanitize(markup)
+
+
+def test_uri_scheme_allowlist_is_unchanged():
+    # A widening must never ride along quietly with an element addition.
+    assert sanitizer.ALLOWED_URI_SCHEMES == frozenset(
+        {"http", "https", "mailto", "file"}
+    )
+
+
+def test_content_dropping_elements_are_unchanged():
+    for tag in ("script", "style", "svg", "math", "template"):
+        out = sanitizer.sanitize(f"<{tag}>SECRET</{tag}>")
+        assert "SECRET" not in out

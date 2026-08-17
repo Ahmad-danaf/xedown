@@ -69,12 +69,14 @@ def test_showcase_has_no_error_placeholder():
 
 
 def test_edge_cases_remote_image_becomes_a_placeholder_naming_the_address():
-    # The remote image is blocked unconditionally, regardless of base_dir:
-    # resolve_to_uri never returns a local URI for an http(s) reference, so
-    # this is deterministic real behaviour, not a fixture-specific quirk.
+    # render_fragment does not pass fetch_remote, so it defaults to False:
+    # this is the reader-has-not-allowed-it wording, not "never fetched".
+    # The real per-document permission reaches the renderer through the
+    # controller, which this fixture-level test deliberately does not go
+    # through -- the default is what a document gets before anyone allows it.
     body = renderer.render_fragment(EDGE_CASES_TEXT, base_dir=str(FIXTURES_DIR))
     assert "xedown-image-error" in body
-    assert "Remote image, not fetched: https://example.com/not-fetched.png" in body
+    assert "Remote image, not loaded: https://example.com/not-fetched.png" in body
 
 
 def test_edge_cases_missing_local_image_becomes_a_placeholder():

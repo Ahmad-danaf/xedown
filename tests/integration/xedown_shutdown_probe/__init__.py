@@ -27,8 +27,20 @@ where the plugin does not exist. That comparison is what keeps the
 runner's one allowlisted xed-core assertion honest.
 """
 
+import itertools
 import os
 import sys
+import weakref
+
+# Before every other import that could reach xedown: the wrap has to see
+# the plugin's first connection, and `install()` is a no-op once xedown is
+# already loaded. This file's own xedown import sits inside a function
+# body, so module-import time is early enough -- checked, not assumed.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from leakcheck import hooks as leakhooks
+
+leakhooks.install()
+
 import traceback
 
 import gi
@@ -110,6 +122,53 @@ def _controller(tab):
     return getattr(view, CONTROLLER_ATTRIBUTE, None) if view is not None else None
 
 
+# `_watch_label` gives `_check_live_preview` and `_check_torn_down` a shared,
+# stable name for a tab, keyed by the tab's own View -- reachable from both
+# (via `tab.get_view()` on one side, handed directly on the other) -- rather
+# than by its position in whatever list either call happens to be iterating.
+# Positional labels break the moment the two calls see lists of different
+# length: multi-window watches three tabs and tears down two, and under the
+# old `webview:{index}`/`docstate:{index}` scheme the second window's own
+# re-watch (`close_second_window`, indices 0 and 1 again) silently overwrote
+# window one's entries while leaving one of window two's stranded -- watched
+# forever, never released.
+#
+# A bare `id(view)` was considered and rejected: it is a memory address, and
+# nothing here guarantees a later object never reuses one a dead, already-
+# released view held. A counter, assigned once the first time a view is
+# watched and remembered here for as long as the key survives, does not have
+# that problem. The mapping is a weak one, matching `watch_object`'s own rule
+# -- an id cache that pinned the views it names would itself be a leak.
+#
+# What the weak key holds is the PYGOBJECT WRAPPER, not the underlying
+# XedView, and those are two different lifetimes. pygobject is free to drop a
+# wrapper it considers uninteresting while the C object lives on and to build
+# a fresh one at the next lookup -- and a fresh wrapper is a different key, so
+# the same view would be handed a second watch id and the matching
+# `release_object` would miss the first, leaving it watched forever.
+#
+# What keeps the two coincident here is `XedownViewActivatable`: it sets
+# `_xedown_controller` on every view it activates, and setting a Python
+# attribute on a pygobject switches it to a toggle reference, which pins that
+# one wrapper for as long as the C object exists. Every view this probe
+# labels is a view xedown activated (nothing reaches `_watch_label` in
+# control mode -- `_check_live_preview`, `_check_torn_down` and `cycle` all
+# stand down when there is no controller), so every one of them is
+# toggle-referenced before it is ever labelled. Correct as written, but not
+# self-evidently so: if that attribute ever stopped being set, this cache
+# would need its own way to pin the wrapper.
+_watch_ids = weakref.WeakKeyDictionary()
+_watch_id_seq = itertools.count()
+
+
+def _watch_label(view, prefix):
+    watch_id = _watch_ids.get(view)
+    if watch_id is None:
+        watch_id = next(_watch_id_seq)
+        _watch_ids[view] = watch_id
+    return f"{prefix}:{watch_id}"
+
+
 def _check_live_preview(label, tabs):
     """Assert every tab really is sitting in Preview with a built WebView.
 
@@ -129,6 +188,15 @@ def _check_live_preview(label, tabs):
             missing.append(f"{index}:preview-not-visible")
         elif controller.frame.get_visible():
             missing.append(f"{index}:source-frame-still-visible")
+        else:
+            view = tab.get_view()
+            leakhooks.watch_object(
+                controller.preview.widget, _watch_label(view, "webview")
+            )
+            # The spec's "stale document state" bullet, made concrete. A
+            # DocumentState still reachable after teardown means the
+            # controller is too, and with it the view and its buffer.
+            leakhooks.watch_object(controller.state, _watch_label(view, "docstate"))
     _record(f"{label}-previews-live", not missing, ", ".join(missing))
 
 
@@ -137,6 +205,54 @@ def _check_torn_down(label, views):
         return
     leaked = [i for i, view in enumerate(views) if hasattr(view, CONTROLLER_ATTRIBUTE)]
     _record(f"{label}-controllers-released", not leaked, f"leaked: {leaked!r}")
+    for view in views:
+        leakhooks.release_object(_watch_label(view, "webview"))
+        leakhooks.release_object(_watch_label(view, "docstate"))
+
+
+def _audit(label, since=None, report_only_kinds=()):
+    """Assert nothing outlived the teardown just performed.
+
+    Skipped in control mode, where there is no plugin to have leaked.
+    `hooks.audit()` collects garbage first, so a Python-side cycle that the
+    collector can break is not reported as a leak.
+
+    `since`, if given, is a checkpoint from `leakhooks.checkpoint()` taken
+    before the scenario built the thing it is about to tear down -- without
+    it, every audit reports every still-live resource in the process,
+    including ones a different, still-open tab or window legitimately
+    holds. See tests/unit/test_leak_ledger.py.
+
+    `report_only_kinds`, if given, is a set of `leakhooks` kind constants
+    (`HANDLER`, `SOURCE`, `OBJECT`) whose findings are recorded -- with
+    their labels and origins, so a real one is still visible in the report
+    -- but never fail the scenario. For `cycle` only: a `WebKit2.WebView`'s
+    own teardown is genuinely asynchronous (see the comment at
+    `controller.py:243-254`), and auditing twenty of them at once after
+    ~34s of continuous churn is forty independent chances for one
+    still-settling straggler, where every other scenario's own object
+    watches number one to three. That is fuzzy in the same way a memory
+    reading is fuzzy, not a deterministic yes/no -- HANDLER and SOURCE
+    findings, which are not subject to the same async-teardown timing, stay
+    hard gates regardless of what is passed here.
+    """
+    if CONTROL:
+        return
+    findings = leakhooks.audit(since=since)
+    gating = [f for f in findings if f.kind not in report_only_kinds]
+    informational = [f for f in findings if f.kind in report_only_kinds]
+    _record(
+        f"{label}-no-leaks",
+        not gating,
+        leakhooks.format_findings(gating),
+    )
+    if report_only_kinds:
+        _record(
+            f"{label}-informational-findings",
+            True,
+            "informational only, does not fail this scenario: "
+            + leakhooks.format_findings(informational),
+        )
 
 
 # --- scenarios ----------------------------------------------------------
@@ -151,6 +267,10 @@ def _scenario_close_tab(probe):
     """One Markdown tab, previewing, closed by hand. Then shutdown."""
 
     def open_it():
+        # Before this scenario's own tab exists, so the audit below is
+        # scoped to what THIS scenario acquires -- not the runner's own
+        # tab, already open in this window before the probe did anything.
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tab"] = _open_tab(probe.window, "close-tab.md", "# Close me\n\nBody.\n")
         _state["view"] = _state["tab"].get_view()
 
@@ -160,18 +280,34 @@ def _scenario_close_tab(probe):
 
     def verify_gone():
         _check_torn_down("close-tab", [_state["view"]])
+        # Before the remaining-tab check below: that check calls
+        # `_check_live_preview` too, which would `watch_object` the
+        # survivor's WebView under its own fresh, never-released label -- a
+        # legitimately-alive record, inside this checkpoint's scope, that
+        # the audit would otherwise report as this scenario's own leak of a
+        # tab nothing here ever intends to close.
+        _audit("close-tab", since=_state["checkpoint"])
         _check_live_preview("close-tab-remaining", [probe.window.get_active_tab()])
 
     return [(2500, open_it), (2000, verify_then_close), (1200, verify_gone)]
 
 
 def _scenario_close_many_tabs(probe):
-    """Four Markdown tabs opened, all previewing, then all closed."""
+    """Twelve Markdown tabs opened, all previewing, then all closed.
+
+    The spec's "10+ tabs" requirement. Delays are widened over the original
+    four-tab version, not shortened anywhere: twelve WebViews take longer to
+    build, and twelve controllers take longer to tear down, than four.
+    """
 
     def open_them():
+        # Before any of this scenario's own tabs exist, so the audit below
+        # is scoped to what THIS scenario acquires -- not the runner's own
+        # tab, already open in this window before the probe did anything.
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tabs"] = [
             _open_tab(probe.window, f"many-{i}.md", f"# Tab {i}\n\nBody {i}.\n")
-            for i in range(4)
+            for i in range(12)
         ]
         _state["views"] = [tab.get_view() for tab in _state["tabs"]]
 
@@ -179,7 +315,7 @@ def _scenario_close_many_tabs(probe):
         _check_live_preview("close-many", _state["tabs"])
 
     def close_them():
-        # One at a time, the way a user clicks four close buttons -- not a
+        # One at a time, the way a user clicks twelve close buttons -- not a
         # single close_all_tabs(), which takes a different code path in xed
         # and would not exercise the per-tab teardown this is aimed at.
         for tab in _state["tabs"]:
@@ -187,33 +323,108 @@ def _scenario_close_many_tabs(probe):
 
     def verify_gone():
         _check_torn_down("close-many", _state["views"])
+        _audit("close-many", since=_state["checkpoint"])
 
     return [
         (2500, open_them),
-        (3000, verify),
+        (9000, verify),
         (500, close_them),
-        (1500, verify_gone),
+        (4500, verify_gone),
     ]
 
 
 def _scenario_multi_window(probe):
-    """Two real xed windows, Markdown previewing in both, closed by the runner."""
+    """Two real xed windows, Markdown previewing in both.
+
+    The first window is left as-is for the runner to close, the way a user
+    closing xed with several windows open actually ends -- but the second
+    is closed here, gracefully (`window.close()`, never `.destroy()` -- see
+    this module's own docstring), so the scenario can audit its own
+    teardown instead of ending before anything has actually torn down.
+    """
+
+    def open_window_one():
+        _state["tabs"] = [_open_tab(probe.window, "win1.md", "# Window one\n\nBody.\n")]
 
     def build():
+        # Confirmed live, not just opened. `TabController.activate()`
+        # defers its own construction through
+        # `GLib.idle_add(self._build_if_markdown)` -- the ModeBar,
+        # PreviewView, SearchBar, AppearanceWatcher and FileWatch, i.e.
+        # everything that connects a signal, are built on a LATER
+        # main-loop turn than `_open_tab`'s own return, not before it. This
+        # used to be a single synchronous `build()` that checkpointed right
+        # after opening window one's tab, which landed BEFORE that later
+        # turn ran: window one's own, entirely legitimate construction fell
+        # inside the audit's scope, and since window one is never torn down
+        # by this scenario, every one of its handlers was reported as a
+        # leak. `_check_live_preview` is the probe's own existing signal
+        # that a controller has actually finished building; using it here,
+        # rather than just trusting that the delay above was long enough,
+        # is what makes the checkpoint below genuinely after window one's
+        # controller exists.
+        _check_live_preview("multi-window-first", [_state["tabs"][0]])
+        # Checkpointed here: after window one's tab AND its controller
+        # (never torn down by this scenario -- the runner closes it
+        # afterward, like any other still-open window) but before window
+        # two, or either of ITS tabs, exist. Checkpointing any later -- e.g.
+        # in close_second_window(), after both of window two's
+        # TabControllers have already been built -- would put every
+        # connect()/timeout_add() their construction made below the
+        # checkpoint's sequence number, permanently out of
+        # `findings(since=...)`'s scope. That is exactly the population a
+        # forgotten disconnect would show up in, so this audit would end up
+        # checking only the close itself, blind to the thing it exists to
+        # catch.
+        _state["checkpoint"] = leakhooks.checkpoint()
         app = Xed.App.get_default()
         second = app.create_window(None)
         second.show_all()
         _state["second"] = second
-        _state["tabs"] = [
-            _open_tab(probe.window, "win1.md", "# Window one\n\nBody.\n"),
+        _state["tabs"] += [
             _open_tab(second, "win2-a.md", "# Window two A\n\nBody.\n"),
             _open_tab(second, "win2-b.md", "# Window two B\n\nBody.\n"),
         ]
+        _state["second_tabs"] = _state["tabs"][1:]
+        _state["second_views"] = [tab.get_view() for tab in _state["second_tabs"]]
 
     def verify():
         _check_live_preview("multi-window", _state["tabs"])
+        # Window one is left open for the runner to close afterward, never
+        # torn down by this scenario -- but the call above just watched its
+        # webview and DocumentState too, as a side effect of confirming ITS
+        # preview is live in the same pass as window two's. Release that
+        # watch right away: with per-view labels now stable (see
+        # `_watch_label`) rather than positional, nothing later collides
+        # with it and overwrites it away by accident, so left alone it would
+        # sit inside the checkpoint's scope, unreleased and alive for the
+        # rest of this scenario, and `verify_gone`'s audit would read it as
+        # a leak of a tab nothing here ever intends to close.
+        first_view = _state["tabs"][0].get_view()
+        leakhooks.release_object(_watch_label(first_view, "webview"))
+        leakhooks.release_object(_watch_label(first_view, "docstate"))
 
-    return [(2500, build), (3500, verify)]
+    def close_second_window():
+        # Re-watches window two's tabs specifically -- matching what
+        # `_check_torn_down` below releases -- rather than relying on the
+        # "multi-window" watch above. Labels are stable per view now, so
+        # this just re-records the same two entries `verify` already made;
+        # it no longer matters that both calls index `second_tabs`/`tabs`
+        # differently.
+        _check_live_preview("multi-window-second", _state["second_tabs"])
+        _state["second"].close()
+
+    def verify_gone():
+        _check_torn_down("multi-window", _state["second_views"])
+        _audit("multi-window", since=_state["checkpoint"])
+
+    return [
+        (2500, open_window_one),
+        (500, build),
+        (3500, verify),
+        (500, close_second_window),
+        (1500, verify_gone),
+    ]
 
 
 def _scenario_move_tab(probe):
@@ -231,6 +442,11 @@ def _scenario_move_tab(probe):
         second.show_all()
         _state["second"] = second
         _state["original"] = probe.window.get_active_tab()
+        # Captured before the move: `verify_focus_watch_moved` below needs
+        # to tell "still watching the window the tab left" apart from
+        # "watching the window the tab is in now", and after the move
+        # nothing else records which window that was.
+        _state["origin_window"] = probe.window
         _state["seed"] = _open_tab(second, "move-seed.md", "# Seed\n\nBody.\n")
         _state["movable"] = _open_tab(
             probe.window, "movable.md", "# Movable\n\nBody.\n"
@@ -257,13 +473,73 @@ def _scenario_move_tab(probe):
     def verify():
         _check_live_preview("move-tab-after", [_state["movable"], _state["extra"]])
 
-    return [(2500, build), (3000, move), (1500, switch_tabs), (1200, verify)]
+    def verify_focus_watch_moved():
+        # Nothing to assert without a plugin: `_controller()` is None for
+        # every tab in control mode, so all three checks below would report
+        # FAIL and the control log -- the evidence behind the runner's one
+        # allowlisted xed-core assertion, and this is the very scenario that
+        # provokes it -- would stop being a like-for-like comparison. The
+        # move-and-switch choreography above still runs, which is the part
+        # the comparison is actually made of.
+        if CONTROL:
+            return
+        # The controller deliberately SURVIVES a tab move -- this scenario
+        # must never assert teardown. What it asserts instead is that the
+        # "set-focus" watch followed the tab: the old window's connection
+        # was dropped and a new one made against the window the tab is in
+        # now. A leak and a functional regression share a symptom here -- if
+        # the old window still held the handler, Escape would stop closing
+        # the search bar for that tab AND the old window would be pinning a
+        # controller that should be free to go when that window closes.
+        controller = _controller(_state["movable"])
+        window = controller._toplevel() if controller is not None else None
+        _record(
+            "move-tab-controller-survived",
+            controller is not None and controller.preview is not None,
+        )
+        _record(
+            "move-tab-focus-watch-follows-the-tab",
+            controller is not None and controller._focus_window is window,
+            f"watching {controller and controller._focus_window!r}, tab is in {window!r}",
+        )
+        _record(
+            "move-tab-old-window-released",
+            controller is not None
+            and controller._focus_window is not _state.get("origin_window"),
+        )
+        # No leakhooks._audit here: nothing in this scenario is ever torn
+        # down (the controller and every tab it touches deliberately
+        # survive), so there is no checkpoint placement that both (a)
+        # includes anything meaningful and (b) doesn't guarantee a finding
+        # -- the moved tab's now-permanent post-move focus-watch connection
+        # is legitimately alive and would show up as one no matter where a
+        # checkpoint were taken. The three assertions above -- "the
+        # controller survived", "the watch follows the tab", "the old
+        # window let go" -- ARE this scenario's audit; see design doc
+        # docs/superpowers/specs/2026-08-14-lifecycle-stress-design.md
+        # §6.2: "move-tab's audit asserts the focus watch was re-pointed to
+        # the new window and released from the old one."
+
+    return [
+        (2500, build),
+        (3000, move),
+        (1500, switch_tabs),
+        (1200, verify),
+        (1000, verify_focus_watch_moved),
+    ]
 
 
 def _scenario_disable_plugin(probe):
     """xedown switched off through the same gsettings key Preferences uses."""
 
     def open_them():
+        # Before this scenario's own tabs exist, so the audit in
+        # verify_registries_empty is scoped to what THIS scenario acquires
+        # -- not the runner's own tab, already open in this window before
+        # the probe did anything (that tab's controller is torn down by
+        # `disable()` too, but the registry checks below cover it globally,
+        # unscoped, so the scoped audit does not need to).
+        _state["checkpoint"] = leakhooks.checkpoint()
         _state["tabs"] = [
             _open_tab(probe.window, f"disable-{i}.md", f"# Tab {i}\n\nBody.\n")
             for i in range(2)
@@ -278,6 +554,28 @@ def _scenario_disable_plugin(probe):
         active = settings.get_strv("active-plugins")
         settings.set_strv("active-plugins", [p for p in active if p != "xedown"])
 
+    def verify_registries_empty():
+        # Disabling the plugin tears down every controller in the process
+        # -- the strictest of the three Task 4 scenarios, so this is where
+        # the registries must be provably empty, globally, not just for
+        # this scenario's own two tabs.
+        if CONTROL:
+            return
+        from xedown import controller as xedown_controller
+        from xedown import imagescheme
+
+        _record(
+            "disable-plugin-live-controllers-empty",
+            not xedown_controller._live_controllers,
+            f"{len(xedown_controller._live_controllers)} left",
+        )
+        _record(
+            "disable-plugin-failure-listeners-empty",
+            not imagescheme._failure_listeners,
+            f"{len(imagescheme._failure_listeners)} left",
+        )
+        _audit("disable-plugin", since=_state["checkpoint"])
+
     def verify_after():
         _check_torn_down("disable", _state["views"])
         if not CONTROL:
@@ -291,6 +589,7 @@ def _scenario_disable_plugin(probe):
                 if frame is None or not frame.get_visible():
                     hidden.append(index)
             _record("disable-source-frames-returned", not hidden, f"hidden: {hidden!r}")
+        verify_registries_empty()
 
     return [
         (2500, open_them),
@@ -410,6 +709,74 @@ def _scenario_settings_window(probe):
     return [(2500, cycle), (600, leave_one_open)]
 
 
+def _scenario_close_with_fetches_in_flight(probe):
+    """Several remote images, permitted, pointed at a real hung fetch.
+
+    `imagescheme.shutdown()` (added Task 15, wired to the last controller
+    tearing down) cancels only work still QUEUED --
+    `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)`'s own
+    contract. Anything already RUNNING keeps running regardless, and the
+    interpreter's own `atexit` hook joins those threads either way, so a
+    close request that lands mid-fetch can delay the process exiting by up
+    to `remoteimages.MAX_TOTAL_S` (15s), the wall-clock deadline on one whole
+    fetch. `TIMEOUT_S` (5s) is the socket timeout and bounds a single read,
+    not the transfer -- a server that keeps dribbling never trips it, which
+    is why the deadline exists. This scenario exists to confirm that
+    close still completes CLEANLY within that bound -- not that it completes
+    instantly, which it does not and is not supposed to.
+
+    `httpbingo.org` -- a public mirror of the well-known httpbin.org test
+    service -- is used deliberately, for the same reason the live probe's
+    remote-image steps use it: a plain local server is refused by design
+    (`remoteimages.check_destination` only accepts a public destination), so
+    a real public HTTPS server is the only way to exercise a real,
+    genuinely outstanding fetch rather than a stub. Its `/delay/10` endpoint
+    guarantees the fetch is still running, not merely queued, when the
+    close request arrives -- `verify_outstanding` below checks that
+    directly, so this scenario cannot pass vacuously by racing a fetch that
+    happened to already settle.
+    """
+
+    def open_and_permit():
+        if CONTROL:
+            _state["tab"] = _open_tab(
+                probe.window,
+                "fetches-in-flight.md",
+                "# Fetches in flight\n\nBody.\n",
+            )
+            return
+        # Four separate URLs -- MAX_CONCURRENT is 4 -- so this is four
+        # genuinely outstanding fetches, not one.
+        body = "# Fetches in flight\n\n" + "\n\n".join(
+            f"![never resolves {i}]"
+            f"(https://httpbingo.org/delay/10?probe=shutdown-{i})"
+            for i in range(4)
+        )
+        _state["tab"] = _open_tab(probe.window, "fetches-in-flight.md", body)
+        controller = _controller(_state["tab"])
+        if controller is not None:
+            controller._on_load_images_requested(controller.modebar)
+
+    def verify_outstanding():
+        _check_live_preview("fetches-in-flight", [_state["tab"]])
+        if CONTROL:
+            return
+        from xedown import imagescheme
+
+        fetcher = imagescheme.get_fetcher()
+        outstanding = [u for u in fetcher._waiting if "probe=shutdown-" in u]
+        _record(
+            "fetches-in-flight-actually-outstanding",
+            len(outstanding) > 0,
+            f"waiting: {sorted(fetcher._waiting)!r}",
+        )
+
+    # The runner closes the window as soon as this scenario reports READY,
+    # which is immediately after verify_outstanding -- so the close request
+    # arrives well inside the 5s window the fetches above were started in.
+    return [(2500, open_and_permit), (3000, verify_outstanding)]
+
+
 def _scenario_settings_configurable(probe):
     """The plugin manager's route, five times, then closed as-is.
 
@@ -447,6 +814,364 @@ def _scenario_settings_configurable(probe):
     return [(2500, cycle)]
 
 
+def _scenario_re_enable(probe):
+    """Disable xedown, turn it back on, and use it again in one session.
+
+    The process-wide registrations survive a disable -- `register_once` is
+    idempotent for the life of the process and `imagescheme.shutdown()`
+    leaves `get_fetcher()` able to build a fresh one. Both facts are load
+    bearing for this cycle and neither has ever been exercised.
+
+    The audit runs right after the "before" tab's teardown is confirmed and
+    before the plugin comes back -- not at the very end, after a SECOND tab
+    has been opened and deliberately left open. `_check_live_preview`'s
+    watch_object side effect would put that second tab's own construction
+    inside the checkpoint's scope with nothing left in this scenario ever
+    releasing it, which is exactly the trap `close-tab`'s own "-remaining"
+    check sidesteps by running after its audit rather than before it.
+    """
+
+    def open_it():
+        _state["checkpoint"] = leakhooks.checkpoint()
+        _state["tab"] = _open_tab(probe.window, "re-enable.md", "# Before\n\nBody.\n")
+        _state["view"] = _state["tab"].get_view()
+
+    def disable_it():
+        _check_live_preview("re-enable-before", [_state["tab"]])
+        # In control mode there is no xedown to unload:
+        # `get_plugin_info("xedown")` returns None and `unload_plugin(None)`
+        # raises, which would land as `crash-in-step-1` and take the whole
+        # control run of this scenario down with it. The tab choreography
+        # above and below still runs, which is what makes the control log a
+        # like-for-like comparison.
+        if CONTROL:
+            return
+        from gi.repository import Peas
+
+        _state["engine"] = Peas.Engine.get_default()
+        _state["plugin"] = _state["engine"].get_plugin_info("xedown")
+        _state["engine"].unload_plugin(_state["plugin"])
+
+    def verify_disabled():
+        _check_torn_down("re-enable", [_state["view"]])
+        _audit("re-enable", since=_state["checkpoint"])
+        # Paired with `disable_it`'s own guard above: nothing was unloaded
+        # in control mode, so `_state["engine"]` was never set and reloading
+        # would be a KeyError here.
+        if CONTROL:
+            return
+        _state["engine"].load_plugin(_state["plugin"])
+
+    def verify_enabled_again():
+        # A fresh tab, not the old one: peas does not re-activate a
+        # ViewActivatable for a view that already existed when the plugin
+        # was loaded, which is xed's behaviour and not xedown's to fix.
+        _state["tab2"] = _open_tab(probe.window, "re-enable-2.md", "# After\n\nBody.\n")
+
+    def verify_works():
+        _check_live_preview("re-enable-after", [_state["tab2"]])
+
+    return [
+        (2500, open_it),
+        (2000, disable_it),
+        (1500, verify_disabled),
+        (1500, verify_enabled_again),
+        (2500, verify_works),
+    ]
+
+
+PHASE = os.environ.get("XEDOWN_SHUTDOWN_PHASE", "")
+
+
+def _scenario_restart(probe):
+    """Close xed, start it again, and check what did and did not survive.
+
+    Phase 1 leaves two documents in different modes and grants remote
+    images to one of them. Phase 2 relaunches against the same config
+    directory and checks the plugin came back active, the rendered
+    preview (document `a`, the only one of the two ever in Preview mode)
+    is not an error page, the modes came back (both the resulting mode
+    AND the mode store's own recorded entry -- see the comment at the
+    mode-store assertions for why the resulting mode alone cannot tell
+    "remembered" apart from "defaulted"), and the grant did not.
+
+    The grant assertion is a REGRESSION GUARD, not a bug hunt.
+    `controller._remote_unblocked` is a plain instance field, so it already
+    dies with the controller and today's behaviour is correct. It is
+    asserted because that correctness is currently accidental: nothing
+    records it as a requirement, and a change that moved the grant into the
+    settings store would be a real security regression with no test to
+    catch it.
+
+    No `leakhooks._audit` anywhere in this scenario, for the same reason
+    `move-tab` has none: documents 'a' and 'b' are left open for the whole
+    of whichever phase is running -- nothing here is ever torn down -- so
+    there is no checkpoint placement that both (a) includes anything
+    meaningful and (b) doesn't guarantee a finding. Every connection either
+    tab's own construction made is still alive and still unreleased at
+    every point after it, precisely because it is still doing its job.
+    """
+    a_path = os.path.join(TMPDIR, "restart-a.md")
+    b_path = os.path.join(TMPDIR, "restart-b.md")
+
+    def phase_one_open():
+        for path, title in ((a_path, "A"), (b_path, "B")):
+            if not os.path.exists(path):
+                with open(path, "w") as handle:
+                    handle.write(
+                        f"# {title}\n\n![remote](https://example.invalid/x.png)\n"
+                    )
+        _state["a"] = probe.window.create_tab_from_location(
+            Gio.File.new_for_path(a_path), None, 0, False, True
+        )
+        _state["b"] = probe.window.create_tab_from_location(
+            Gio.File.new_for_path(b_path), None, 0, False, True
+        )
+
+    def phase_one_arrange():
+        # `from xedown import ...` is an ImportError in control mode, where
+        # the plugin is not installed at all -- an unguarded one here lands
+        # as `crash-in-step-1` and reports the whole phase FAILED, so the
+        # control log stops being comparable. Both documents stay open in
+        # their default modes, which is all the choreography this scenario
+        # contributes to the comparison.
+        if CONTROL:
+            return
+        from xedown import settings as xedown_settings
+        from xedown.document_state import Mode
+
+        # Load-bearing for this whole scenario: if remembering is off,
+        # nothing set below ever reaches disk, and phase 2 would pass by
+        # accident -- finding the *default* mode in both tabs and reading
+        # that as "remembered" rather than confirming persistence at all.
+        _record(
+            "restart-remember-mode-per-file-on",
+            xedown_settings.get_settings().get(xedown_settings.REMEMBER_MODE_PER_FILE),
+            "REMEMBER_MODE_PER_FILE is off; phase 1's mode changes were never stored",
+        )
+        a = _controller(_state["a"])
+        b = _controller(_state["b"])
+        if a is not None:
+            # `a` opens in Preview already -- DEFAULT_MODE's own default --
+            # so a direct set_mode(PREVIEW) call would hit set_mode's own
+            # "already in this mode" no-op guard and never reach
+            # _remember_mode at all. Toggle through Source first so the
+            # final PREVIEW transition is a REAL one that actually writes
+            # to the mode store, not an accidental match with the default
+            # a never-remembered document would land on anyway.
+            a.set_mode(Mode.SOURCE)
+            a.set_mode(Mode.PREVIEW)
+            a._on_load_images_requested(None)
+        if b is not None:
+            b.set_mode(Mode.SOURCE)
+        _record("restart-phase1-arranged", a is not None and b is not None)
+
+    def phase_two_check():
+        # Same guard, same reason, as `phase_one_arrange` above: the xedown
+        # imports below are an ImportError with the plugin uninstalled, and
+        # every assertion in this body is about state only xedown keeps.
+        if CONTROL:
+            return
+        from xedown import modestore
+        from xedown.document_state import Mode
+
+        a = _controller(_state["a"])
+        b = _controller(_state["b"])
+        # Distinctly named rather than left implied by the `a is not None`/
+        # `b is not None` halves of every check below: a plugin that failed
+        # to activate at all would otherwise surface as a confusing mode
+        # mismatch instead of its own, more useful failure.
+        _record(
+            "restart-plugin-active",
+            a is not None and b is not None,
+            f"a={a!r} b={b!r}",
+        )
+        # `a` only, not `b`: `_page_is_document` is assigned solely inside
+        # `_reload_preview`, and every call site of that is gated on
+        # Mode.PREVIEW -- `b` stays in Source for the whole scenario, so its
+        # flag never leaves its `__init__` default of False regardless of
+        # whether anything is actually wrong. ANDing it in here would fail
+        # this assertion unconditionally, on a correct run as much as a
+        # broken one. Section 7's "no error page" is about the rendered
+        # preview specifically; `b` never renders one in this scenario, so
+        # there is nothing here for a Source-mode analog to check -- adding
+        # one anyway would be exactly the kind of assertion that can never
+        # distinguish "working" from "broken".
+        _record(
+            "restart-no-error-page",
+            a is not None and a._page_is_document,
+            f"a._page_is_document={a and a._page_is_document}",
+        )
+        _record(
+            "restart-remembered-preview",
+            a is not None and a.state.mode is Mode.PREVIEW,
+            f"a is {a and a.state.mode}",
+        )
+        # The resulting-mode check above cannot, on its own, tell "genuinely
+        # remembered" apart from "defaulted": DEFAULT_MODE's own default is
+        # Preview, so a store that never persisted anything for `a` would
+        # still leave it showing Preview in phase 2. Reading the store's
+        # own contents directly is the only check that requires an entry to
+        # have actually been written.
+        _record(
+            "restart-mode-store-has-preview-for-a",
+            modestore.get_store().get(a_path) is Mode.PREVIEW,
+            f"store has {modestore.get_store().get(a_path)!r} for a",
+        )
+        _record(
+            "restart-remembered-source",
+            b is not None and b.state.mode is Mode.SOURCE,
+            f"b is {b and b.state.mode}",
+        )
+        _record(
+            "restart-mode-store-has-source-for-b",
+            modestore.get_store().get(b_path) is Mode.SOURCE,
+            f"store has {modestore.get_store().get(b_path)!r} for b",
+        )
+        _record(
+            "restart-remote-grant-did-not-persist",
+            a is not None and not a._remote_unblocked,
+            "a per-tab remote-image grant survived a restart",
+        )
+
+    if PHASE == "2":
+        return [(3000, phase_one_open), (3000, phase_two_check)]
+    return [(2500, phase_one_open), (2500, phase_one_arrange)]
+
+
+def _scenario_cycle(probe):
+    """Open and close a Markdown tab twenty times, then stand aside.
+
+    The process-tree memory reading is made by the runner, before and
+    after -- but the runner can only sample around markers this scenario
+    writes to the report itself, `cycle-churn-starting` (before cycle #1
+    opens anything) and `cycle-churn-finished` (after cycle #20 closes).
+    The scenario's own terminal READY, like every other scenario's, only
+    appears once the whole step sequence is over -- gating the runner's
+    "before" sample on it would take that reading AFTER the churn, not
+    before, and measure a few hundred ms of idle time rather than the
+    churn itself.
+
+    This scenario's own job is only to perform the churn and prove it
+    actually happened -- a cycle test that silently failed to build any
+    preview would leave a beautifully flat memory graph and prove nothing.
+
+    Each cycle also `watch_object`s its WebView and DocumentState, same as
+    every other torn-down scenario (see `_check_live_preview`), but does
+    NOT release them per cycle the way `_check_torn_down` does: releasing
+    right after `close_tab()` would drop the ledger record before the
+    final audit's post-`gc.collect()` liveness check ever runs, which is
+    the one thing that can tell a genuinely torn-down WebView or
+    DocumentState apart from one a stray reference is still keeping alive
+    -- the dangling-Python-reference class of leak, distinct from a
+    handler or timer leak, and the reason for watching these at all. All
+    twenty cycles' watches accumulate, unreleased, until `done()`'s single
+    audit has had a chance to see whichever of them are still alive; only
+    then are they released, for bookkeeping, now that nothing more will
+    ever check them.
+
+    That audit's OBJECT findings (the WebView/DocumentState watches above)
+    are report-only, not a hard gate, unlike every other scenario's: a
+    WebView's own teardown is genuinely asynchronous
+    (`controller.py:243-254`), and checking twenty of them at once, after
+    ~34s of continuous churn, is forty independent chances for one
+    still-settling straggler -- fuzzy in the same way the runner's memory
+    reading is fuzzy, not the deterministic yes/no every other scenario's
+    one-to-three-object audit is. A real dangling WebView is still
+    recorded, with its label and origin, in `cycle-informational-findings`
+    -- it just doesn't fail the scenario on its own. HANDLER and SOURCE
+    findings (signal connections, timers) are unaffected and still gate.
+    """
+    built = {"count": 0}
+    # Label STRINGS, never the views they name. `done()` only needs the
+    # labels, and a list of twenty `Xed.View`s -- reachable from these step
+    # closures for the life of the process -- would keep twenty
+    # destroyed-but-unfinalised views and their buffers resident at exactly
+    # the moment the runner takes its "after churn" RSS sample. That sample
+    # is the one measurement this scenario exists to produce; holding the
+    # subject of the measurement alive to do the bookkeeping would poison
+    # it. Labels are stable per view (see `_watch_label`), so recomputing
+    # them later is unnecessary as well as unaffordable.
+    watched_labels = []
+
+    def one_cycle():
+        tab = _open_tab(probe.window, "cycle.md", "# Cycle\n\nBody.\n")
+        _state["cycle_tab"] = tab
+        _state["cycle_view"] = tab.get_view()
+
+    def start():
+        # Before the first cycle's own tab exists, so the audit in done()
+        # is scoped to what this scenario's churn acquires -- not the
+        # runner's own tab, already open in this window before the probe
+        # did anything. The marker is written first, before even that, so
+        # the runner's baseline sample is triggered as close to "nothing
+        # has happened yet" as this step sequence can get.
+        _record("cycle-churn-starting", True, "beginning twenty open/close cycles")
+        _state["checkpoint"] = leakhooks.checkpoint()
+        one_cycle()
+
+    def close_cycle():
+        tab = _state.get("cycle_tab")
+        view = _state.get("cycle_view")
+        controller = _controller(tab) if tab is not None else None
+        if controller is not None and controller.preview is not None:
+            built["count"] += 1
+            webview_label = _watch_label(view, "webview")
+            docstate_label = _watch_label(view, "docstate")
+            leakhooks.watch_object(controller.preview.widget, webview_label)
+            leakhooks.watch_object(controller.state, docstate_label)
+            watched_labels.extend((webview_label, docstate_label))
+        if tab is not None:
+            probe.window.close_tab(tab)
+        # Same reasoning as `watched_labels` above, for the one cycle these
+        # two entries would otherwise still be holding when `done()` writes
+        # the marker the runner samples on. Nothing after this point reads
+        # them; the next `one_cycle()` sets them afresh.
+        _state.pop("cycle_tab", None)
+        _state.pop("cycle_view", None)
+
+    def done():
+        # Written before the assertions below, so the runner's "after
+        # churn" sample -- which polls for this marker -- is triggered as
+        # soon as the churn itself is actually over, not after this
+        # function's own bookkeeping (the audit's `gc.collect()` in
+        # particular) has also run.
+        _record("cycle-churn-finished", True, "twenty open/close cycles complete")
+        # Gated the way `_check_live_preview` gates itself, and for the same
+        # reason: in control mode there is no plugin to build a preview, so
+        # the count is 0 by design and asserting on it would report FAIL for
+        # a run that behaved exactly as intended. The churn markers above
+        # and below are deliberately NOT gated -- the runner polls for them
+        # to bracket its memory sample, which is a measurement of xed
+        # itself and just as wanted in a control run.
+        if not CONTROL:
+            _record(
+                "cycle-previews-built",
+                built["count"] >= 18,
+                f"only {built['count']} of 20 cycles built a preview",
+            )
+        # OBJECT findings only (the WebView/DocumentState watches above) are
+        # report-only here -- see `_audit`'s own docstring for why twenty
+        # WebViews, audited at once after continuous churn, is a fuzzy
+        # signal rather than a deterministic one. HANDLER and SOURCE
+        # findings still gate the scenario.
+        _audit(
+            "cycle", since=_state["checkpoint"], report_only_kinds={leakhooks.OBJECT}
+        )
+        # Matching releases for every watch above, now that the one audit
+        # that needed them intact has already run.
+        for label in watched_labels:
+            leakhooks.release_object(label)
+
+    steps = [(2500, start)]
+    for _ in range(19):
+        steps.append((900, close_cycle))
+        steps.append((900, one_cycle))
+    steps.append((900, close_cycle))
+    steps.append((1500, done))
+    return steps
+
+
 SCENARIOS = {
     "close-tab": _scenario_close_tab,
     "close-many-tabs": _scenario_close_many_tabs,
@@ -456,6 +1181,10 @@ SCENARIOS = {
     "preview-active": _scenario_preview_active,
     "settings-window": _scenario_settings_window,
     "settings-configurable": _scenario_settings_configurable,
+    "close-with-fetches-in-flight": _scenario_close_with_fetches_in_flight,
+    "re-enable": _scenario_re_enable,
+    "restart": _scenario_restart,
+    "cycle": _scenario_cycle,
 }
 
 

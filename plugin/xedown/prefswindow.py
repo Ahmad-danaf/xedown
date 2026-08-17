@@ -90,8 +90,6 @@ class SettingsPanel(Gtk.Box):
         self.connect("destroy", self._on_destroy)
         self.show_all()
 
-    # --- construction ------------------------------------------------------
-
     def _build_group(self, group):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
@@ -371,8 +369,6 @@ class SettingsPanel(Gtk.Box):
             return
         target.add_relationship(Atk.RelationType.DESCRIBED_BY, source)
 
-    # --- what the panel offers ---------------------------------------------
-
     def accessible_entries(self):
         """`[(a11y key, widget), …]` in tree order, for the live audit.
 
@@ -386,8 +382,6 @@ class SettingsPanel(Gtk.Box):
     def control_for(self, setting_name):
         """The widget bound to `setting_name`. For the probe to drive."""
         return self._controls[setting_name]
-
-    # --- notices -------------------------------------------------------------
 
     def _build_notice(self):
         """A one-line warning bar, hidden and pinned hidden.
@@ -463,8 +457,6 @@ class SettingsPanel(Gtk.Box):
             return
         phrase = errors.stylesheet_problem_phrase(user.problem, user.detail)
         self._set_notice(self._stylesheet_bar, f"{user.path} {phrase}.")
-
-    # --- store -> panel ----------------------------------------------------
 
     def _load_all(self):
         self._apply_from_store({row.setting for row in prefs.rows()})
@@ -551,8 +543,6 @@ class SettingsPanel(Gtk.Box):
             if box is not None:
                 box.set_sensitive(enabled)
 
-    # --- panel -> store ----------------------------------------------------
-
     def _on_switch(self, control, _param, row):
         if self._loading:
             return
@@ -637,8 +627,6 @@ class SettingsPanel(Gtk.Box):
             # smaller failure.
             return
         self._after_commit()
-
-    # --- teardown ----------------------------------------------------------
 
     def _on_destroy(self, *_args):
         """Leave nothing behind: no subscription, no armed timer.

@@ -36,7 +36,7 @@ creates the shared settings store, and every tab after that reuses it — so a
 hand edit takes effect only after you restart xed; closing and reopening the
 file is not enough. Choosing the theme in the settings window instead applies
 it to every open preview in every window immediately, with no restart.
-[docs/settings.md](settings.md) covers how the file is read and what happens
+[preferences.md](preferences.md) covers how the file is read and what happens
 when it is malformed.
 
 ## Contrast
@@ -64,7 +64,9 @@ information, and 0.1.0's 1px rules sit well below any text threshold.
 ## What a theme cannot do
 
 - **Reach the network.** No theme loads a font, image, stylesheet or script
-  from anywhere. Nothing xedown does ever touches the network.
+  from anywhere. This is still true of every theme even though xedown itself
+  now reaches the network in one narrow, separate place — see *What a custom
+  stylesheet cannot do* below and [SECURITY.md](../SECURITY.md).
 - **Use a font you do not have.** No theme ever downloads a font — each stack
   only names families and always ends in a generic one, so a system with none
   of the named fonts still gets something sensible.
@@ -137,9 +139,12 @@ document. `text-align: start` and `end` follow the same rule.
 
 ### What a custom stylesheet cannot do
 
-xedown never touches the network, and the preview's content security policy
-enforces it rather than trusting the stylesheet. This is the part that
-surprises people, so it is spelled out:
+A stylesheet can never touch the network, and the preview's content security
+policy enforces it rather than trusting the stylesheet — the same policy
+never grants `http:` or `https:` to the page itself even for the images
+xedown's own fetch code is permitted to load elsewhere (see
+[SECURITY.md](../SECURITY.md)). This is the part that surprises people, so
+it is spelled out:
 
 | In your stylesheet | Result |
 | --- | --- |

@@ -7,7 +7,7 @@ guarded and the activatable classes are defined only when the host is present.
 
 import sys
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 try:
     import gi
@@ -120,13 +120,10 @@ if _HOST_AVAILABLE:
                     Gtk.UIManagerItemType.MENUITEM,
                     False,
                 )
-            # Aliases ride the same accel group the menu's own accelerators
-            # use, so they are found by the same key-hash lookup a physical
-            # press goes through -- see Action's docstring in shortcuts.py
-            # for why an alias is ever needed at all. Each is connected
-            # against the same handler as its action's own accelerator, not
-            # against a menu item: an alias is never displayed, so there is
-            # no proxy widget to `activate()`.
+            # Aliases ride the menu's own accel group, so the same key-hash
+            # lookup a physical press goes through finds them. Connected
+            # against the action's handler rather than a menu item: an alias
+            # is never displayed, so there is no proxy widget to activate.
             self._accel_group = manager.get_accel_group()
             for action in shortcuts.ACTIONS:
                 for alias in action.aliases:

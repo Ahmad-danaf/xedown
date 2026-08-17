@@ -53,8 +53,6 @@ class SearchSession:
         self._token = 0
         self.clear()
 
-    # --- state -------------------------------------------------------------
-
     @property
     def token(self):
         """The generation the page's next answer must carry to be believed."""
@@ -90,8 +88,6 @@ class SearchSession:
         """
         self._token += 1
         return self._token
-
-    # --- the three things that happen --------------------------------------
 
     def set_query(self, text, case_sensitive):
         """Take a new query. True when the page has to be asked again."""

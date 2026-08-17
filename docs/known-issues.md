@@ -11,20 +11,26 @@ window. Usually it closes normally. Sometimes xed prints this to the terminal:
 
 and sometimes it does not print anything and simply dies with `SIGSEGV`.
 
-**These are the same bug, not two.** The stack is identical in both cases:
+**These are the same bug, not two.** The stack is identical in both cases.
+The full trace below is from `coredumpctl` on a segfaulted run captured
+during this project's pre-1.0 lifecycle-hardening workstream:
 
 ```
 #0  gtk_action_group_get_action   (libgtk-3.so.0)
 #1  received_clipboard_contents   (libxed.so)
-#2  ... GTK signal emission, main loop, g_application_run
+#2-#12                             GTK signal emission / main loop
+#19 main                          (xed)
 ```
 
-xed's own clipboard callback reaches an action group that is already gone. When
-the freed memory still happens to be readable, GTK's type check catches it and
-you get the assertion above. When it does not, the same read is a segfault. The
-assertion is therefore a *warning shot from a memory-safety bug*, not cosmetic
-noise — which is why the description here changed: an earlier version of this
-file called it harmless, and that was wrong.
+No xedown, Python or libpeas frame appears anywhere in it. xed's own
+clipboard callback reaches an action group that is already gone — an
+asynchronous clipboard reply arriving after the window that owned the
+action group has been destroyed. When the freed memory still happens to be
+readable, GTK's type check catches it and you get the assertion above; when
+it does not, the same read is a segfault. The assertion and the segfault
+are therefore two outcomes of one defect, not two bugs — which is why the
+description here changed: an earlier version of this file called the
+assertion harmless, and that was wrong.
 
 **Whose bug it is:** xed 3.8.9's. Every frame in that stack is xed or GTK —
 there are no xedown, Python or libpeas frames in it at all — and it reproduces
@@ -40,14 +46,25 @@ runs the scenario with xedown uninstalled and still reproduces it.
 **How often:** roughly a quarter to a third of the time under the harness's
 scripted sequence (10 failures in 35 runs with xedown installed; 2 in 8 with it
 uninstalled — same rate within these sample sizes, no sign that xedown affects
-it). That sequence moves a tab, switches tabs and closes a window within a few
-seconds, which is far faster than anyone works by hand, and the bug is
-timing-dependent, so ordinary use should hit it much less often. It is not
-something xedown can fix or work around: nothing in this plugin touches xed's
-clipboard handling.
+it). A further 4 xedown-installed and 5 control runs were taken later, while
+closing out the pre-1.0 lifecycle-hardening workstream and specifically
+capturing the segfault variant (the `coredumpctl` trace above is from that
+batch): 2 of the 4 xedown-installed runs crashed, and 0 of the 5 control runs
+did. Neither is a surprise against the rates already measured — 2 crashes in 4
+runs at the documented 28.6% xedown-installed rate is a 32.3% outcome, and 0
+crashes in 5 runs at the documented 25.0% control rate is a 23.7% outcome — so
+this later batch reproduces the same intermittent crash at a rate consistent
+with what was already measured, rather than a different one. It does not, on
+its own or added to the totals above, show xedown changing the odds. That
+sequence moves a tab, switches tabs and closes a window within a few seconds,
+which is far faster than anyone works by hand, and the bug is timing-dependent,
+so ordinary use should hit it much less often. It is not something xedown can
+fix or work around: nothing in this plugin touches xed's clipboard handling.
 
 **What to do about it:** nothing is lost that was saved. Save before dragging
-tabs between windows if you have unsaved work, which is good practice anyway.
+tabs between windows if you have unsaved work, which is good practice anyway:
+moving a Markdown tab into another window and then closing xed can crash it,
+and a crash can lose unsaved work, regardless of what causes it.
 
 **Why the allowlist exists:** the assertion is the single exception in xedown's
 release gate, which otherwise treats *any* warning, critical, traceback or
@@ -57,6 +74,16 @@ and `tests/unit/test_shutdown_allowlist.py` fails if the exception ever widens.
 The **crash** is not allowlisted and never should be: `run-shutdown-tests.sh`
 reports it as `CRASHED`, checks `coredumpctl` when a slow core dump would
 otherwise make it look like a hang, and fails the run.
+
+**Reproduction:**
+
+```
+scripts/run-shutdown-tests.sh move-tab
+```
+
+It is intermittent — expect it roughly a quarter to a third of the time
+under this scenario, not every run. `coredumpctl info <pid>` on a crashed
+`xed` process gives the stack above.
 
 **Status:** upstream. Revisit if a future xed release fixes
 `received_clipboard_contents`, at which point both the allowlist and this entry
@@ -338,7 +365,7 @@ unpresented speech; Orca receives nothing to present. WebKit2's
 (off by default; xedown never sets it) was tried as the most likely cause —
 a temporary, reverted one-line change forced it on — and made no measurable
 difference; the WebView still produced zero AT-SPI activity. The actual
-cause is inside WebKit2GTK's own AT-SPI bridge, a C/C++ codebase outside
+cause is inside WebKitGTK's own AT-SPI bridge, a C/C++ codebase outside
 xedown's Python and outside what this project can instrument.
 
 **What to do about it:** nothing xedown-side is known to fix this. This is
@@ -347,7 +374,7 @@ presented as fixed — enabling caret browsing, the one hypothesis tested,
 changed nothing.
 
 **Status:** outstanding, upstream of xedown. Revisit if a future WebKitGTK
-version changes this, or if someone instruments WebKit2GTK itself.
+version changes this, or if someone instruments WebKitGTK itself.
 
 ## The stale indicator and the manual-refresh cue are not announced
 
@@ -454,3 +481,159 @@ file was written by its real name *or* through the link.
 to follow it. Failing that, use *File → Revert*, or switch to Markdown mode and
 accept xed's own **Reload** bar. Nothing is lost either way — this affects only
 whether a change is *noticed*, never the document's contents.
+
+## Closing xed can be delayed by up to 15 seconds by a remote image already loading
+
+**What you see:** you close xed, or disable the plugin, while a remote image
+is still being fetched. The window takes noticeably longer than usual to go
+away — up to 15 seconds in the worst case, and normally the fraction of a
+second the fetch had left — rather than closing at once.
+
+**Why:** `ThreadPoolExecutor.shutdown(wait=False, cancel_futures=True)`
+cancels only work still *queued*; a fetch already *running* keeps running to
+completion regardless, and Python's own `atexit` hook joins the worker
+threads before the interpreter exits, whatever `shutdown()` was asked to do.
+So the honest statement is narrower than "closing cancels pending fetches":
+queued fetches are cancelled, but a running one is not.
+
+What bounds the wait is a **15-second deadline on one whole fetch**, wall
+clock, redirects included. It is not the same thing as the 5-second timeout
+xedown puts on the connection: that is a *socket* timeout, and a socket
+timeout bounds each individual read rather than the transfer. A server
+sending a few bytes every second satisfies it forever, so before the
+deadline existed a fetch could run — and a close could wait — indefinitely.
+The deadline is checked as each piece of the response arrives, so a fetch
+that stops making progress is abandoned rather than waited out.
+
+The wait is for the slowest fetch still running, not for their sum: up to 4
+run in parallel. The one thing the deadline does not cover is a server that
+dribbles its response *headers* before any of the image arrives; each read
+there still has to reach the 5-second socket timeout on its own. No ordinary
+server behaves that way, and nothing after the response line is affected.
+
+**What to do about it:** nothing needed — this is a bounded wait, not a
+hang, and closes correctly on its own. If it matters, wait until a page's
+images have finished loading (or failed) before closing.
+
+**Status:** by design, bounded. Both numbers are a balance: a shorter socket
+timeout would fail real images on slow links, and a shorter total deadline
+would abandon large images on slow connections that were going to arrive.
+15 seconds is generous for any image inside the 8 MB cap and short enough to
+be an honest worst case to write down.
+
+## A hostname can resolve differently for xedown's safety check than for the fetch that follows
+
+**What you see:** nothing directly — this is a residual in the destination
+check, not a bug that produces a wrong image or a visible failure.
+
+**Why:** xedown checks that an image's hostname resolves only to public
+addresses before fetching it — done on the *resolved* addresses, not the
+hostname text, which closes the obvious `127.0.0.1`-spelled-as-a-decimal
+tricks. But the check and the connection that follows are two separate DNS
+lookups. A hostname under an attacker's control can be made to answer the
+first lookup with a public address and the second, moments later, with a
+private one — a "DNS rebinding" race.
+
+The attack this opens is narrow and blind. Nothing about it reports the
+fetched bytes back to the document's author: the preview page cannot read
+the image data, cannot post it anywhere, and the content security policy
+(`default-src 'none'`) leaves no channel for it to try. The only thing a
+document could learn by exploiting this is whether *something* answered on
+a local address it guessed — a timing oracle for "is a local service
+running here", nothing more.
+
+**What to do about it:** nothing needed for ordinary use. Closing this
+fully would mean pinning the address validated by the check through the TLS
+connection itself, overriding `Host`/SNI — real work, for a residual whose
+worst case is a timing signal with no way to exfiltrate anything.
+
+**Status:** accepted residual, documented rather than closed.
+
+## AVIF images cannot be loaded remotely
+
+**What you see:** a document referencing a remote `.avif` image never loads
+it, even with remote images allowed globally or for that tab — it shows the
+same "could not be loaded" placeholder as any other failure.
+
+**Why:** before fetching an image, xedown reads its declared dimensions out
+of the file's own header bytes and refuses anything that would be too large
+to decode safely. AVIF's dimensions live inside an ISOBMFF `ispe` box that
+xedown does not parse, and an image whose size cannot be measured is one it
+will not fetch — measuring is the protection, and guessing would defeat it.
+PNG, JPEG, GIF, WebP and BMP are unaffected; those are the formats xedown
+can measure.
+
+An inline `data:` AVIF image is **not** affected by this, and is also the
+one thing the pixel cap does not cover: a `data:` payload xedown cannot
+measure is passed through as it always was, in either spelling (base64 or
+percent-encoded). The gap already existed for `data:` images before this
+measurement was written, and closing it would take away something that has
+always worked rather than refusing something new. Every inline payload
+xedown *can* measure — PNG, JPEG, GIF, WebP, BMP — is held to the cap; see
+[remote-images.md](remote-images.md).
+
+**What to do about it:** link to the image with an ordinary Markdown link
+instead of embedding it, or convert it to one of the fetchable formats.
+
+**Status:** by design. Revisit only if a cheap, safe way to read AVIF
+dimensions from the header bytes alone becomes available.
+
+## `xed --standalone` fetches and caches remote images separately from your main xed session
+
+**What you see:** a second `xed --standalone` process behaves like its own
+independent xedown: it fetches an image again even if your main xed session
+already has it cached, and a fetch failure in one is not remembered by the
+other.
+
+**Why:** the image scheme handler and its fetch cache are registered once
+per process, against that process's own `WebKit2.WebContext`. `xed
+--standalone` starts a second process with its own `WebContext`, so it gets
+its own registration and its own in-memory cache — the same reason it
+already has its own settings store; see
+[preferences.md](preferences.md#settings-files).
+
+**What to do about it:** nothing needed. Neither process's cache is written
+to disk, so there is nothing to reconcile, and closing either one loses only
+that process's own cache.
+
+**Status:** by design.
+
+## A per-tab Load grant outlives the global setting being turned back off
+
+**What you see:** you click **Load** on a tab, allowing that document's
+remote images. Later you set `remote_images` back to `never` in
+Preferences — and that tab keeps loading its images anyway. Preferences can
+correctly read `never` while a tab right in front of you is actively
+fetching.
+
+**Why:** this is intended, not a bug. The mode bar's **Load** button grants
+permission to one tab, for as long as that tab stays open — it does not
+touch the `remote_images` setting at all, in either direction. Turning the
+global setting off stops it applying to documents that have not been
+granted their own permission; it was never meant to revoke a permission a
+reader already gave to one specific tab.
+
+**What to do about it:** close and reopen the tab (or reload from disk) to
+drop its own grant. There is no button that revokes a single tab's Load
+without closing it.
+
+**Status:** by design.
+
+## The remote-images chip and Load button stay visible in Markdown mode
+
+**What you see:** a document with blocked remote images shows the "N remote
+images [Load]" chip in the mode bar even while you are looking at the
+Markdown source, not only in Preview. Clicking **Load** there does not make
+images appear immediately — nothing is rendered in Markdown mode until you
+switch back.
+
+**Why:** the mode bar is shared by both modes, and the chip's own visibility
+does not depend on which one is showing. Clicking **Load** while in Markdown
+mode still grants the tab's permission and marks the preview stale; the
+render that actually fetches the images happens on the next switch to
+Preview, the same as any other change made while Markdown is showing.
+
+**What to do about it:** nothing needed — switch to Preview to see the
+result, exactly as you would for any other pending edit.
+
+**Status:** by design.

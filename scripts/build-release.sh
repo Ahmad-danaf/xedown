@@ -40,8 +40,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- version, from one source of truth ----------------------------------
-#
 # __version__ is the source of truth; the .plugin descriptor is what xed
 # actually shows in Preferences. They drift silently and nobody notices
 # until a user reports the wrong version, so disagreement is fatal here.
@@ -71,7 +69,6 @@ ARCHIVE="$DIST_DIR/xedown-$VERSION.tar.gz"
 
 echo "==> Building xedown $VERSION"
 
-# --- stage ---------------------------------------------------------------
 
 cp -r "$ROOT/plugin/xedown" "$STAGING/"
 cp "$ROOT/plugin/xedown.plugin" "$STAGING/"
@@ -83,8 +80,6 @@ cp "$ROOT/LICENSE" "$STAGING/xedown/LICENSE"
 find "$STAGING" -name '__pycache__' -type d -prune -exec rm -rf {} +
 find "$STAGING" -name '*.py[cod]' -delete
 
-# --- refuse to ship something incomplete ---------------------------------
-#
 # Each of these is a promise the release makes: no pip step, offline syntax
 # highlighting, both third-party licences included. A missing one is a
 # broken promise, not a missing nicety.
@@ -92,7 +87,10 @@ find "$STAGING" -name '*.py[cod]' -delete
 REQUIRED=(
   # Every module the package imports, gated by
   # tests/unit/test_release_manifest.py rather than by hand: the array had
-  # drifted to five of twenty-seven before that test existed.
+  # drifted to five of twenty-seven before that test existed. Plus
+  # preflight.py, gated separately because nothing imports it by design (it
+  # runs standalone so __init__.py's gi guard never fires mid-install) --
+  # see test_preflight_is_gated_even_though_nothing_imports_it.
   "xedown/__init__.py"
   "xedown/a11y.py"
   "xedown/appearance.py"
@@ -102,14 +100,21 @@ REQUIRED=(
   "xedown/document_state.py"
   "xedown/errors.py"
   "xedown/filewatch.py"
+  "xedown/imagefetch.py"
+  "xedown/imagelimits.py"
   "xedown/images.py"
+  "xedown/imagescheme.py"
   "xedown/links.py"
   "xedown/mdext.py"
   "xedown/modebar.py"
   "xedown/modestore.py"
+  "xedown/pageready.py"
+  "xedown/perflimits.py"
+  "xedown/preflight.py"
   "xedown/prefs.py"
   "xedown/prefswindow.py"
   "xedown/preview.py"
+  "xedown/remoteimages.py"
   "xedown/renderer.py"
   "xedown/sanitizer.py"
   "xedown/search.py"
@@ -158,8 +163,6 @@ if [ -n "$UNEXPECTED" ]; then
   exit 1
 fi
 
-# --- pack, reproducibly --------------------------------------------------
-#
 # Same commit in, byte-identical archive out: fixed timestamps taken from
 # the commit itself, sorted entries, no owner names, and gzip -n so the
 # compressor does not stamp its own mtime into the header.
@@ -174,7 +177,6 @@ tar --sort=name \
     -C "$STAGING" -cf - xedown xedown.plugin \
   | gzip -n -9 > "$ARCHIVE"
 
-# --- prove it works on its own -------------------------------------------
 
 echo "==> Verifying the archive renders with nothing else on the path"
 echo "    (a 'xed/GTK typelibs unavailable' note below is expected and correct:"
@@ -219,7 +221,15 @@ print(f"    vendored Markdown {markdown.__version__} loaded from the archive")
 print(f"    rendered {len(page)} bytes with tables, tasks, strikethrough and highlighting")
 PYTHON
 
-# --- report ---------------------------------------------------------------
+# The archive's root IS the user's plugins directory, so the installer
+# cannot live inside it without littering a directory xedown does not own.
+# It is published as a second release asset instead, which is also why
+# install.sh sources nothing and hardcodes no path inside this repository:
+# it has to work sitting next to a tarball in a downloads folder.
+
+cp "$ROOT/install.sh" "$ROOT/uninstall.sh" "$DIST_DIR/"
+chmod +x "$DIST_DIR/install.sh" "$DIST_DIR/uninstall.sh"
+
 
 SIZE="$(du -h "$ARCHIVE" | cut -f1)"
 SHA="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
@@ -231,5 +241,10 @@ echo "  size    : $SIZE ($FILES entries)"
 echo "  sha256  : $SHA"
 echo
 echo "Install with:"
+echo "  ./install.sh --from $(basename "$ARCHIVE")"
+echo
+echo "Or without the installer:"
 echo "  mkdir -p ~/.local/share/xed/plugins"
 echo "  tar -xzf $(basename "$ARCHIVE") -C ~/.local/share/xed/plugins"
+echo
+echo "Publish all three: $(basename "$ARCHIVE"), install.sh, uninstall.sh"

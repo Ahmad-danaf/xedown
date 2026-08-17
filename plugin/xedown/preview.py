@@ -10,7 +10,7 @@ gi.require_version("WebKit2", "4.1")
 
 from gi.repository import GLib, Gtk, WebKit2
 
-from . import a11y
+from . import a11y, pageready
 
 _MESSAGE_HANDLER = "xedown"
 
@@ -30,10 +30,16 @@ class PreviewView:
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = 0.0
-        # The live search, remembered so a full page load can re-issue it: a
-        # fresh page is a fresh JS context and knows nothing about it. Body
-        # swaps need no help -- preview.js re-applies the search itself.
+        # Remembered so a full page load can re-issue it: a fresh page is a
+        # fresh JS context. Body swaps need no help -- preview.js re-applies
+        # the search itself.
         self._search_request = None
+        # Whichever of the page's "ready" message or LoadEvent.FINISHED
+        # arrives first does the post-load work. Reset on every
+        # `load_document`, not only here, or the second document loaded into
+        # this view would never restore its scroll. The gating rules live in
+        # `pageready.py`, where they can be unit tested.
+        self._page_ready = pageready.PageReadyGate()
 
         self._content_manager = WebKit2.UserContentManager()
         self._content_manager.register_script_message_handler(_MESSAGE_HANDLER)
@@ -50,8 +56,7 @@ class PreviewView:
         accessible = self.widget.get_accessible()
         if accessible is not None:
             # Focus lands here on every switch into Preview, so this name is
-            # what a screen reader reads out at the moment the mode changes.
-            # It is the mode announcement -- see the design's section 3.3.
+            # what a screen reader reads at the moment the mode changes.
             accessible.set_name(a11y.NAMES["preview"])
 
         settings = self.widget.get_settings()
@@ -73,8 +78,6 @@ class PreviewView:
             "load-changed", self._on_load_changed
         )
 
-    # --- loading -----------------------------------------------------------
-
     def load_document(self, html, base_uri=None, restore_scroll=0.0):
         """Load a complete page. Resets scroll reporting.
 
@@ -86,6 +89,7 @@ class PreviewView:
         self.last_scroll = 0.0
         self._loaded = False
         self._pending_scroll = restore_scroll
+        self._page_ready.reset()
         self.widget.load_html(html, base_uri)
 
     def update_body(self, fragment_html, text_direction=None):
@@ -138,9 +142,19 @@ class PreviewView:
         controller.
         """
         payload = json.dumps(
-            {"codeCopy": bool(code_copy_buttons), "imageDisplay": str(image_display)}
+            {"codeCopy": bool(code_copy_buttons), "imageFallback": str(image_display)}
         )
         self._run(f"if (window.xedown) {{ window.xedown.setConfig({payload}); }}")
+
+    def set_image_message(self, src, text):
+        """Tell the page why one image did not load."""
+        self._run(
+            "if (window.xedown) { window.xedown.setImageMessage("
+            + json.dumps(src)
+            + ", "
+            + json.dumps(text)
+            + "); }"
+        )
 
     def scroll_to_anchor(self, anchor):
         self._run(
@@ -219,8 +233,6 @@ class PreviewView:
         except GLib.Error:
             pass  # the view is being torn down
 
-    # --- host callbacks ----------------------------------------------------
-
     def _on_script_message(self, _manager, message):
         try:
             payload = json.loads(message.get_js_value().to_string())
@@ -245,6 +257,8 @@ class PreviewView:
             self.on_search(count, bool(payload.get("capped")), token)
         elif kind == "copy":
             self._copy_to_clipboard(payload.get("token"), payload.get("text"))
+        elif kind == "ready":
+            self._on_page_ready()
 
     def _copy_to_clipboard(self, token, text):
         """Put a code block on the clipboard on the page's behalf.
@@ -341,16 +355,32 @@ class PreviewView:
         return uri
 
     def _on_load_changed(self, _view, load_event):
-        if load_event == WebKit2.LoadEvent.FINISHED:
-            self.set_scroll(self._pending_scroll)
-            self._pending_scroll = 0.0
-            # A reload (theme change, revert, external change) replaced the JS
-            # context, so a search that is still live has to be asked for
-            # again -- the page has no memory of it.
-            if self._search_request is not None:
-                self.search(*self._search_request)
+        if load_event == WebKit2.LoadEvent.COMMITTED:
+            self._page_ready.commit()
+        elif load_event == WebKit2.LoadEvent.FINISHED:
+            self._on_page_ready()
 
-    # --- teardown ----------------------------------------------------------
+    def _on_page_ready(self):
+        """Restore scroll and re-issue a search, once per load.
+
+        Driven by whichever arrives first: the page's own DOMContentLoaded
+        message, or `LoadEvent.FINISHED`. They are not interchangeable --
+        FINISHED waits for every subresource, so a remote image still in
+        flight would hold back the scroll restore for as long as the fetch
+        takes. `self._page_ready.ready()` is what actually decides "first,
+        and only once" -- including the narrowing against a stale signal from
+        an outgoing page; see pageready.py for why that narrows the race
+        rather than closing it.
+        """
+        if not self._page_ready.ready():
+            return
+        self.set_scroll(self._pending_scroll)
+        self._pending_scroll = 0.0
+        # A reload (theme change, revert, external change) replaced the JS
+        # context, so a search that is still live has to be asked for
+        # again -- the page has no memory of it.
+        if self._search_request is not None:
+            self.search(*self._search_request)
 
     def destroy(self):
         for owner, handler_id in (

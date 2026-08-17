@@ -239,3 +239,54 @@ def test_uri_for_path_percent_encodes_and_agrees_with_resolve_to_uri(tmp_path):
     path = resolve_to_path("a b.png", str(tmp_path))
     assert uri_for_path(path) == resolve_to_uri("a b.png", str(tmp_path))
     assert "%20" in uri_for_path(path)
+
+
+# --- Fragments in a relative link (task 16 / F7) ---
+#
+# `resolve_to_uri("FAQ.md#posix", base)` used to return
+# `file:///.../FAQ.md%23posix` -- a link to a file literally named
+# "FAQ.md#posix", which does not exist. The fragment must be split off
+# before the path is quoted and re-appended unencoded.
+
+
+def test_resolve_to_uri_keeps_a_fragment_unencoded(base):
+    uri = resolve_to_uri("FAQ.md#posix", base)
+    assert uri == "file://" + os.path.join(base, "FAQ.md") + "#posix"
+    assert "%23" not in uri
+
+
+def test_resolve_to_uri_without_a_fragment_is_unchanged(base):
+    uri = resolve_to_uri("other.md", base)
+    assert uri == "file://" + os.path.join(base, "other.md")
+    assert "#" not in uri
+
+
+def test_resolve_to_uri_keeps_an_empty_fragment(base):
+    uri = resolve_to_uri("other.md#", base)
+    assert uri == "file://" + os.path.join(base, "other.md") + "#"
+
+
+def test_resolve_to_uri_keeps_a_fragment_containing_a_space(base):
+    uri = resolve_to_uri("other.md#a b", base)
+    assert uri == "file://" + os.path.join(base, "other.md") + "#a b"
+
+
+def test_resolve_to_uri_still_encodes_a_literal_hash_in_a_filename(base):
+    # The path's name genuinely contains a percent-encoded "#" -- there is
+    # no raw "#" in the reference, so nothing is split off as a fragment,
+    # and the literal character round-trips through quoting exactly as
+    # any other percent-escape does.
+    target = os.path.join(base, "weird#name.md")
+    with open(target, "w") as f:
+        f.write("# hi")
+    uri = resolve_to_uri("weird%23name.md", base)
+    assert uri == "file://" + os.path.join(base, "weird%23name.md")
+    assert uri.endswith("weird%23name.md")
+
+
+def test_resolve_to_uri_splits_on_the_first_of_several_hash_characters(base):
+    # The first raw "#" is the separator, exactly as a browser's URL
+    # parser treats it; everything after -- including further "#"
+    # characters -- is part of the fragment, verbatim.
+    uri = resolve_to_uri("other.md#a#b", base)
+    assert uri == "file://" + os.path.join(base, "other.md") + "#a#b"

@@ -1,210 +1,119 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable user-facing changes are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [1.0.0] - 2026-08-17
 
+The first stable public release, and the first public release since 0.2.0.
+v1.0 hardens the existing same-tab Markdown preview rather than trying to
+implement every Markdown feature.
 
-## [0.2.0] - 2026-08-12
-
-Settings and a settings window, four preview themes, find in the preview, a
-preview that follows the file on disk, right-to-left layout, copy buttons on
-code blocks, and keyboard control of all of it.
-
-### Upgrading from 0.1.0
-
-Your files open exactly as they did, and every setting ships at 0.1.0's
-behaviour: Preview is still the mode a Markdown file opens in, **Repository**
-is still the theme and is still 0.1.0's stylesheet, and the content width and
-text size are 0.1.0's. Five things look different straight away, each of them
-deliberate:
-
-- Code blocks show a **Copy** button when you hover them
-  (`"code_copy_buttons": false` removes it).
-- Task-list checkboxes are drawn by xedown in the theme's colours instead of
-  by the browser.
-- A very tall image is scaled to fit the window instead of running past it.
-- A table too wide for its column scrolls inside its own area instead of being
-  squeezed into it.
-- Selected text has a colour the theme owns.
-
-Nothing else changes until you change a setting, and **Restore defaults** in
-the settings window puts everything back.
+0.3.0 below was a development milestone that was never tagged or published, so
+everything it introduced reaches readers for the first time here. This section
+therefore describes the upgrade from 0.2.0, the newest version anyone can
+already be running.
 
 ### Added
 
-- **A settings window** covering every xedown setting, reachable from
-  *Preferences → Plugins → Xedown → Preferences* and from *View → Markdown
-  Preview Settings*. Changes apply to every open preview as you make them, and
-  **Restore defaults** returns to xedown 0.1.0's behaviour.
-- **A settings file** at `~/.config/xedown/settings.json`, shared by every
-  window, for the same settings without the window. xedown reads it when it
-  starts, so restart xed after editing it by hand. See
-  [docs/settings.md](docs/settings.md).
-- **Four preview themes** — **Focused**, **Repository**, **Minimal** and
-  **Document** — each a complete design rather than a recolour, and each with a
-  full light and dark palette that keeps following your desktop. Repository is
-  the default and is 0.1.0's design, so the theme you are reading does not
-  change until you pick another. See [docs/themes.md](docs/themes.md).
-- **Content width and text size**, as `content_width_rem` (30–100, default 46)
-  and `text_size_px` (11–28, default 16). Text size scales the whole document
-  together rather than only the body text. Both defaults are 0.1.0's.
-- **Your own stylesheet**, layered on top of the built-in theme. Point
-  `custom_stylesheet` at a CSS file; saving an edit to that file updates every
-  open preview. If the file is missing, unreadable, empty, over 512 KiB or
-  otherwise unusable, the preview keeps working on the built-in theme and a bar
-  at the top says which file is at fault and why. Nothing in a stylesheet can
-  reach the network — web fonts and `@import` silently do nothing, by design.
-  See [docs/themes.md](docs/themes.md).
-- **Find in the preview.** <kbd>Ctrl</kbd>+<kbd>F</kbd> searches the rendered
-  document, with match counting, wrapping navigation, a case toggle and
-  highlighting themed for all four themes in both appearances.
-  <kbd>Ctrl</kbd>+<kbd>F</kbd> over the Markdown source is still xed's own
-  find. This closes the gap 0.1.0 documented.
-- **The preview follows changes made to the file outside xed** — by git, by a
-  terminal command, by another editor, by an AI coding agent. With no unsaved
-  edits it simply updates, at the scroll position it had, with no dialog and
-  nothing to press. With unsaved edits nothing is replaced: the preview keeps
-  showing your work and a dismissible bar says the file changed on disk,
-  offering **Reload…**, which hands off to xed's own Revert and its own
-  confirmation. **xedown never writes to your text.** One save by another
-  program is one update, not a flicker of several, and a burst of writes
-  settles into a single render. Deleting the file, replacing it, and moving it
-  away and back are all handled quietly. Set `"watch_external_changes": false`
-  to switch the whole thing off, and it stops in every tab already open.
-- **Four keyboard shortcuts**, all of them also in the *View* menu with their
-  keys shown: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> switches between
-  the two modes, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd> goes to Preview,
-  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>2</kbd> goes to Markdown, and
-  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> refreshes the preview now.
-  Going to the mode you are already in does nothing. They work whether focus is
-  in the editor or the preview, they are greyed out for files that are not
-  Markdown, and none of them takes a key xed already uses — checked against the
-  installed xed rather than assumed.
-- **Copy and select-all act on what you can see.** While the preview is
-  showing, <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the rendered selection and
-  <kbd>Ctrl</kbd>+<kbd>A</kbd> selects the rendered document; right-clicking a
-  selection offers **Copy**, and the preview offers nothing else a browser
-  would. In Markdown mode every editing key behaves exactly as xed always has.
-  Selected text now has a colour each theme owns, legible in light and dark.
-- **The mode a file opens in.** `"default_mode": "markdown"` opens Markdown
-  files in the source instead of the preview, and `"remember_mode_per_file"`
-  (on by default) reopens each file in whichever mode you last left it in.
-  Remembered modes live in `~/.config/xedown/modes.json` and are capped at the
-  200 most recent files.
-- **Control over refreshing.** `"auto_refresh": false` stops the preview
-  re-rendering by itself; the mode bar then shows a **Refresh** button, marked
-  when the preview is behind the document. `"refresh_delay_ms"` sets how long
-  xedown waits after a change, and a new value reaches tabs that are already
-  open.
-- **Right-to-left documents now lay out as well as they read.** In an Arabic or
-  Hebrew document the list bullets and their indentation, the quote bar, the
-  table's column order, the footnote marker and its back-reference, and the
-  copy button on a code block all move to the correct side, while each
-  paragraph, heading and cell still picks its own direction from its own
-  content — so an English paragraph inside an Arabic document still reads left
-  to right. A list item aligns with its list rather than with itself, so every
-  bullet in a list stays on the same side; the item's own text still reads in
-  its own direction. Fenced blocks, inline code and a link whose text is a URL
-  or a path stay left-to-right and no longer disturb the sentence around them.
-  Set `"text_direction"` to `ltr` or `rtl` to override the automatic choice for
-  the whole document. xedown's own interface follows your desktop's direction,
-  not your document's. You can also mark a run yourself with `<bdi>…</bdi>` or
-  `dir="ltr"`, which the preview now keeps.
-- **A copy button on every code block**, revealed on hover and reachable by
-  keyboard. It copies exactly what the author wrote, confirms briefly, and says
-  so when a copy fails rather than pretending it worked. Turn it off with
-  `"code_copy_buttons": false` and it disappears from every open preview at
-  once.
-- **Task-list checkboxes drawn from the selected theme** instead of the
-  browser's default control, in both light and dark. They remain read-only:
-  xedown never writes to your file.
-- **Wide tables now scroll inside their own area**, with a shadow at whichever
-  edge has more to show, instead of being squeezed into unreadable columns. The
-  page itself never scrolls sideways.
-- **Images fit the reading column**, and a very tall one now fits the window
-  too, keeping its proportions. A small image keeps its own size, and an image
-  you sized yourself in HTML is left alone.
-- **An image that cannot be shown now says which of four things happened**: not
-  found, could not be read, remote and never fetched, or a reference xedown
-  could not make sense of at all. Your alt text is shown alongside.
-  `"remote_images"` chooses how they all appear — `placeholder`, `alt` or
-  `hidden`. All three are presentation only; xedown still fetches nothing.
-- **The preview keeps the keyboard while it is showing.** Whenever focus lands
-  on the hidden source text instead — switching to the tab, or dismissing
-  something that had focus — the preview takes it back, so the arrow keys and
-  <kbd>Page Down</kbd> scroll what you are reading straight away.
-- **An accessibility pass over everything v0.2 built.** Every control xedown
-  creates takes its accessible name from a single source of truth — the mode
-  buttons, the refresh button, the stale indicator, the search bar and the info
-  bars — and the preview itself is named; a live audit against xed's own
-  accessible tree confirms every one of those names. Switching modes moves
-  keyboard focus to the surface you land on, changes its checked state to
-  match, and announces the mode you switched to; the announcement is suppressed
-  while a mode button itself has keyboard focus, so activating one does not say
-  the mode twice. The rendered document page carries a `role="main"` landmark
-  and, when your desktop's language is known, a `lang` attribute — an error
-  page carries neither. The focus ring meets WCAG 1.4.11's 3:1 non-text
-  threshold against every surface it is drawn on, in all four themes, light and
-  dark, along with every semantic colour pair xedown draws. **Screen-reader
-  speech was measured against Orca 46.1 on Linux Mint (X11), on one machine**:
-  what was measured, what was inferred, and what stays silent — keyboard
-  scrolling of the preview, and the stale/refresh cue — are set out in the
-  README's *Accessibility* section and in
-  [docs/known-issues.md](docs/known-issues.md).
+- Remote HTTPS images, blocked by default, with per-tab and global permission.
+- Privacy-preserving fetch controls: public destinations only, redirect checks,
+  no credentials or ambient browser headers, bounded downloads, bounded decode
+  dimensions, and an in-memory cache.
+- Safe install, upgrade, and uninstall scripts with compatibility preflight.
+- Large-document guards that stop live rendering past 131,072 characters and
+  defer an initial preview past 262,144 characters.
+- Rendering for collapsible sections, keyboard text, definition lists,
+  abbreviations, captions, aligned blocks, and opted-in Markdown inside HTML.
+- Public installation, uninstall, preferences, privacy, compatibility,
+  troubleshooting, contribution, conduct, and security documentation.
+
+### Changed
+
+- Compatibility claims now name the exact live-tested runtime. Nearby versions
+  are expected to work but explicitly unverified; Python 3.10 and 3.11 are
+  described as CI unit-tested only.
+- Markdown rendering is closer to GitHub for list nesting, fenced blocks,
+  heading syntax, hard line breaks, ordered-list starts, table alignment, and
+  relative links containing fragments.
+- Repeated headings no longer trigger disproportionate render time.
+- Release hardening: plugin activation, deactivation, and editor shutdown are
+  now verified by twelve automated lifecycle scenarios, and the installer
+  flows by a sandboxed install/upgrade/uninstall harness.
+
+### Security
+
+- The preview remains isolated by an allowlist sanitizer and strict CSP.
+- xedown itself makes network requests only for permitted remote images; the
+  page never receives general `http:` or `https:` access.
+- Inline and remote measurable images are refused above 25 megapixels or
+  32,768 pixels on either side.
+
+### Known limitations
+
+- Markdown inside block HTML requires `markdown="1"`; several smaller
+  differences from GitHub remain documented in
+  [docs/markdown-compatibility.md](docs/markdown-compatibility.md).
+- Rendering still occurs on xed's main thread, so a requested large render can
+  pause the editor.
+- xed 3.8.9 has an intermittent tab-move shutdown crash that also reproduces
+  without xedown installed.
+- Remote AVIF is unsupported, a running image fetch can delay shutdown by up to
+  15 seconds, and a blind DNS-rebinding race remains accepted.
+
+Detailed compatibility, performance, security, accessibility, and lifecycle
+evidence remains in the focused documents under `docs/`.
+
+## [0.3.0] - 2026-08-13 — never released
+
+Kept as a development record. 0.3.0 was never tagged or published; the only
+public releases before 1.0.0 are 0.2.0 and 0.1.0. Everything below shipped to
+readers in 1.0.0.
+
+### Added
+
+- Remote HTTPS images, blocked by default and permitted per tab or globally.
+- Fetch isolation, destination checks, redirect policy, byte/decode limits,
+  concurrency bounds, and memory-only caching.
+- Distinct blocked, loading, offline, failed, and oversized image states.
+
+### Changed
+
+- The old image-display `remote_images` setting became `image_fallback`; legacy
+  values migrate automatically. `remote_images` now controls network policy.
+
+### Known limitations
+
+- Remote AVIF is unsupported.
+- A running image fetch can delay shutdown by up to 15 seconds.
+- A blind DNS-rebinding race remains accepted.
+
+## [0.2.0] - 2026-08-12
+
+### Added
+
+- A complete preferences window and JSON settings store.
+- Focused, Repository, Minimal, and Document themes with live light/dark
+  appearance, adjustable width and size, and custom CSS.
+- Preview search, keyboard mode/refresh shortcuts, code-copy buttons, table and
+  image layout improvements, right-to-left layout, remembered file modes, and
+  configurable refreshing.
+- Preview updates for changes made outside xed without writing to the source
+  buffer.
+- Accessibility naming, focus, contrast, and narrow Orca verification.
 
 ### Fixed
 
-- A list now starts a list when it follows a paragraph directly, with no blank
-  line between them, the way GitHub renders it. This works for `-`, `*`, `+`
-  and `1.`, and inside blockquotes, list items and footnotes as well as at the
-  top level. As on GitHub, an ordered list has to start at `1.` to interrupt a
-  paragraph — one starting at any other number still needs a blank line, which
-  is what keeps prose that wraps onto a line beginning with a number ("…was /
-  1985. What a year.") a paragraph.
-- A preview showing an error page could never be refreshed back into a
-  document: the swap-in-place path cannot reach an error page, and marked the
-  preview up to date anyway. It now reloads instead.
-
-### Known issues
-
-- xedown supports selected GitHub-flavored Markdown features (tables, task
-  lists, strikethrough, fenced code, footnotes, and lists that interrupt a
-  paragraph), not full GFM compatibility.
-- The smaller limitations — a bare path in right-to-left prose, copy on a
-  non-Latin keyboard layout, a document opened through a symbolic link, and
-  what a screen reader does and does not say — are described in
-  [docs/known-issues.md](docs/known-issues.md), each with what to do about it.
+- Lists can interrupt paragraphs in the common GitHub-compatible cases.
+- Error pages can refresh back into rendered documents.
 
 ## [0.1.0] - 2026-08-05
 
 ### Added
 
-- In-tab Markdown preview for `.md` and `.markdown` files, with Preview and
-  Markdown modes and no extra tab or window.
-- Rendering for headings, paragraphs, bold and italic text, strikethrough,
-  ordered and unordered lists, task lists, links, local images, blockquotes,
-  horizontal rules, tables, inline code and fenced code blocks.
-- Footnotes and attribute lists, with in-page scrolling to footnote anchors.
-- Syntax highlighting from a bundled custom highlight.js build covering 31 languages.
-- Light and dark themes that follow the desktop.
-- Automatic preview refresh while the preview is visible.
-- External links open in the default browser; local Markdown links open in a new tab.
-- Relative links and images resolved from the document's directory.
-- Per-mode scroll memory, with text and cursor position preserved across switches.
-- Bundled Markdown and highlighting dependencies, so no `pip` step is required.
-- A downloadable release archive that unpacks straight into the xed plugins
-  directory, with no checkout, `apt` or `pip` step.
-- Basic bidirectional text correctness: paragraphs, headings, list items,
-  table cells, and blockquote text pick up the correct base direction
-  automatically for right-to-left content such as Arabic or Hebrew, while
-  code stays left-to-right regardless of surrounding text. This is
-  per-block automatic direction detection, not a right-to-left interface.
-
-### Known issues
-
-- xedown supports selected GitHub-flavored Markdown features (tables, task
-  lists, strikethrough, fenced code, and footnotes), not full GFM
-  compatibility. A list does not currently interrupt a paragraph without an
-  intervening blank line, unlike GFM (fixed in 0.2.0).
+- Same-tab **Preview | Markdown** workflow for `.md` and `.markdown` files.
+- Bundled Markdown rendering and syntax highlighting.
+- Tables, task lists, strikethrough, footnotes, attribute lists, local images,
+  safe links, sanitization, CSP isolation, scroll memory, and live preview
+  refresh.

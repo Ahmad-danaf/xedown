@@ -25,6 +25,7 @@ TEXT_SIZE_PX = "text_size_px"
 AUTO_REFRESH = "auto_refresh"
 REFRESH_DELAY_MS = "refresh_delay_ms"
 REMOTE_IMAGES = "remote_images"
+IMAGE_FALLBACK = "image_fallback"
 CODE_COPY_BUTTONS = "code_copy_buttons"
 TEXT_DIRECTION = "text_direction"
 WATCH_EXTERNAL_CHANGES = "watch_external_changes"
@@ -52,9 +53,8 @@ class ChoiceSetting(_Setting):
     def coerce(self, value):
         if not isinstance(value, str):
             return self.default, False
-        # Forgiving about case and surrounding space, so a hand-typed
-        # "Repository" is honoured rather than silently reverting to a
-        # default the user cannot tell apart from their own choice.
+        # Forgiving about case and space, so a hand-typed "Repository" is
+        # honoured rather than silently reverting to a default.
         normalized = value.strip().lower()
         if normalized in self.choices:
             return normalized, True
@@ -66,8 +66,7 @@ class BoolSetting(_Setting):
 
     def coerce(self, value):
         # "true", "on" and 1 are mistakes, not synonyms: JSON has a boolean
-        # type, so accepting substitutes would hide a typo instead of
-        # surfacing it as a value the user can see reverting.
+        # type, so accepting substitutes would hide a typo.
         if isinstance(value, bool):
             return value, True
         return self.default, False
@@ -83,22 +82,20 @@ class NumberSetting(_Setting):
         self.integer = integer
 
     def coerce(self, value):
-        # `isinstance(True, int)` is true in Python, so without the explicit
-        # bool check a stored `true` would become the number 1 and then be
-        # clamped to the minimum -- a wrong value that looks deliberate.
+        # `isinstance(True, int)` is true, so without this a stored `true`
+        # becomes 1 and clamps to the minimum -- a wrong value looking
+        # deliberate.
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return self.default, False
-        # json.loads accepts the literals NaN, Infinity and -Infinity by
-        # default. None of the three can be clamped into a usable range.
-        # Guarded to floats on purpose: JSON integers are unbounded, and
-        # `math.isnan`/`isinf` raise OverflowError on an int too large to
-        # convert to a C double -- which would turn a hand-edited setting
-        # into a crash. An int can never be NaN or infinite anyway.
+        # json.loads accepts NaN, Infinity and -Infinity, none of which can
+        # be clamped into a range. Guarded to floats because JSON integers
+        # are unbounded and `math.isnan` raises OverflowError on an int too
+        # large for a C double -- an int is never NaN or infinite anyway.
         if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
             return self.default, False
         clamped = min(max(value, self.minimum), self.maximum)
-        # `round` with one argument already returns an int. Do not wrap it in
-        # `int(...)`: ruff's RUF046 is on by default and rejects that.
+        # One-argument `round` already returns an int; wrapping it in
+        # `int(...)` is what ruff's RUF046 rejects.
         return (round(clamped) if self.integer else float(clamped)), True
 
 
@@ -113,9 +110,8 @@ class PathSetting(_Setting):
             return None, True
         if not isinstance(value, str):
             return self.default, False
-        # Deliberately not resolved, and `~` deliberately not expanded:
-        # brief 3 owns turning this into a file, and storing a resolved value
-        # would make the setting misreport what the user actually chose.
+        # Deliberately unresolved, `~` deliberately unexpanded: storing a
+        # resolved value would misreport what the user chose.
         return (value.strip() or None), True
 
 
@@ -132,11 +128,38 @@ SETTINGS = (
     NumberSetting(TEXT_SIZE_PX, 16.0, 11.0, 28.0),
     BoolSetting(AUTO_REFRESH, True),
     NumberSetting(REFRESH_DELAY_MS, 250, 50, 2000, integer=True),
-    ChoiceSetting(REMOTE_IMAGES, ("placeholder", "alt", "hidden"), "placeholder"),
+    ChoiceSetting(REMOTE_IMAGES, ("never", "https"), "never"),
+    ChoiceSetting(IMAGE_FALLBACK, ("placeholder", "alt", "hidden"), "placeholder"),
     BoolSetting(CODE_COPY_BUTTONS, True),
     ChoiceSetting(TEXT_DIRECTION, ("auto", "ltr", "rtl"), "auto"),
     BoolSetting(WATCH_EXTERNAL_CHANGES, True),
 )
+
+# The values `remote_images` held before it became a fetch policy. Disjoint
+# from ("never", "https"), so a stored "alt" can only be the old meaning --
+# which makes the migration unambiguous and self-terminating, with no version
+# stamp needed in the file.
+_LEGACY_REMOTE_IMAGES = frozenset({"placeholder", "alt", "hidden"})
+
+
+def _migrate_legacy_remote_images(stored):
+    """`stored` with a pre-1.0 `remote_images` re-read as `image_fallback`.
+
+    In memory only. The file is not rewritten: it belongs to the user, a
+    second xed process may be reading it, and nothing here is worth a write
+    the user did not ask for. Running again on the same file is harmless.
+    """
+    legacy = stored.get(REMOTE_IMAGES)
+    if not isinstance(legacy, str):
+        return stored
+    if legacy.strip().lower() not in _LEGACY_REMOTE_IMAGES:
+        return stored
+    migrated = dict(stored)
+    # An explicit new-style value always wins: the user set it deliberately.
+    migrated.setdefault(IMAGE_FALLBACK, legacy)
+    migrated.pop(REMOTE_IMAGES, None)
+    return migrated
+
 
 _BY_NAME = {setting.name: setting for setting in SETTINGS}
 
@@ -174,28 +197,20 @@ class Settings:
         self._next_token = 0
         self._load()
 
-    # --- loading -----------------------------------------------------------
-
     def get(self, name):
         """The current value of `name`. An unknown name is a programming error."""
         by_name(name)
         return self._values[name]
 
     def _load(self):
-        # Both handlers below name `Exception` rather than an enumerated list
-        # of types, and each wraps exactly one stdlib call so it cannot hide
-        # anything else. Enumerating is what went wrong twice here already:
-        # `read_text` raises UnicodeDecodeError (a ValueError, not an OSError)
-        # on invalid UTF-8, and `json.loads` raises RecursionError (a
-        # RuntimeError, not a ValueError) on deeply nested input. Each escaped
-        # its handler and stopped the plugin from loading at all -- and since
-        # the escape happened before the quarantine, the same file broke every
-        # subsequent launch too. The guarantee this module owes is absolute,
-        # so it must not depend on having named every exception correctly.
-        # The rule that follows from it: use a broad handler wherever
-        # untrusted DATA flows, not merely wherever untrusted I/O happens.
-        # The fourth escape (`json.dumps` in `_write`) survived three rounds
-        # of fixes precisely because each fix asked which call read the file.
+        # Both handlers name `Exception` rather than an enumerated list, and
+        # each wraps exactly one stdlib call so it cannot hide anything else.
+        # Enumerating went wrong twice: `read_text` raises UnicodeDecodeError
+        # (a ValueError) on bad UTF-8 and `json.loads` raises RecursionError
+        # (a RuntimeError) on deep nesting. Each escaped before the quarantine
+        # ran, so the same file broke every subsequent launch. The rule: a
+        # broad handler wherever untrusted DATA flows, not merely wherever
+        # untrusted I/O happens.
         try:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -205,9 +220,8 @@ class Settings:
             return
 
         if not text.strip():
-            # A blank file is what a truncated write leaves behind. There is
-            # nothing in it worth preserving, so it means "no settings yet"
-            # rather than corruption, and produces no quarantine noise.
+            # What a truncated write leaves behind, with nothing worth
+            # preserving: "no settings yet" rather than corruption.
             return
 
         try:
@@ -220,11 +234,21 @@ class Settings:
             self._quarantine("does not contain a JSON object")
             return
 
+        migrated = _migrate_legacy_remote_images(stored)
+        if IMAGE_FALLBACK in migrated and IMAGE_FALLBACK not in stored:
+            # Nothing is written here, but `_write` merges only keys this
+            # instance has set, so an unmarked migrated value would never
+            # reach the file -- and the first write an upgrading reader makes
+            # (setting `remote_images` to the new fetch policy) is exactly the
+            # one that overwrites the legacy value it was read from. Marking
+            # it dirty carries the display choice forward.
+            self._dirty.add(IMAGE_FALLBACK)
+        stored = migrated
+
         for name, value in stored.items():
             setting = _BY_NAME.get(name)
             if setting is not None:
-                # A misspelled key is simply not one of ours, and is left
-                # alone rather than treated as a failure.
+                # A misspelled key is not ours, and is left alone.
                 self._values[name], _ = setting.coerce(value)
 
     def _quarantine(self, reason):
@@ -252,8 +276,6 @@ class Settings:
             f"xedown: {self.path} {reason}; using defaults. "
             f"Your copy was kept at {target}\n"
         )
-
-    # --- writing -----------------------------------------------------------
 
     def set(self, name, value):
         """Store `value` under `name`. True when it changed anything."""
@@ -308,22 +330,18 @@ class Settings:
             if name in own:
                 merged[name] = own[name]
             else:
-                # A key sitting at its default is written as absent rather
-                # than as an explicit default. That is what makes "anything
-                # absent uses its default" stay true after `reset()`, and it
-                # means a user who resets still receives a changed default in
-                # a later release instead of being pinned to today's.
+                # A key at its default is written as absent, so a user who
+                # resets receives a changed default in a later release
+                # instead of being pinned to today's.
                 merged.pop(name, None)
         try:
             payload = json.dumps(merged, indent=2, sort_keys=True) + "\n"
         except Exception:  # noqa: BLE001 - merged carries untrusted content
-            # Readable, parseable, a valid object -- and still impossible to
-            # re-serialise. `json.dumps(indent=...)` uses the pure-Python
-            # encoder, which recurses roughly ten times more per nesting
-            # level than the C scanner behind `json.loads`, so a store can
-            # load, correctly escape quarantine, and blow the stack here.
-            # Keep our own keys rather than let the user's file block every
-            # save from now on.
+            # `json.dumps(indent=...)` uses the pure-Python encoder, which
+            # recurses far more per nesting level than `json.loads`' C
+            # scanner -- so a store can load, escape quarantine, and still
+            # blow the stack here. Keep our own keys rather than let the
+            # user's file block every save from now on.
             payload = json.dumps(own, indent=2, sort_keys=True) + "\n"
         temp = self.path.with_name(self.path.name + ".tmp")
         try:
@@ -370,8 +388,6 @@ class Settings:
             return {}
         return stored if isinstance(stored, dict) else {}
 
-    # --- notification ------------------------------------------------------
-
     def connect(self, callback):
         """Call `callback(changed)` whenever values change. Returns a token.
 
@@ -391,10 +407,9 @@ class Settings:
         self._listeners.pop(token, None)
 
     def _notify(self, changed):
-        # Iterate a snapshot, because a listener may disconnect itself or
-        # another listener from inside its own callback -- but re-check
-        # membership before each call, so one disconnected earlier in this
-        # same broadcast is not called after the fact.
+        # A snapshot, because a listener may disconnect itself or another
+        # from inside its callback -- but membership is re-checked per call,
+        # so one disconnected earlier in this broadcast is not called.
         for token, callback in list(self._listeners.items()):
             if token not in self._listeners:
                 continue

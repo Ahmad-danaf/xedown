@@ -68,8 +68,6 @@ class StylesheetWatcher:
         if not self._listeners:
             self._stop()
 
-    # --- machinery ---------------------------------------------------------
-
     def _start(self):
         self._settings_token = settings.get_settings().connect(
             self._on_settings_changed

@@ -88,8 +88,6 @@ class SearchBar(Gtk.Box):
         self.set_no_show_all(True)
         self.hide()
 
-    # --- construction ------------------------------------------------------
-
     @staticmethod
     def _name(widget, name):
         """An accessible name, which a tooltip is not."""
@@ -112,8 +110,6 @@ class SearchBar(Gtk.Box):
         button = self._icon_button(icon_name, fallback, name)
         button.connect("clicked", self._on_step, forward)
         return button
-
-    # --- what the controller asks ------------------------------------------
 
     def set_status(self, text):
         self._status.set_text(text or "")
@@ -162,8 +158,6 @@ class SearchBar(Gtk.Box):
         so the answer follows this widget's own structure.
         """
         return widget is not None and (widget is self or widget.is_ancestor(self))
-
-    # --- what the widgets report -------------------------------------------
 
     def _on_changed(self, *_args):
         self.emit("query-changed", self.get_query(), self.get_case_sensitive())

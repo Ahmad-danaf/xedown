@@ -4,16 +4,37 @@ import html
 import json
 import secrets
 
-from . import direction, errors, images, settings, stylesheets, themes, vendoring
+from . import (
+    direction,
+    errors,
+    images,
+    remoteimages,
+    settings,
+    stylesheets,
+    themes,
+    vendoring,
+)
 from .links import resolve_to_uri
 from .mdext import make_extensions
-from .sanitizer import sanitize
+from .sanitizer import RemoteImage, sanitize
 
 CONTENT_ELEMENT_ID = "xedown-content"
 
-_CSP = (
+# How the loaded extensions are configured, keyed by the same fully-qualified
+# names as `vendoring.MARKDOWN_EXTENSIONS`, and here because it is a rendering
+# decision rather than a vendoring one.
+#
+# `tables` emits `style="text-align: ..."` by default, which the sanitizer
+# drops -- correctly, and that must not change. `use_align_attribute` makes it
+# emit `align="..."` instead, which `ALLOWED_ATTRIBUTES` already permits on
+# `td`/`th`: no sanitizer change and no vendored-code edit needed.
+_EXTENSION_CONFIGS = {
+    "markdown.extensions.tables": {"use_align_attribute": True},
+}
+
+_CSP_TEMPLATE = (
     "default-src 'none'; "
-    "img-src file: data:; "
+    "img-src {img_sources}; "
     "style-src 'nonce-{nonce}'; "
     "script-src 'nonce-{nonce}'; "
     "base-uri 'none'; "
@@ -21,6 +42,22 @@ _CSP = (
     "frame-src 'none'; "
     "object-src 'none'"
 )
+
+
+def _csp(nonce, fetch_remote):
+    """The policy for one page.
+
+    `img-src` never contains `http:` or `https:`, whatever the settings say:
+    the page is not the thing that fetches. The private scheme is listed only
+    for a permitted render, which puts a second, independent layer under the
+    render-time gating -- a blocked document could not load such a URL even
+    if one reached its DOM.
+    """
+    sources = "file: data:"
+    if fetch_remote:
+        sources += f" {remoteimages.SCHEME}:"
+    return _CSP_TEMPLATE.format(img_sources=sources, nonce=nonce)
+
 
 # The stylesheet is assembled by `stylesheets.assemble_css`: the syntax sheet
 # first, then preview.css, then the theme. preview.css carries an override
@@ -54,24 +91,45 @@ window.xedownConfig = {config};
 """
 
 
+def _note_rendered(stats, rendered):
+    """Say whether the HTML about to be returned is the document itself.
+
+    A free function rather than a method on `RenderStats`, because `stats`
+    is optional at every call site and this is the only place that knows it.
+    """
+    if stats is not None:
+        stats.rendered = rendered
+
+
 def _build_converter():
     markdown_module = vendoring.import_markdown()
     return markdown_module.Markdown(
         extensions=list(vendoring.MARKDOWN_EXTENSIONS)
         + make_extensions(markdown_module),
+        extension_configs=_EXTENSION_CONFIGS,
         output_format="html",
     )
 
 
-def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDER):
+def render_fragment(
+    text,
+    base_dir=None,
+    image_display=images.DISPLAY_PLACEHOLDER,
+    fetch_remote=False,
+    stats=None,
+):
     """Convert Markdown to sanitized body HTML with absolute URIs.
 
     URI resolution happens inside the sanitizer's single structural pass.
-    `resolve_uri` turns a relative href into an absolute `file://` URI (or
-    leaves a remote/anchor target alone). Images go through `on_image`
-    instead, which classifies the reference once — including a `stat`, so a
-    missing file and an unreadable one are told apart — and returns either a
-    usable src or the placeholder `image_display` asks for.
+    `resolve_uri` makes a relative href absolute; images go through
+    `on_image`, which classifies the reference once -- including a `stat`, so
+    a missing file and an unreadable one are told apart.
+
+    `stats` is an out-parameter, since the return value is HTML and this must
+    never raise. Its `rendered` flag is set only on the way out, so a
+    fragment that raised leaves no counts a caller could mistake for what is
+    on screen -- and `render_document` puts it back to False if one of *its*
+    later steps fails after this one succeeded.
     """
     converter = _build_converter()
     raw = converter.convert(text or "")
@@ -83,12 +141,18 @@ def render_fragment(text, base_dir=None, image_display=images.DISPLAY_PLACEHOLDE
         return resolve_to_uri(value, base_dir)
 
     def on_image(reference, alt):
-        decision = images.classify_image(reference, base_dir)
+        decision = images.classify_image(reference, base_dir, fetch_remote=fetch_remote)
+        if stats is not None:
+            stats.record(decision)
         if decision.status == images.OK:
             return decision.uri
+        if decision.status == images.FETCH:
+            return RemoteImage(decision.uri)
         return images.placeholder_for(decision, alt, display)
 
-    return sanitize(raw, resolve_uri=resolve, on_image=on_image)
+    body = sanitize(raw, resolve_uri=resolve, on_image=on_image)
+    _note_rendered(stats, True)
+    return body
 
 
 def render_document(
@@ -102,66 +166,69 @@ def render_document(
     text_direction=direction.AUTO,
     ui_direction=direction.LTR,
     lang=None,
+    fetch_remote=False,
+    stats=None,
 ):
     """Build the complete preview page. Never raises — failures become a page.
 
-    `style` is a `stylesheets.PreviewStyle`: which theme, how wide, how large,
-    and the user's own stylesheet. `None` means every default, which is the
-    xedown 0.1.0 appearance exactly. A theme identifier the registry does not
-    know resolves to the default rather than producing an unstyled page, and a
-    theme whose own stylesheet cannot be read falls back the same way; only a
-    broken *default* reaches the "Installation incomplete" page below.
+    `style` is a `stylesheets.PreviewStyle`; `None` means every default. An
+    unknown theme identifier, or a theme whose stylesheet cannot be read,
+    falls back to the default -- only a broken *default* reaches the
+    "Installation incomplete" page below. A user stylesheet that failed to
+    load produces a notice bar instead of an unstyled preview, and error
+    pages get neither that CSS nor the notice: a stylesheet that failed is
+    the last thing that should style the message saying so.
 
-    A user stylesheet that could not be loaded produces a notice bar above the
-    document rather than a blank or unstyled preview. Error pages get neither
-    the user's CSS nor the notice: an error page is not the document, and a
-    stylesheet that failed to load is the last thing that should style the
-    message saying so.
+    `image_display` and `code_copy_buttons` describe the *content* rather
+    than the appearance, which is why they are not fields of `PreviewStyle`.
+    Both are also emitted as `window.xedownConfig`, so a loaded page can be
+    told about a change without a reload.
 
-    `image_display` and `code_copy_buttons` are what the settings say about
-    the *content* rather than the appearance, which is why they are plain
-    arguments and not fields of `PreviewStyle`. Both are also emitted as a
-    `window.xedownConfig` object, so a loaded page can be told about a
-    change without being reloaded and a fresh page needs no telling.
+    `text_direction` is the *document's* and lands on the article; `auto`
+    detects it from the text. `ui_direction` is the *desktop's* and lands on
+    `<html>`, so xedown's own chrome follows GTK rather than the document's
+    language.
 
-    `text_direction` and `ui_direction` are two different things and both are
-    needed. The first is the *document's*, from the setting of the same name,
-    and lands on the article; `auto` means it is detected from the text. The
-    second is the *desktop's*, and lands on `<html>`, so xedown's own chrome —
-    the stylesheet notice, and the error pages — follows GTK rather than
-    whatever language the document happens to be in.
+    `lang` is the *reader's* language, since xedown cannot detect a
+    document's and a wrong guess would make a screen reader mispronounce the
+    whole page. Anything but a non-empty string produces no attribute at all,
+    rather than an empty one a screen reader treats as unrecognised.
 
-    `lang` is the *reader's* language, taken from the desktop the same way
-    `ui_direction` is — xedown has no way to detect what language a document
-    is written in, and a wrong guess would make a screen reader mispronounce
-    the whole page, which is worse than leaving it on its own default voice.
-    A value that is not a non-empty string produces no `lang` attribute at
-    all rather than an empty one, which a screen reader would treat as a
-    language it does not recognise.
+    `fetch_remote` decides both what `render_fragment` does with a remote
+    reference and whether the CSP names the private scheme, so a blocked
+    document cannot load one even if a stray URL reached its DOM. `stats` is
+    an out-parameter: this returns a page and never raises, so it is the only
+    way a caller learns how many images were blocked.
     """
     token = nonce or secrets.token_urlsafe(16)
     style = style if style is not None else stylesheets.PreviewStyle()
     display = images.coerce_display(image_display)
-    # Coerced the same way `display` is, and for the same reason:
-    # render_document is called directly by the render script and by the
-    # tests, not only through the settings store, so a bad argument here
-    # (not just a bad stored value) must still produce a page rather than
-    # let `json.dumps`/`bool()` raise past the try below. Mirrors
-    # `stylesheets._in_range`'s use of the descriptor for the same purpose.
+    # Coerced like `display`: this is called directly by the render script
+    # and the tests, not only through the settings store, so a bad argument
+    # must still produce a page rather than raise past the try below.
     copy_buttons, _ = settings.by_name(settings.CODE_COPY_BUTTONS).coerce(
         code_copy_buttons
     )
-    # Resolved before the try, because both except branches build an error
-    # page and need it. The document's own direction is resolved inside the
-    # try instead: it reads the text, so it belongs with the render.
+    # Before the try, because both except branches need it. The document's
+    # own direction is resolved inside, since it reads the text.
     ui = direction.coerce_ui(ui_direction)
     try:
         doc_direction = direction.resolve(text_direction, text)
-        body = render_fragment(text, base_dir=base_dir, image_display=display)
+        body = render_fragment(
+            text,
+            base_dir=base_dir,
+            image_display=display,
+            fetch_remote=fetch_remote,
+            stats=stats,
+        )
         stylesheet, theme_identifier = stylesheets.assemble(style, dark=dark)
         preview_js = vendoring.read_resource("preview.js")
         highlight_js = vendoring.read_vendor_file("highlight.min.js")
     except vendoring.VendorError as exc:
+        # `render_fragment` may already have marked the stats rendered
+        # before this failed, and the caller is getting an error page with no
+        # images in it. Same in the branch below.
+        _note_rendered(stats, False)
         return errors.error_page(
             "Installation incomplete",
             errors.missing_vendor_detail(exc),
@@ -170,6 +237,7 @@ def render_document(
             ui_direction=ui,
         )
     except Exception as exc:  # noqa: BLE001 - a blank pane is never acceptable
+        _note_rendered(stats, False)
         return errors.error_page(
             "Cannot render this document",
             errors.render_failure_detail(exc),
@@ -177,6 +245,13 @@ def render_document(
             nonce=token,
             ui_direction=ui,
         )
+
+    # Past both error-page routes: the body, the stylesheet and the vendored
+    # resources are all in hand, so what this render did about the document's
+    # images describes the page the caller is about to be given. Stated here
+    # as well as in `render_fragment`, so this function's own promise does
+    # not rest on a flag set inside a call it makes.
+    _note_rendered(stats, True)
 
     notice = ""
     if style.user.problem is not None:
@@ -202,7 +277,7 @@ def render_document(
         lang_attribute = f' lang="{html.escape(lang.strip(), quote=True)}"'
 
     return _DOCUMENT.format(
-        csp=_CSP.format(nonce=token),
+        csp=_csp(token, fetch_remote),
         nonce=token,
         appearance="dark" if dark else "light",
         theme=theme_identifier,
@@ -210,7 +285,7 @@ def render_document(
         notice=notice,
         body=body,
         stylesheet=stylesheet,
-        config=json.dumps({"codeCopy": copy_buttons, "imageDisplay": display}),
+        config=json.dumps({"codeCopy": copy_buttons, "imageFallback": display}),
         preview_js=preview_js,
         highlight_js=highlight_js,
         ui_direction=ui,

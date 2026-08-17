@@ -103,3 +103,34 @@ def test_the_refresh_delay_depends_on_auto_refresh():
 @pytest.mark.parametrize("row", prefs.rows(), ids=lambda row: row.setting)
 def test_every_row_has_a_known_control_kind(row):
     assert row.kind in (prefs.SWITCH, prefs.CHOICE, prefs.NUMBER, prefs.PATH)
+
+
+def rows_by_setting():
+    return {row.setting: row for row in prefs.rows()}
+
+
+def test_the_fetch_policy_has_a_row():
+    row = rows_by_setting()[settings.REMOTE_IMAGES]
+    assert row.kind == prefs.CHOICE
+    assert [value for value, _label in row.choices] == ["never", "https"]
+
+
+def test_the_help_text_names_the_disclosure_in_plain_words():
+    row = rows_by_setting()[settings.REMOTE_IMAGES]
+    assert "IP address" in row.help_text
+    assert "http://" in row.help_text
+
+
+def test_the_fallback_row_no_longer_claims_nothing_is_fetched():
+    row = rows_by_setting()[settings.IMAGE_FALLBACK]
+    assert "never fetches" not in (row.help_text or "")
+
+
+def test_both_image_rows_have_accessible_names():
+    assert a11y.NAMES["prefs_remote_images"]
+    assert a11y.NAMES["prefs_image_fallback"]
+
+
+def test_every_row_setting_exists_in_the_settings_module():
+    for row in prefs.rows():
+        settings.by_name(row.setting)

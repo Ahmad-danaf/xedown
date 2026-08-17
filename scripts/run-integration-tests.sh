@@ -2,7 +2,7 @@
 # Drives a real xed instance through the scenarios CI cannot reach.
 # Requires xed and an X display. Restores your plugin settings on exit.
 #
-#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.2.0.tar.gz scripts/run-integration-tests.sh
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-1.0.0.tar.gz scripts/run-integration-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being probed is the artifact users download. Build it with
 #         scripts/build-release.sh first. Without this, the working tree is
@@ -30,10 +30,33 @@ XED_PID=""
 # more full-page reloads, an error-page-and-back cycle) all add up: on a
 # representative dev machine a clean run takes on the order of ninety
 # seconds end to end, not the well-under-a-minute this budget once assumed.
-# 150 keeps a comfortable margin over that rather than trimming it close.
+# Task 17 (remote images) added roughly another twenty seconds of scripted
+# delay on top of that, plus several genuinely-real HTTPS round trips
+# (destination checks, a redirect hop, an actual fetch) whose latency this
+# script has no control over -- 150 was measured to run out mid-sequence on
+# a live run of that suite, racing the graceful-close request below against
+# steps the probe had not reached yet. 240 keeps a comfortable margin over
+# the new total rather than trimming it close again.
+#
+# The performance scenario then added another 15.3 s of scheduled delay, over
+# half of it one 8 s wait for WebKit to finish laying out a very large page.
+# The probe's own `_schedule` delays now sum to ~173.7 s, plus 2.5 s before
+# the first step, which left only ~64 s for every step's actual work -- and
+# this budget has already been overrun once. Raised to 300 rather than
+# trimming that 8 s wait: the wait is what keeps WebKit's out-of-process
+# paint tail out of the typing-latency window measured immediately after it,
+# nobody has yet run the scenario on live hardware to say what a safe trim
+# would be, and a timeout costs nothing on a run that passes.
+#
+# The document-identity sequence (rename and Save As under an open document,
+# then close and reopen -- each of the two teardowns it drives audited
+# separately) added a further 16.4 s of scheduled delay -- 173.7 s ->
+# ~190.1 s, ~192.6 s including the 2.5 s before the first step -- which
+# still leaves ~107.4 s of headroom under the 300 s ceiling below, so the
+# ceiling itself did not need to move.
 # How long to then wait for a *graceful* shutdown, once requested, before
 # escalating to SIGTERM/SIGKILL.
-SEQUENCE_TIMEOUT_SECONDS=150
+SEQUENCE_TIMEOUT_SECONDS=300
 SHUTDOWN_GRACE_SECONDS=10
 
 if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
@@ -83,7 +106,8 @@ cleanup() {
       restore_failed=1
     fi
   fi
-  rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin"
+  rm -rf "$PLUGIN_DIR/xedown_probe" "$PLUGIN_DIR/xedown_probe.plugin" \
+         "$PLUGIN_DIR/leakcheck"
 
   # Leave a working plugin installed on exit -- but never at the cost of
   # deleting a working one to make room for nothing. Preference order:
@@ -166,6 +190,12 @@ rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
 cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 cp -r "$ROOT/tests/integration/xedown_probe" \
       "$ROOT/tests/integration/xedown_probe.plugin" "$PLUGIN_DIR/"
+# The probe imports `leakcheck` at module level (before xedown), and it is
+# copied into $PLUGIN_DIR alongside the probe rather than shipped inside it,
+# for the same reason the probe itself lives outside plugin/: it is loaded
+# from here, not from the repo -- see cleanup() above for the matching
+# removal on exit.
+cp -r "$ROOT/tests/integration/leakcheck" "$PLUGIN_DIR/"
 
 printf '# Sample\n\nText with **bold**.\n\n- [ ] task\n' > "$SAMPLE"
 

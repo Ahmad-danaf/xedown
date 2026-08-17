@@ -130,8 +130,16 @@ def test_a_list_item_takes_its_direction_from_the_document_not_its_own_content(
 
 
 def test_stylesheet_no_longer_hardcodes_left_alignment_for_table_cells(preview_css):
-    assert "text-align: left" not in preview_css
-    assert "text-align:left" not in preview_css
+    # Scoped to td/th themselves, not the whole stylesheet: `[align="left"]`
+    # is a deliberate, catalogued exception (see _PHYSICAL_BY_DESIGN below)
+    # for an author-typed presentational hint that must stay physical even
+    # in a right-to-left document. A bare substring search over the entire
+    # sheet cannot tell that exception apart from a table cell reverting to
+    # a hardcoded left, which is the actual regression this test guards.
+    for selector in ("td", "th"):
+        for body in _rule_bodies_for(preview_css, selector):
+            assert "text-align: left" not in body
+            assert "text-align:left" not in body
 
 
 def test_stylesheet_protects_code_with_explicit_ltr_isolation(preview_css):
@@ -468,6 +476,14 @@ _PHYSICAL_BY_DESIGN = {
     ('li.task-list-item > input[type="checkbox"]:checked::after', "border-width"): (
         "two of the four borders are the checkmark's two strokes"
     ),
+    ('[align="left"]', "text-align"): (
+        'align="left" is a physical, author-typed request -- `dir` handles '
+        'logical direction elsewhere, and an author who wrote align="left" '
+        "inside a right-to-left document asked for the left-hand side"
+    ),
+    ('[align="right"]', "text-align"): (
+        'the physical counterpart of the align="left" exception above'
+    ),
 }
 
 
@@ -679,3 +695,35 @@ def test_a_body_swap_reapplies_the_live_search(preview_js):
     # highlighting has to survive that rather than flicker away.
     body = preview_js[preview_js.index("function replaceBody(") :]
     assert "runSearch(" in body[: body.index("function scrollToAnchor(")]
+
+
+def test_preview_css_styles_the_new_elements(preview_css):
+    for selector in ("details", "summary", "kbd", "dl", "dd", "caption"):
+        assert selector in preview_css, f"preview.css does not style {selector}"
+
+
+def test_preview_css_beats_the_text_align_start_rule(preview_css):
+    # `p, h1..h6, blockquote, td, th { text-align: start }` outranks a bare
+    # align="" presentational hint, so allowing the attribute without an
+    # attribute selector would centre nothing. This is that selector.
+    assert '[align="center"]' in preview_css
+    assert '[align="right"]' in preview_css
+
+
+def test_new_element_styling_introduces_no_new_custom_property(preview_css):
+    # The specific --xedown-* properties the new rules in this task use must
+    # already be declared by all four themes -- not the brief's `used <=
+    # declared over the whole of preview.css` version of this test, which
+    # fails on untouched code: --xedown-content-width and --xedown-text-size
+    # are injected by the renderer from PreviewStyle, not declared in any
+    # theme file, so that broader assertion is false regardless of this
+    # task's change.
+    used = {"--xedown-border", "--xedown-code-bg", "--xedown-muted"}
+    for theme in ("focused", "repository", "minimal", "document"):
+        declared = set(
+            re.findall(
+                r"(--xedown-[a-z-]+)\s*:",
+                vendoring.read_resource(f"themes/{theme}.css"),
+            )
+        )
+        assert used <= declared, f"{theme} is missing {used - declared}"

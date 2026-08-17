@@ -1,0 +1,8 @@
+# Dependencies for the one-time markdown compatibility audit only
+# (tests/compat/, scripts/fetch-corpus.sh). Deliberately NOT in
+# requirements-dev.txt: CI installs that file on three Python versions and
+# would never use cmarkgfm, and no plugin module may ever import it --
+# tests/unit/test_compat_isolation.py enforces both halves of that.
+#
+# Install with:  .venv/bin/pip install -r requirements-audit.txt
+cmarkgfm>=2024.11.20

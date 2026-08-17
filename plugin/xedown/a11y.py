@@ -29,6 +29,10 @@ NAMES = {
     "mode_source": "Markdown source",
     "refresh": "Refresh the preview",
     "stale": "Preview is out of date",
+    "remote_images_notice": "Remote images not loaded",
+    "load_images": "Load remote images for this document",
+    "large_document_notice": "Large document, preview not built",
+    "build_preview": "Build the preview for this large document",
     "preview": "Markdown preview",
     "search_entry": "Find in preview",
     "search_case": "Match case",
@@ -51,18 +55,17 @@ NAMES = {
     "prefs_copy_buttons": "Show a copy button on code blocks",
     "prefs_auto_refresh": "Update the preview automatically",
     "prefs_refresh_delay": "Wait before updating",
-    "prefs_remote_images": "When an image cannot be shown",
+    "prefs_remote_images": "Load images from websites",
+    "prefs_image_fallback": "When an image cannot be shown",
     "prefs_watch_external": "Notice changes made outside xed",
     "prefs_restore_defaults": "Restore defaults",
     "prefs_close": "Close",
 }
 
-# Which NAMES key announces each mode when a switch takes effect. Kept as a
-# plain mapping over `Mode` -- not the widgets that emit it -- so which name
-# gets chosen is unit-testable without a display; `controller.py:set_mode` is
-# the host-bound half that decides *whether* to announce (focus elsewhere,
-# not initial build) and `modebar.py:ModeBar.announce` is the half that
-# actually reaches AT-SPI, neither of which CI can reach.
+# Which NAMES key announces each mode. A plain mapping over `Mode` rather
+# than the widgets, so the choice is unit-testable without a display;
+# `set_mode` decides *whether* to announce and `ModeBar.announce` is what
+# reaches AT-SPI, neither of which CI can run.
 _MODE_ANNOUNCEMENT_NAMES = {
     Mode.PREVIEW: "mode_preview",
     Mode.SOURCE: "mode_source",
@@ -74,19 +77,17 @@ def mode_announcement_name(mode):
     return _MODE_ANNOUNCEMENT_NAMES.get(mode)
 
 
-# A name has to survive being read aloud with no screen in front of you, so
-# it must contain something pronounceable. This is the rule that catches the
-# bullet the stale indicator used to be: a screen reader reads "●" as
-# "black circle", which is a description of a shape rather than of a meaning.
+# A name must contain something pronounceable, because it is read aloud with
+# no screen in front of you. This is what caught the stale indicator's old
+# "●", which a screen reader reads as "black circle" -- a shape, not a
+# meaning.
 _PRONOUNCEABLE = re.compile(r"\w", re.UNICODE)
 
-# Every ATK role has a non-empty `value_nick` -- `Atk.Role.UNKNOWN.value_nick`
-# is `"unknown"`, not `""`, and `Atk.Role.INVALID.value_nick` is `"invalid"`.
-# Checking only for an empty string meant "no accessible role" could only
-# ever fire when `get_accessible()` itself returned None, which happens on
-# effectively no live GTK widget -- these two are what a widget the toolkit
-# could not classify, or an ATK object that has already gone bad, actually
-# reports, and they mean the same thing an empty string would.
+# Every ATK role has a non-empty `value_nick` (`UNKNOWN` reports "unknown",
+# not ""), so checking for an empty string meant "no accessible role" could
+# only fire when `get_accessible()` returned None -- which effectively no
+# live widget does. These two are what an unclassifiable widget or a gone-bad
+# ATK object actually reports.
 _NO_ROLE = frozenset({"", "unknown", "invalid"})
 
 # A POSIX locale name: language, optional territory, optional codeset and
@@ -132,22 +133,15 @@ def check_node(item):
     elif focusable and not _PRONOUNCEABLE.search(name):
         problems.append(f"{key}: accessible name {name!r} has nothing a reader can say")
 
-    # Deliberately NOT a rule: an accessible name equal to the widget's
-    # tooltip. For an icon-only button the tooltip is exactly the right name,
-    # and `searchbar.py` sets both to the same string on purpose. The defect
-    # worth catching -- a control described only by a tooltip, with no
-    # accessible name -- is the first rule above.
+    # Deliberately NOT a rule: a name equal to the widget's tooltip. For an
+    # icon-only button that is exactly the right name. The defect worth
+    # catching -- a control with a tooltip and no name -- is the rule above.
 
-    # Deliberately NOT a rule: `focusable and not item["visible"]`. GTK
-    # leaves `can_focus` True on a hidden widget, but its focus chain skips
-    # invisible widgets regardless, so that combination is not a defect --
-    # it is what a normal `set_no_show_all(True)` control looks like while
-    # hidden. `focusable` here is meant to describe *effective*
-    # focusability (the live audit ANDs `can_focus` with `get_visible()`
-    # before building this dict), so a focusable-and-invisible node cannot
-    # legitimately arise at all. This rule existed once, fired exactly
-    # once -- against the refresh button, which is correct, deliberately
-    # hidden code -- and was removed rather than the button changed.
+    # Deliberately NOT a rule: `focusable and not visible`. GTK leaves
+    # `can_focus` True on a hidden widget but skips it in the focus chain
+    # anyway, so that is just what a hidden `set_no_show_all(True)` control
+    # looks like. This rule existed once, fired once -- against the
+    # deliberately hidden refresh button -- and was removed.
 
     if focusable and (item["role"] or "").strip().lower() in _NO_ROLE:
         problems.append(f"{key}: no accessible role")

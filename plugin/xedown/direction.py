@@ -26,21 +26,17 @@ AUTO = "auto"
 _STRONG_LTR = "L"
 _STRONG_RTL = frozenset({"R", "AL"})
 
-# Removed before counting, in this order — a fence can contain anything that
-# looks like the patterns after it. Code is Latin by convention and would
-# drown a short Arabic document; a URL is not prose, though a link's own text
-# is and is kept.
+# Removed before counting, in this order, because a fence can contain anything
+# that looks like the patterns after it. Code is Latin by convention and would
+# drown a short Arabic document; a URL is not prose, though a link's text is.
 #
-# Indented code blocks are deliberately NOT removed. Telling a four-space code
-# block from a four-space list continuation needs the block context Markdown
-# has and a regular expression does not, and guessing wrong would delete real
-# prose from the count — biasing exactly the documents this module exists for.
-# Leaving indented code in only adds weight it already had; it cannot subtract
-# any.
+# Indented code is deliberately NOT removed: telling it from a list
+# continuation needs block context a regex does not have, and guessing wrong
+# would delete real prose from the count, biasing exactly the documents this
+# module exists for. Leaving it in can only add weight it already had.
 #
-# These regexes select what to ignore. They are not sanitization, and nothing
-# downstream trusts them: the sanitizer still rebuilds every document from its
-# own allowlist.
+# These select what to ignore and are not sanitization -- the sanitizer still
+# rebuilds every document from its own allowlist.
 _STRIPPED = (
     # A fenced block, opening marker through matching closing marker. An
     # unterminated fence matches nothing here, which is also how

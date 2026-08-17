@@ -65,7 +65,7 @@ class Group:
 
 _THEME_CHOICES = tuple((theme.identifier, theme.label) for theme in themes.THEMES)
 
-# Wording is carried over from docs/settings.md rather than newly invented,
+# Wording is carried over from docs/preferences.md rather than newly invented,
 # so the window and the documentation cannot drift into saying different
 # things about the same setting.
 GROUPS = (
@@ -179,8 +179,25 @@ GROUPS = (
                 CHOICE,
                 "prefs_remote_images",
                 help_text=(
-                    "xedown never fetches an image from the network. This "
-                    "only decides what appears in its place."
+                    "Loading an image from a website tells that website your "
+                    "IP address, roughly where you are, and when you opened "
+                    "this document. A document written by someone else can "
+                    "use a hidden image to learn that. xedown never loads "
+                    "images over unencrypted http://."
+                ),
+                choices=(
+                    ("never", "Never load them"),
+                    ("https", "Load them over HTTPS"),
+                ),
+            ),
+            Row(
+                settings.IMAGE_FALLBACK,
+                CHOICE,
+                "prefs_image_fallback",
+                help_text=(
+                    "Covers every image xedown cannot show, not only remote "
+                    "ones: a missing file, an unreadable file, or a blocked "
+                    "address."
                 ),
                 choices=(
                     ("placeholder", "Show a placeholder"),

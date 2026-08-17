@@ -104,3 +104,28 @@ should keep its proportions while doing so.
 It must stay its own size. Nothing here should stretch it.
 
 ![A small test image](pics/tiny.png)
+
+## A collapsible section
+
+<details markdown="1">
+<summary>Show the long version</summary>
+
+Everything inside stays hidden until the reader asks for it, which is why
+a README uses one. Inside it: a list, and a fence.
+
+- first
+- second
+
+```sh
+echo "inside a details block"
+```
+
+</details>
+
+Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd> to switch modes.
+
+<div align="center">
+
+A centred block.
+
+</div>

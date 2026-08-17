@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verifies that xed shuts down cleanly after each of eight scenarios.
+# Verifies that xed shuts down cleanly after each lifecycle scenario.
 #
 # scripts/run-integration-tests.sh runs one long sequence, so it can only
 # ever observe one shutdown -- and since that sequence disables the plugin
@@ -21,7 +21,7 @@
 #         tree on the way out either way, so this never leaves the editor
 #         configured to load a plugin that is no longer on disk.
 #
-#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-0.2.0.tar.gz scripts/run-shutdown-tests.sh
+#   XEDOWN_INSTALL_FROM_ARCHIVE=dist/xedown-1.0.0.tar.gz scripts/run-shutdown-tests.sh
 #       ^ installs the release archive instead of the working tree, so the
 #         thing being tested is the artifact users download. Build it with
 #         scripts/build-release.sh first. The archive is staged and
@@ -59,6 +59,10 @@ ALL_SCENARIOS=(
   preview-active
   settings-window
   settings-configurable
+  close-with-fetches-in-flight
+  re-enable
+  restart
+  cycle
 )
 
 if [ "$#" -gt 0 ]; then
@@ -110,6 +114,43 @@ plugin_staged_ok() {
   [ -z "$unexpected" ]
 }
 
+# Total RSS in KB and process count for xed and every descendant. WebKit
+# runs its Web and Network processes as children, so a reading taken
+# inside the Python process cannot see the memory that matters most.
+# Report-only: no threshold, nothing here ever sets STATUS.
+sample_tree() {
+  local root="$1"
+  local pids
+  # `-T` hides threads, and it is load bearing. `pstree -p` renders a
+  # thread as `{name}(tid)`, so the id pattern below collects every TID as
+  # well as every PID -- and /proc/<tid>/status exists and reports the
+  # WHOLE PROCESS's VmRSS, so the sum came out as (process RSS x thread
+  # count) rather than the tree's memory. Measured on this machine:
+  # `pstree -p 1` yields 558 id-like entries against `pstree -pT 1`'s 136,
+  # and xed with WebKit's Web and Network processes is far more threaded
+  # than init's tree. Section 6.3 of the lifecycle design and its success
+  # criterion #5 are entirely this number, so an inflated one is worse
+  # than none.
+  #
+  # `|| true` on both command substitutions below: this whole function runs
+  # under this script's own `set -euo pipefail`, and either one -- pstree
+  # finding nothing (the root already gone), or a child's /proc entry
+  # vanishing between the listing and the read -- exits non-zero. Without
+  # the guard that would abort the entire harness run over a report-only
+  # measurement, exactly the kind of failure this is not supposed to cause.
+  pids="$(pstree -pT "$root" 2>/dev/null | grep -oP '\(\K[0-9]+' | tr '\n' ' ')" || true
+  [ -n "$pids" ] || pids="$root"
+  local total=0 count=0
+  for pid in $pids; do
+    local rss
+    rss="$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status" 2>/dev/null)" || true
+    [ -n "$rss" ] || continue
+    total=$((total + rss))
+    count=$((count + 1))
+  done
+  echo "$count $total"
+}
+
 cleanup() {
   # This trap must run to completion no matter what fails inside it. Under
   # this script's own `set -e`, a single failing command in here would
@@ -133,7 +174,8 @@ cleanup() {
     fi
   fi
   rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" \
-         "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
+         "$PLUGIN_DIR/xedown_shutdown_probe.plugin" \
+         "$PLUGIN_DIR/leakcheck"
 
   # A control run deliberately uninstalls xedown for its scenarios. Put it
   # back unconditionally: active-plugins still lists xedown (it is restored
@@ -232,9 +274,16 @@ else
   rm -rf "$PLUGIN_DIR/xedown" "$PLUGIN_DIR/xedown.plugin"
   cp -r "$STAGE/xedown" "$STAGE/xedown.plugin" "$PLUGIN_DIR/"
 fi
-rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" "$PLUGIN_DIR/xedown_shutdown_probe.plugin"
+rm -rf "$PLUGIN_DIR/xedown_shutdown_probe" "$PLUGIN_DIR/xedown_shutdown_probe.plugin" \
+       "$PLUGIN_DIR/leakcheck"
 cp -r "$ROOT/tests/integration/xedown_shutdown_probe" \
       "$ROOT/tests/integration/xedown_shutdown_probe.plugin" "$PLUGIN_DIR/"
+# The probe imports `leakcheck` at module level (before xedown), and it is
+# copied into $PLUGIN_DIR alongside the probe rather than shipped inside it,
+# for the same reason the probe itself lives outside plugin/: it is loaded
+# from here, not from the repo -- see cleanup() above for the matching
+# removal on exit.
+cp -r "$ROOT/tests/integration/leakcheck" "$PLUGIN_DIR/"
 
 SAVED_PLUGINS="$(gsettings get org.x.editor.plugins active-plugins)"
 
@@ -255,14 +304,47 @@ xed_alive() {
   [ "$state" != "Z" ]
 }
 
+# Polls $2 (a report file) for a line matching the extended regex $1, up to
+# $3 seconds, the same way the main wait loop in run_scenario() already
+# polls for READY/FAILED -- reused here so a scenario can signal a point
+# partway through its own step sequence, not just its terminal state.
+# Returns failure early, without waiting out the rest of the timeout, if
+# the probe has already reached ITS OWN terminal state (READY/FAILED)
+# without ever writing the marker -- e.g. a crash before the scenario got
+# that far -- since the marker will then never come.
+wait_for_marker() {
+  local pattern="$1" report="$2" timeout_s="$3"
+  local i
+  for ((i = 0; i < timeout_s * 2; i++)); do
+    if [ -f "$report" ]; then
+      if grep -qE "$pattern" "$report"; then
+        return 0
+      fi
+      if grep -qE '^(READY|FAILED)' "$report"; then
+        return 1
+      fi
+    fi
+    if ! xed_alive; then
+      return 1
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 run_scenario() {
   local scenario="$1"
+  local phase="${2:-}"
+  local label="${scenario}${phase:+-$phase}"
   local dir="$WORKDIR/$scenario"
-  local report="$dir/report.txt"
-  local log="$dir/xed.log"
+  local report="$dir/report${phase:+-$phase}.txt"
+  local log="$dir/xed${phase:+-$phase}.log"
   local sample="$dir/main.md"
 
   mkdir -p "$dir"
+  # Same content every call -- restart's two launches share this $dir, and
+  # this must stay idempotent so the second launch does not overwrite
+  # anything the first one left for it to find.
   printf '# %s\n\nOpening document for the %s scenario.\n' "$scenario" "$scenario" > "$sample"
 
   if [ "$CONTROL" = "1" ]; then
@@ -273,16 +355,57 @@ run_scenario() {
 
   echo
   echo "=============================================================="
-  echo "SCENARIO: $scenario"
+  echo "SCENARIO: $label"
   echo "=============================================================="
 
   XEDOWN_SHUTDOWN_SCENARIO="$scenario" \
   XEDOWN_SHUTDOWN_REPORT="$report" \
   XEDOWN_SHUTDOWN_TMPDIR="$dir" \
   XEDOWN_SHUTDOWN_CONTROL="$([ "$CONTROL" = "1" ] && echo 1 || echo 0)" \
+  XEDOWN_SHUTDOWN_PHASE="$phase" \
   XEDOWN_CONFIG_DIR="$dir/config" \
     xed --new-window "$sample" > "$log" 2>&1 &
   XED_PID=$!
+
+  # `cycle`'s own assertions are made by the probe; this is the check that
+  # can only be made from outside, on the process tree -- WebKit's Web and
+  # Network processes are children of xed, invisible to a reading taken
+  # inside the Python process. Report-only: generous by construction, since
+  # there is no threshold at all here, just the numbers and their delta.
+  # `pstree` is optional -- `wmctrl` is this harness's one hard dependency
+  # already, and this measurement is not worth adding a second.
+  #
+  # The baseline has to be taken from HERE, before the big READY/FAILED
+  # wait loop below -- not after it. `cycle`'s own terminal READY, like
+  # every other scenario's, only appears once its WHOLE step sequence
+  # (all twenty open/close cycles, plus the closing assertions) is over;
+  # gating the baseline on it would take that reading AFTER the churn, not
+  # before, and measure a few hundred ms of idle time rather than the
+  # churn itself. `cycle` writes a `cycle-churn-starting` marker as the
+  # very first thing it does instead, specifically so this can poll for
+  # that moment -- reusing the same poll-the-report-file pattern the big
+  # wait loop already uses, rather than inventing a fixed sleep.
+  local cycle_pstree_ok=0
+  local cycle_count_before=0 cycle_rss_before=0
+  if [ "$scenario" = "cycle" ]; then
+    if command -v pstree >/dev/null 2>&1; then
+      # A third of the main timeout, not the whole thing: if this scenario
+      # is going to fail outright, the big wait loop below still applies
+      # its own full timeout, and there is no reason for a doomed run to
+      # pay for both in full.
+      if wait_for_marker '^PASS cycle-churn-starting' "$report" \
+           "$((READY_TIMEOUT_SECONDS / 3))"; then
+        cycle_pstree_ok=1
+        read -r cycle_count_before cycle_rss_before < <(sample_tree "$XED_PID")
+        echo "CYCLE MEMORY: baseline ${cycle_count_before} processes, ${cycle_rss_before} KB RSS"
+      else
+        echo "NOTE [$label]: cycle-churn-starting marker never appeared;" \
+             "skipping baseline sample." >&2
+      fi
+    else
+      echo "NOTE [$label]: pstree not found; skipping process-tree memory sampling." >&2
+    fi
+  fi
 
   local ready=0
   for ((i = 0; i < READY_TIMEOUT_SECONDS * 2; i++)); do
@@ -298,7 +421,7 @@ run_scenario() {
   done
 
   if [ "$ready" -eq 0 ]; then
-    echo "FAIL [$scenario]: setup did not complete within ${READY_TIMEOUT_SECONDS}s." >&2
+    echo "FAIL [$label]: setup did not complete within ${READY_TIMEOUT_SECONDS}s." >&2
     STATUS=1
   fi
 
@@ -311,6 +434,23 @@ run_scenario() {
   # plugin-unload output gets produced at all.
   local shutdown_captured=0
   if xed_alive; then
+    if [ "$cycle_pstree_ok" -eq 1 ]; then
+      # By this point the big wait loop above already confirmed the
+      # terminal READY/FAILED line, which done() only writes after this
+      # marker -- so this should already be true. Polled anyway, briefly,
+      # rather than assumed outright, and skipped gracefully if it somehow
+      # isn't (an earlier crash-in-step, say, that still left the process
+      # alive long enough for xed_alive above to be true).
+      if wait_for_marker '^PASS cycle-churn-finished' "$report" 5; then
+        local cycle_count_after cycle_rss_after
+        read -r cycle_count_after cycle_rss_after < <(sample_tree "$XED_PID")
+        echo "CYCLE MEMORY: after churn ${cycle_count_after} processes, ${cycle_rss_after} KB RSS" \
+             "(delta $((cycle_rss_after - cycle_rss_before)) KB)"
+      else
+        echo "NOTE [$label]: cycle-churn-finished marker missing;" \
+             "skipping after-churn sample." >&2
+      fi
+    fi
     echo "--> closing window(s) gracefully"
     while :; do
       local ids win remaining closed
@@ -342,7 +482,7 @@ run_scenario() {
         sleep 0.5
       done
       if [ "$closed" -eq 0 ]; then
-        echo "FAIL [$scenario]: window $win did not close within ${SHUTDOWN_GRACE_SECONDS}s." >&2
+        echo "FAIL [$label]: window $win did not close within ${SHUTDOWN_GRACE_SECONDS}s." >&2
         echo "    windows still owned by pid $XED_PID:" >&2
         wmctrl -lp 2>/dev/null | awk -v pid="$XED_PID" '$3 == pid' | sed 's/^/      /' >&2
         echo "    process state:" >&2
@@ -365,7 +505,7 @@ run_scenario() {
   local we_killed=0
   local dead_pid="$XED_PID"
   if xed_alive; then
-    echo "FAIL [$scenario]: xed did not exit after every window was closed; killing." >&2
+    echo "FAIL [$label]: xed did not exit after every window was closed; killing." >&2
     kill -KILL "$XED_PID" 2>/dev/null || true
     we_killed=1
     STATUS=1
@@ -413,7 +553,7 @@ run_scenario() {
   fi
 
   if [ "$signal_number" -ne 0 ]; then
-    echo "FAIL [$scenario]: xed died on signal $signal_number." >&2
+    echo "FAIL [$label]: xed died on signal $signal_number." >&2
     echo "    Before assuming either way, get the stack:" >&2
     echo "      coredumpctl info $dead_pid" >&2
     echo "    A stack with no xedown, Python or libpeas frames is xed's own bug;" >&2
@@ -428,7 +568,7 @@ run_scenario() {
   # empty log is the expected reading of a killed process, so "no warnings
   # found" here means nothing at all.
   if [ "$shutdown_captured" -eq 0 ]; then
-    echo "FAIL [$scenario]: shutdown output was not captured; nothing below is trustworthy." >&2
+    echo "FAIL [$label]: shutdown output was not captured; nothing below is trustworthy." >&2
     STATUS=1
     # "it crashed" is the more specific diagnosis and outranks "we could not
     # watch it finish", which is merely the consequence.
@@ -438,7 +578,7 @@ run_scenario() {
   fi
 
   if [ ! -f "$report" ] || ! grep -q '^READY' "$report"; then
-    echo "FAIL [$scenario]: the probe did not report READY." >&2
+    echo "FAIL [$label]: the probe did not report READY." >&2
     STATUS=1
     if [ "$scenario_status" = "clean" ] || [ "$scenario_status" = "NOT OBSERVED" ]; then
       scenario_status="setup-failed"
@@ -450,26 +590,35 @@ run_scenario() {
   unexpected="$(printf '%s\n' "$matches" | grep -Ev "$KNOWN_XED_CORE_ASSERTION" | grep -Ev '^$' || true)"
 
   if [ -n "$unexpected" ]; then
-    echo "FAIL [$scenario]: xed's log contains output that blocks the release:" >&2
+    echo "FAIL [$label]: xed's log contains output that blocks the release:" >&2
     printf '%s\n' "$unexpected" | sed 's/^/    /' >&2
     echo "    (full log: $log)" >&2
     STATUS=1
     scenario_status="BLOCKER"
   elif [ -n "$matches" ]; then
-    echo "NOTE [$scenario]: only the known xed-core assertion appeared:" >&2
+    echo "NOTE [$label]: only the known xed-core assertion appeared:" >&2
     printf '%s\n' "$matches" | sed 's/^/    /' >&2
     if [ "$scenario_status" = "clean" ]; then
       scenario_status="clean (known xed assertion)"
     fi
   elif [ "$scenario_status" = "clean" ]; then
-    echo "OK [$scenario]: no warnings, criticals, tracebacks or crashes."
+    echo "OK [$label]: no warnings, criticals, tracebacks or crashes."
   fi
 
-  SUMMARY+=("$(printf '%-18s %s' "$scenario" "$scenario_status")")
+  SUMMARY+=("$(printf '%-18s %s' "$label" "$scenario_status")")
 }
 
 for scenario in "${SCENARIOS[@]}"; do
-  run_scenario "$scenario"
+  if [ "$scenario" = "restart" ]; then
+    # Two launches against the same $dir (run_scenario's own report/log
+    # naming keeps their output separate) -- $dir/config is what carries
+    # the mode store and settings from phase 1 into phase 2, which is the
+    # whole point of this scenario.
+    run_scenario restart 1
+    run_scenario restart 2
+  else
+    run_scenario "$scenario"
+  fi
 done
 
 echo

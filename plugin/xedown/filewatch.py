@@ -85,8 +85,6 @@ class FileWatch:
         self._cancel_settle()
         self._unwatch()
 
-    # --- machinery ---------------------------------------------------------
-
     def _unwatch(self):
         if self._monitor is not None:
             if self._monitor_handler:
@@ -111,13 +109,11 @@ class FileWatch:
 
     def _on_settle_elapsed(self):
         self._settle_source = 0
-        # Re-armed rather than merely left running: most programs save by
-        # writing a temporary file and renaming it over the target, which
-        # replaces the inode, and a monitor still attached to the old one sees
-        # the FIRST such save and never another. This is the same fix, for the
-        # same reason, as stylewatcher._on_debounce_elapsed -- behaviour this
-        # repository has already measured once. It is also what makes
-        # deletion, replacement and move-away-and-back work without a separate
+        # Re-armed rather than left running: most programs save by renaming a
+        # temporary file over the target, replacing the inode, and a monitor
+        # still on the old one sees the FIRST such save and never another.
+        # Same fix as `stylewatcher._on_debounce_elapsed`, and what makes
+        # deletion, replacement and move-away-and-back work with no separate
         # code path for each.
         self.start()
         self._on_settled()

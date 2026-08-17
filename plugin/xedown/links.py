@@ -105,6 +105,15 @@ def resolve_to_uri(reference, base_dir):
     as bare paths (rather than being handed back verbatim), so the result
     is always a properly percent-encoded `file://` URI — consistent with
     what `classify_link` returns for the same reference.
+
+    A `#fragment` is split off *before* the path is resolved and quoted,
+    then re-appended unencoded, so `FAQ.md#posix` resolves to a link to
+    `FAQ.md` with the fragment `posix` intact — not to a file literally
+    named `FAQ.md#posix`. Only the first raw `#` in `reference` counts as
+    the separator, matching how a browser parses a URL: a `#` that reached
+    us percent-encoded (`%23`) is a literal character in the path and is
+    decoded and re-encoded like any other, and a fragment that itself
+    contains further `#` characters keeps them all, verbatim.
     """
     if not reference:
         return None
@@ -118,10 +127,14 @@ def resolve_to_uri(reference, base_dir):
         return None
     if scheme in REMOTE_SCHEMES or scheme == "data":
         return reference
-    path = resolve_to_path(reference, base_dir)
+    path_reference, has_fragment, fragment = reference.partition("#")
+    path = resolve_to_path(path_reference, base_dir)
     if path is None:
         return None
-    return uri_for_path(path)
+    uri = uri_for_path(path)
+    if has_fragment:
+        uri += "#" + fragment
+    return uri
 
 
 def classify_link(uri, base_dir):

@@ -19,7 +19,8 @@ def test_every_setting_has_the_documented_default():
         "text_size_px": 16.0,
         "auto_refresh": True,
         "refresh_delay_ms": 250,
-        "remote_images": "placeholder",
+        "remote_images": "never",
+        "image_fallback": "placeholder",
         "code_copy_buttons": True,
         "text_direction": "auto",
         "watch_external_changes": True,
@@ -73,7 +74,7 @@ def test_the_controller_reads_the_refresh_delay_from_settings():
         ("preview_theme", "  minimal  ", "minimal"),
         ("default_mode", "MARKDOWN", "markdown"),
         ("text_direction", "RTL", "rtl"),
-        ("remote_images", "Hidden", "hidden"),
+        ("image_fallback", "Hidden", "hidden"),
     ],
 )
 def test_choices_are_matched_ignoring_case_and_space(name, given, expected):
@@ -778,3 +779,178 @@ def test_reset_leaves_no_explicit_defaults_in_the_file(tmp_path):
     store.set(settings.PREVIEW_THEME, "document")
     store.reset()
     assert json.loads(path.read_text(encoding="utf-8")) == {}
+
+
+from xedown import settings as settings_module
+
+
+def store(tmp_path, payload):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return settings_module.Settings(path)
+
+
+def test_the_fetch_policy_defaults_to_never(tmp_path):
+    loaded = store(tmp_path, {})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+
+
+def test_the_fallback_setting_keeps_the_old_three_values(tmp_path):
+    loaded = store(tmp_path, {"image_fallback": "hidden"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "hidden"
+
+
+def test_an_old_remote_images_value_migrates_to_image_fallback(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "alt"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "alt"
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+
+
+def test_a_new_remote_images_value_is_not_treated_as_a_migration(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "https"})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "https"
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "placeholder"
+
+
+def test_an_explicit_image_fallback_wins_over_a_legacy_value(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "alt", "image_fallback": "hidden"})
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "hidden"
+
+
+def test_a_nonsense_remote_images_value_falls_back_to_the_default(tmp_path):
+    loaded = store(tmp_path, {"remote_images": "yes please"})
+    assert loaded.get(settings_module.REMOTE_IMAGES) == "never"
+    assert loaded.get(settings_module.IMAGE_FALLBACK) == "placeholder"
+
+
+def test_migration_does_not_rewrite_the_users_file(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+    settings_module.Settings(path)
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_migration_is_idempotent_across_loads(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+    for _ in range(3):
+        assert (
+            settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == "alt"
+        )
+
+
+def test_a_migrated_fallback_survives_turning_the_fetch_policy_on(tmp_path):
+    # Every other migration test exercises a *load* only, which is how this
+    # got through: the migration is in memory, and `_write` merges only the
+    # keys the instance has set. So the first thing an upgrading reader does
+    # -- turn fetching on -- wrote `remote_images: "https"` over the legacy
+    # value the migration was reading, without ever writing the
+    # `image_fallback` it had been read as. The next session then loaded a
+    # file with no display setting in it at all and silently used the default.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "alt"}), encoding="utf-8")
+
+    first = settings_module.Settings(path)
+    first.set(settings_module.REMOTE_IMAGES, "https")
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert on_disk["remote_images"] == "https"
+    assert on_disk["image_fallback"] == "alt"
+
+    second = settings_module.Settings(path)
+    assert second.get(settings_module.IMAGE_FALLBACK) == "alt"
+    assert second.get(settings_module.REMOTE_IMAGES) == "https"
+
+
+def test_a_migrated_fallback_survives_a_write_of_some_unrelated_setting(tmp_path):
+    # The same loss, reached by any other save: the legacy key survives here,
+    # so the value is not lost yet -- but it must be written all the same, or
+    # it depends on a key this version no longer means to read.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "hidden"}), encoding="utf-8")
+
+    loaded = settings_module.Settings(path)
+    loaded.set(settings_module.TEXT_SIZE_PX, 20.0)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["image_fallback"] == "hidden"
+
+
+def test_a_migrated_default_fallback_is_not_written_as_an_explicit_key(tmp_path):
+    # "placeholder" is the default, and a key sitting at its default is
+    # written as absent -- the rule that keeps a later release free to change
+    # a default. Marking the migration dirty must not quietly break it.
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"remote_images": "placeholder"}), encoding="utf-8")
+
+    loaded = settings_module.Settings(path)
+    loaded.set(settings_module.REMOTE_IMAGES, "https")
+
+    on_disk = json.loads(path.read_text(encoding="utf-8"))
+    assert "image_fallback" not in on_disk
+    assert settings_module.Settings(path).get(settings_module.IMAGE_FALLBACK) == (
+        "placeholder"
+    )
+
+
+# The complete v0.2 settings file: all twelve keys v0.2 could write, each at
+# a non-default value so that a value silently reverting to its default is
+# visible rather than indistinguishable from success.
+V02_SETTINGS = {
+    "default_mode": "markdown",
+    "remember_mode_per_file": False,
+    "preview_theme": "focused",
+    "custom_stylesheet": "/home/reader/style.css",
+    "content_width_rem": 72,
+    "text_size_px": 20,
+    "auto_refresh": False,
+    "refresh_delay_ms": 500,
+    "remote_images": "alt",  # v0.2 meaning: how a blocked image displays
+    "code_copy_buttons": False,
+    "text_direction": "rtl",
+    "watch_external_changes": False,
+}
+
+
+def test_a_complete_v02_settings_file_survives_the_upgrade(tmp_path):
+    """Every choice a v0.2 reader made is still in force after upgrading.
+
+    The upgrade promise stated once, in one place. `remote_images` is the
+    only key whose meaning changed between v0.2 and v0.3, and it is checked
+    here as `image_fallback` -- its new name -- rather than being skipped.
+    """
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps(V02_SETTINGS), encoding="utf-8")
+
+    loaded = settings.Settings(path)
+
+    assert loaded.quarantine is None
+    assert loaded.get(settings.DEFAULT_MODE) == "markdown"
+    assert loaded.get(settings.REMEMBER_MODE_PER_FILE) is False
+    assert loaded.get(settings.PREVIEW_THEME) == "focused"
+    assert loaded.get(settings.CUSTOM_STYLESHEET) == "/home/reader/style.css"
+    assert loaded.get(settings.CONTENT_WIDTH_REM) == 72
+    assert loaded.get(settings.TEXT_SIZE_PX) == 20
+    assert loaded.get(settings.AUTO_REFRESH) is False
+    assert loaded.get(settings.REFRESH_DELAY_MS) == 500
+    assert loaded.get(settings.CODE_COPY_BUTTONS) is False
+    assert loaded.get(settings.TEXT_DIRECTION) == "rtl"
+    assert loaded.get(settings.WATCH_EXTERNAL_CHANGES) is False
+
+    # The one renamed key: the v0.2 display choice arrives under its v0.3
+    # name, and the v0.3 fetch policy stays at its safe default because a
+    # v0.2 file cannot have expressed an opinion about it.
+    assert loaded.get(settings.IMAGE_FALLBACK) == "alt"
+    assert loaded.get(settings.REMOTE_IMAGES) == "never"
+
+
+def test_upgrading_does_not_rewrite_the_users_file(tmp_path):
+    # The file belongs to the user, a second xed process may be reading it,
+    # and nothing about loading is worth a write nobody asked for.
+    path = tmp_path / "settings.json"
+    original = json.dumps(V02_SETTINGS)
+    path.write_text(original, encoding="utf-8")
+
+    settings.Settings(path)
+
+    assert path.read_text(encoding="utf-8") == original

@@ -13,10 +13,23 @@ Every step is wrapped by `_guard`, which turns an uncaught exception into a
 FAIL line rather than silently ending the sequence.
 """
 
-import json
 import os
 import sys
+
+# Before every other import that could reach xedown: the wrap has to see
+# the plugin's first connection, and `install()` is a no-op once xedown is
+# already loaded. This probe defers its own xedown imports to
+# `_lazy_imports()` (see the comment on `TabController` below), so
+# module-import time is early enough -- verified, not assumed. Same
+# reasoning, same pattern, as `xedown_shutdown_probe`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from leakcheck import hooks as leakhooks
+
+leakhooks.install()
+
+import json
 import tempfile
+import time
 import traceback
 
 import gi
@@ -60,7 +73,11 @@ TabController = None
 Mode = None
 ModeBar = None
 xedown_a11y = None
+xedown_errors = None
+xedown_imagescheme = None
+xedown_perflimits = None
 xedown_prefs = None
+xedown_remoteimages = None
 xedown_settings = None
 xedown_shortcuts = None
 xedown_stylewatcher = None
@@ -70,9 +87,14 @@ XedownWindowActivatable = None
 def _lazy_imports():
     global TabController, Mode, ModeBar, xedown_a11y, xedown_prefs, xedown_settings
     global xedown_shortcuts, xedown_stylewatcher, XedownWindowActivatable
+    global xedown_errors, xedown_imagescheme, xedown_remoteimages, xedown_perflimits
     from xedown import XedownWindowActivatable as _XedownWindowActivatable
     from xedown import a11y as _a11y
+    from xedown import errors as _errors
+    from xedown import imagescheme as _imagescheme
+    from xedown import perflimits as _perflimits
     from xedown import prefs as _prefs
+    from xedown import remoteimages as _remoteimages
     from xedown import settings as _settings
     from xedown import shortcuts as _shortcuts
     from xedown import stylewatcher as _stylewatcher
@@ -82,7 +104,11 @@ def _lazy_imports():
 
     TabController, Mode, ModeBar = _TabController, _Mode, _ModeBar
     xedown_a11y = _a11y
+    xedown_errors = _errors
+    xedown_imagescheme = _imagescheme
+    xedown_perflimits = _perflimits
     xedown_prefs = _prefs
+    xedown_remoteimages = _remoteimages
     xedown_settings = _settings
     xedown_shortcuts = _shortcuts
     xedown_stylewatcher = _stylewatcher
@@ -130,6 +156,92 @@ _COPY_MD = (
     + "| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |\n"
 )
 
+# --- remote images: fetched by xedown's own code, over the real internet ---
+#
+# `httpbingo.org` -- a public mirror of the well-known httpbin.org test
+# service, on a different host because httpbin.org itself was returning 503
+# when this suite was written -- is a real HTTPS server this probe does not
+# control, with a certificate a real client actually verifies. It is used
+# deliberately rather than a local stand-in: Task 15 found that redirect
+# following was completely broken in the field because only a REAL urllib
+# opener ever exercises `fetch_once`'s hand-rolled redirect follower
+# (`_urllib_opener` removes urllib's own redirect handling on purpose, so a
+# stub opener's *returned-response* shape is what kept the unit tests green
+# regardless of whether the real thing worked). A plain local server cannot
+# substitute for this either way: `remoteimages.check_destination` refuses
+# any destination that does not resolve to a public address, by design, so
+# the destination and TLS checks can only be exercised for real against a
+# real public server.
+_REMOTE_IMAGE_URL = "https://httpbingo.org/image/png"
+_REMOTE_INSECURE_URL = "http://example.com/insecure.png"
+# Deliberately no "offline" substring anywhere in this URL: it ends up
+# inside the placeholder text regardless of which message wins (see
+# step_remote_offline_check), and a URL containing the very word being
+# checked for would let a false positive hide behind it.
+_REMOTE_OFFLINE_URL = "https://httpbingo.org/image/png?probe=net-check"
+_REMOTE_HANGING_URL = "https://httpbingo.org/delay/10"
+_REMOTE_HANGING_URL_2 = "https://httpbingo.org/delay/10?probe=close-pending"
+# A real 302, over the real internet, through the REAL opener -- the exact
+# case Task 15's fix is for. Never a local server (see above); never a
+# certificate-trust escape hatch either, which the spec explicitly rejected.
+_REMOTE_REDIRECT_URL = (
+    "https://httpbingo.org/redirect-to?url="
+    "https%3A%2F%2Fhttpbingo.org%2Fimage%2Fpng%3Fprobe%3Dredirect&status_code=302"
+)
+_REMOTE_BLOCKED_MD = f"# Remote Images\n\n![a badge]({_REMOTE_IMAGE_URL})\n"
+_REMOTE_INSECURE_MD = (
+    f"# Insecure Remote Image\n\n![insecure]({_REMOTE_INSECURE_URL})\n"
+)
+_REMOTE_OFFLINE_MD = (
+    f"# Offline Remote Image\n\n![offline test]({_REMOTE_OFFLINE_URL})\n"
+)
+# Tall, like `_long_markdown()`, so the reload below has a real scroll range
+# to restore into -- and the image sits at the very end, so the rest of the
+# page paints regardless of whether it has resolved.
+_REMOTE_HANGING_MD = (
+    "# Hanging Remote Image\n\n"
+    + ("A paragraph of filler prose to build page height. " * 8 + "\n\n") * 60
+    + f"![never resolves in time]({_REMOTE_HANGING_URL})\n"
+)
+_REMOTE_REDIRECT_MD = (
+    f"# Redirected Remote Image\n\n![redirect test]({_REMOTE_REDIRECT_URL})\n"
+)
+_REMOTE_CLOSE_PENDING_MD = (
+    f"# Close With Fetch Pending\n\n![never resolves]({_REMOTE_HANGING_URL_2})\n"
+)
+_CSP_JS = (
+    "(function () {"
+    "  var m = document.querySelector('meta[http-equiv=\"Content-Security-Policy\"]');"
+    "  return m ? m.getAttribute('content') : '';"
+    "})()"
+)
+_IMG_COMPLETE_JS = (
+    "(function () {"
+    "  var i = document.querySelector('img.xedown-remote');"
+    "  return i ? String(i.complete) : 'no-image';"
+    "})()"
+)
+_IMG_LOADED_JS = (
+    "(function () {"
+    "  var i = document.querySelector('img.xedown-remote');"
+    "  return i ? String(i.complete && i.naturalWidth > 0) : 'no-image';"
+    "})()"
+)
+# Scoped to the rendered article rather than `document.body.textContent`
+# (what `_preview_text` above uses): the body also contains the inlined
+# highlight.js bundle inside a <script> tag, which textContent walks right
+# through -- confirmed live at ~166KB per read. That is not merely slow; it
+# was large enough to be a real contributor to the remote-images steps
+# overrunning run-integration-tests.sh's own SEQUENCE_TIMEOUT_SECONDS on the
+# first live run of this suite. `_preview_text` itself is left alone: it is
+# established, shared infrastructure this task did not touch.
+_ARTICLE_TEXT_JS = (
+    "(function () {"
+    "  var a = document.getElementById('xedown-content');"
+    "  return a ? a.textContent : '';"
+    "})()"
+)
+
 
 def _long_markdown():
     """Content tall enough to give a real scroll range at any window size.
@@ -175,6 +287,22 @@ def _long_markdown():
         + paragraphs
         + "\n\n```python\n42    100\n```\n"
     )
+
+
+def _large_markdown(chars):
+    """A document big enough to trip `perflimits`, built the same way the
+    performance harness builds one -- deterministic, and prose rather than
+    tables so the size, not the shape, is what is being tested."""
+    unit = "Some ordinary prose about a topic, at a workaday length. " * 3
+    out = []
+    total = 0
+    index = 0
+    while total < chars:
+        block = f"{unit}Paragraph {index}.\n\n"
+        out.append(block)
+        total += len(block)
+        index += 1
+    return "".join(out)
 
 
 class XedownProbe(GObject.Object, Xed.WindowActivatable):
@@ -623,6 +751,34 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         preview.widget.run_javascript(
             "document.body.textContent", None, on_result, None
         )
+
+    def _read_js(self, controller, expr, callback):
+        """Evaluate `expr` in `controller`'s preview; `callback(text_or_None)`.
+
+        Generalises `_preview_text` for the remote-images steps below, which
+        need the raw string back (a CSP, an `img.complete` flag) rather than
+        a substring comparison, and which drive tabs other than the main
+        one -- so the controller is passed in rather than resolved from
+        `self._main_controller()`. Schedules nothing itself; every caller is
+        already inside a step and schedules its own next step explicitly,
+        which is what lets two of these be chained back to back (read the
+        body, then read the CSP) without an extra round trip through the
+        main loop for each.
+        """
+        preview = controller.preview if controller is not None else None
+        if preview is None:
+            callback(None)
+            return
+
+        def on_result(webview, result, _user_data):
+            try:
+                value = webview.run_javascript_finish(result)
+                text = value.get_js_value().to_string()
+            except Exception:  # noqa: BLE001 - a probe never crashes xed
+                text = None
+            callback(text)
+
+        preview.widget.run_javascript(expr, None, on_result, None)
 
     def _reconcile_without_saving(self):
         """Leave the buffer clean and the file matching it, byte for byte.
@@ -3495,9 +3651,397 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
                 "the-focus-watch-let-go-of-the-window-the-tab-left",
                 old_id is not None and not self.window.handler_is_connected(old_id),
             )
-            self._schedule(400, self.step_settings_open)
+            self._schedule(400, self.step_remote_images_setup)
 
         self._marks(check, controller)
+        return False
+
+    # --- remote images: fetched by xedown's own code, never by the page ----
+    #
+    # Every module this exercises (`imagescheme.py`, the WebKit scheme
+    # handler; `controller.py`'s image-handling methods; the mode bar's
+    # chip) imports `gi` and is completely unreachable by the unit suite.
+    # Each sub-test below opens its OWN tab, so a per-tab permission grant
+    # or a forced-offline fetcher never leaks into a test that runs after
+    # it, and so `tab-close-with-fetches-pending` has a tab of its own to
+    # close without disturbing any of the others still open behind it.
+
+    def step_remote_images_setup(self):
+        path = os.path.join(self._tmpdir, "remote-blocked.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_BLOCKED_MD)
+        self._remote_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._remote_view = self._remote_tab.get_view()
+        self._schedule(1200, self.step_remote_blocked_check)
+        return False
+
+    def step_remote_blocked_check(self):
+        controller = self._remote_controller = self._controller_for(self._remote_view)
+        if controller is None:
+            record("remote-images-blocked-by-default", False, "no controller")
+            self._schedule(300, self.step_remote_chip_check)
+            return False
+
+        def on_csp(csp):
+            placeholder_ok = self._remote_blocked_placeholder_ok
+            csp_ok = csp is not None and (xedown_remoteimages.SCHEME + ":") not in csp
+            record(
+                "remote-images-blocked-by-default",
+                placeholder_ok and csp_ok,
+                f"placeholder present: {placeholder_ok}, csp: {csp!r}",
+            )
+            self._schedule(300, self.step_remote_chip_check)
+
+        def on_body(text):
+            self._remote_blocked_placeholder_ok = (
+                text is not None
+                and xedown_errors.remote_image_blocked_text(_REMOTE_IMAGE_URL) in text
+            )
+            self._read_js(controller, _CSP_JS, on_csp)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    def step_remote_chip_check(self):
+        controller = self._remote_controller
+        if controller is None:
+            record("remote-images-chip-counts", False, "no controller")
+            self._schedule(300, self.step_remote_permit)
+            return False
+        modebar = controller.modebar
+        record(
+            "remote-images-chip-counts",
+            modebar._remote_button.get_visible()
+            and modebar._remote_label.get_text() == "1 remote image",
+            f"visible={modebar._remote_button.get_visible()!r} "
+            f"label={modebar._remote_label.get_text()!r}",
+        )
+        # Addition 3 (an observation for task-17-report.md, not a
+        # requirement either way): `set_refresh_visible` hides the Refresh
+        # button in Markdown mode on the stated principle "visible only
+        # where clicking it would do something". This chip does not hide --
+        # defensible, since Load still does something (it marks the
+        # preview stale), but an unstated exception to the bar's own rule.
+        # Recorded as an unconditional PASS: it exists to put the observed
+        # fact in the report, not to gate the run on which way it goes.
+        controller.set_mode(Mode.SOURCE)
+        record(
+            "remote-images-chip-in-markdown-mode-observation",
+            True,
+            f"chip visible in Markdown mode: {modebar._remote_button.get_visible()!r}",
+        )
+        controller.set_mode(Mode.PREVIEW)
+        self._schedule(300, self.step_remote_permit)
+        return False
+
+    def step_remote_permit(self):
+        controller = self._remote_controller
+        if controller is None:
+            record("remote-images-permitted-csp", False, "no controller")
+            self._schedule(300, self.step_remote_insecure_setup)
+            return False
+        # A real click on the real button, not the internal method directly:
+        # `Gtk.Button.clicked()` emits "clicked" exactly as a pointer click
+        # would, which is what reaches `_on_load_images_requested` through
+        # the bar's own signal rather than around it.
+        controller.modebar._remote_button.clicked()
+        self._schedule(1500, self.step_remote_permit_check)
+        return False
+
+    def step_remote_permit_check(self):
+        controller = self._remote_controller
+
+        def on_csp(csp):
+            record(
+                "remote-images-permitted-csp",
+                csp is not None
+                and (xedown_remoteimages.SCHEME + ":") in csp
+                and "https:" not in csp,
+                f"csp: {csp!r}",
+            )
+            self._schedule(300, self.step_remote_insecure_setup)
+
+        self._read_js(controller, _CSP_JS, on_csp)
+        return False
+
+    # --- an http:// image is never fetched, permitted or not ---------------
+
+    def step_remote_insecure_setup(self):
+        path = os.path.join(self._tmpdir, "remote-insecure.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_INSECURE_MD)
+        self._insecure_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._insecure_view = self._insecure_tab.get_view()
+        self._schedule(1200, self.step_remote_insecure_check_blocked)
+        return False
+
+    def step_remote_insecure_check_blocked(self):
+        controller = self._insecure_controller = self._controller_for(
+            self._insecure_view
+        )
+        if controller is None:
+            record("remote-images-insecure-refused", False, "no controller")
+            self._schedule(300, self.step_remote_offline_setup)
+            return False
+
+        def on_body(text):
+            self._remote_insecure_blocked_ok = (
+                text is not None
+                and xedown_errors.insecure_image_text(_REMOTE_INSECURE_URL) in text
+            )
+            record(
+                "remote-images-insecure-refused-blocked-state",
+                self._remote_insecure_blocked_ok,
+                f"body: {text!r}",
+            )
+            # Granted directly through the production entry point Load
+            # itself calls -- there is no chip to click here, since an
+            # all-insecure document has nothing FETCHABLE to offer
+            # (`_note_remote_images` counts only `REMOTE_BLOCKED`, never
+            # `REMOTE_INSECURE`).
+            controller._on_load_images_requested(controller.modebar)
+            self._schedule(1200, self.step_remote_insecure_check_permitted)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    def step_remote_insecure_check_permitted(self):
+        controller = self._insecure_controller
+
+        def on_body(text):
+            permitted_ok = (
+                text is not None
+                and xedown_errors.insecure_image_text(_REMOTE_INSECURE_URL) in text
+            )
+            record(
+                "remote-images-insecure-refused-permitted-state",
+                permitted_ok,
+                f"body: {text!r}",
+            )
+            record(
+                "remote-images-insecure-refused",
+                self._remote_insecure_blocked_ok and permitted_ok,
+                "an http:// image must show the same refusal whether or not "
+                "remote images are permitted",
+            )
+            self._schedule(300, self.step_remote_offline_setup)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    # --- offline is reported by name, not as a generic failure -------------
+
+    def step_remote_offline_setup(self):
+        path = os.path.join(self._tmpdir, "remote-offline.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_OFFLINE_MD)
+        self._offline_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._offline_view = self._offline_tab.get_view()
+        self._schedule(1200, self.step_remote_offline_permit)
+        return False
+
+    def step_remote_offline_permit(self):
+        controller = self._offline_controller = self._controller_for(self._offline_view)
+        if controller is None:
+            record("remote-images-offline-message", False, "no controller")
+            self._schedule(300, self.step_remote_scroll_setup)
+            return False
+        # Forced on the one process-wide fetcher, ahead of granting this
+        # tab's own permission below: `Fetcher.request()` reads this
+        # callable at request time, not at construction, so setting it here
+        # governs the fetch the permit below is about to trigger.
+        fetcher = xedown_imagescheme.get_fetcher()
+        self._offline_previous_network_available = fetcher._network_available
+        fetcher._network_available = lambda: False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(1500, self.step_remote_offline_check)
+        return False
+
+    def step_remote_offline_check(self):
+        controller = self._offline_controller
+        # Restored before the assertion below, not after: a probe crash
+        # mid-assertion must not leave the one process-wide fetcher stuck
+        # offline for every remote-image step that follows.
+        xedown_imagescheme.get_fetcher()._network_available = (
+            self._offline_previous_network_available
+        )
+
+        def on_body(text):
+            # The precise sentence `errors.remote_image_failure_text`
+            # produces for this failure kind -- not a bare substring check
+            # for the word "offline", which the URL above deliberately
+            # cannot satisfy by accident (see its own comment).
+            expected = xedown_errors.remote_image_failure_text(
+                "offline", "you appear to be offline"
+            )
+            record(
+                "remote-images-offline-message",
+                text is not None and expected in text,
+                f"expected {expected!r} in body: {text!r}",
+            )
+            self._schedule(300, self.step_remote_scroll_setup)
+
+        self._read_js(controller, _ARTICLE_TEXT_JS, on_body)
+        return False
+
+    # --- the scroll restore does not wait for a still-loading image --------
+    #
+    # The regression `pageready.py`'s "ready" message exists to prevent: the
+    # page's own DOMContentLoaded message does not wait for a subresource
+    # still in flight, while `LoadEvent.FINISHED` does -- so if the scroll
+    # restore were driven off FINISHED alone, a slow remote image would hold
+    # it back for as long as the fetch takes to settle.
+
+    def step_remote_scroll_setup(self):
+        path = os.path.join(self._tmpdir, "remote-hanging.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_HANGING_MD)
+        self._hanging_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._hanging_view = self._hanging_tab.get_view()
+        self._schedule(900, self.step_remote_scroll_permit)
+        return False
+
+    def step_remote_scroll_permit(self):
+        controller = self._hanging_controller = self._controller_for(self._hanging_view)
+        if controller is None:
+            record("scroll-restored-without-waiting-for-images", False, "no controller")
+            self._schedule(300, self.step_remote_redirect_setup)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(1200, self.step_remote_scroll_set)
+        return False
+
+    def step_remote_scroll_set(self):
+        self._hanging_controller.preview.set_scroll(0.5)
+        self._schedule(700, self.step_remote_scroll_reload)
+        return False
+
+    def step_remote_scroll_reload(self):
+        controller = self._hanging_controller
+        # A reload with the live scroll fraction preserved -- the same path
+        # `_on_settings_changed`/`_on_user_stylesheet_changed` take for a
+        # theme change, and the only path `restore_scroll` is ever fed
+        # through outside of it. The image's fetch (delay/10, TIMEOUT_S=5)
+        # is nowhere near settled 900ms later, so this reload's own "ready"
+        # message has to race a genuinely still-pending fetch to prove the
+        # regression is fixed, not merely absent because nothing was
+        # actually pending.
+        controller._reload_preview(restore_scroll=controller._current_preview_scroll())
+        self._schedule(900, self.step_remote_scroll_check)
+        return False
+
+    def step_remote_scroll_check(self):
+        controller = self._hanging_controller
+
+        def on_complete(value):
+            still_pending = value == "false"
+            record(
+                "scroll-restored-without-waiting-for-images",
+                still_pending and controller.preview.last_scroll > 0.3,
+                f"image.complete after reload: {value!r}, "
+                f"last_scroll={controller.preview.last_scroll!r}",
+            )
+            self._schedule(300, self.step_remote_redirect_setup)
+
+        self._read_js(controller, _IMG_COMPLETE_JS, on_complete)
+        return False
+
+    # --- Addition 1: a live redirect, through the real opener --------------
+
+    def step_remote_redirect_setup(self):
+        path = os.path.join(self._tmpdir, "remote-redirect.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_REDIRECT_MD)
+        self._redirect_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._redirect_view = self._redirect_tab.get_view()
+        self._schedule(1200, self.step_remote_redirect_permit)
+        return False
+
+    def step_remote_redirect_permit(self):
+        controller = self._redirect_controller = self._controller_for(
+            self._redirect_view
+        )
+        if controller is None:
+            record("remote-images-redirect-followed", False, "no controller")
+            self._schedule(300, self.step_remote_close_pending_setup)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(3000, self.step_remote_redirect_check)
+        return False
+
+    def step_remote_redirect_check(self):
+        controller = self._redirect_controller
+
+        def on_loaded(value):
+            record(
+                "remote-images-redirect-followed",
+                value == "true",
+                "image.complete && naturalWidth>0 after a real 302 through the "
+                f"real opener: {value!r}",
+            )
+            self._schedule(300, self.step_remote_close_pending_setup)
+
+        self._read_js(controller, _IMG_LOADED_JS, on_loaded)
+        return False
+
+    # --- a tab can close while one of its own fetches is still outstanding -
+
+    def step_remote_close_pending_setup(self):
+        path = os.path.join(self._tmpdir, "remote-close-pending.md")
+        with open(path, "w") as handle:
+            handle.write(_REMOTE_CLOSE_PENDING_MD)
+        self._close_pending_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._close_pending_view = self._close_pending_tab.get_view()
+        self._schedule(900, self.step_remote_close_pending_permit)
+        return False
+
+    def step_remote_close_pending_permit(self):
+        controller = self._controller_for(self._close_pending_view)
+        if controller is None:
+            record("tab-close-with-fetches-pending", False, "no controller")
+            self._schedule(300, self.step_remote_images_done)
+            return False
+        controller._on_load_images_requested(controller.modebar)
+        self._schedule(700, self.step_remote_close_pending_verify)
+        return False
+
+    def step_remote_close_pending_verify(self):
+        # The guard against a vacuous pass: without this, a fetch that
+        # happened to already have settled by the time the tab closes would
+        # let the teardown check below pass for proving nothing at all.
+        fetcher = xedown_imagescheme.get_fetcher()
+        record(
+            "tab-close-with-fetches-pending-actually-pending",
+            _REMOTE_HANGING_URL_2 in fetcher._waiting,
+            f"waiting: {sorted(fetcher._waiting)!r}",
+        )
+        self.window.close_tab(self._close_pending_tab)
+        self._schedule(600, self.step_remote_close_pending_check)
+        return False
+
+    def step_remote_close_pending_check(self):
+        record(
+            "tab-close-with-fetches-pending",
+            not hasattr(self._close_pending_view, "_xedown_controller"),
+            "teardown must complete cleanly even with a fetch still outstanding",
+        )
+        self._schedule(300, self.step_remote_images_done)
+        return False
+
+    def step_remote_images_done(self):
+        self._schedule(300, self.step_settings_open)
         return False
 
     # --- the settings window, both ways in ---------------------------------
@@ -3513,7 +4057,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         action = self._find_action(xedown_shortcuts.SETTINGS)
         record("settings-action-is-in-the-menu", action is not None)
         if action is None:
-            self._schedule(300, self.step_disable_prep_infobar)
+            self._schedule(300, self.step_perf_setup)
             return False
         action.activate()
         self._schedule(600, self.step_settings_audit)
@@ -3524,7 +4068,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         window = getattr(activatable, "_settings_window", None)
         record("settings-window-opened", window is not None)
         if window is None:
-            self._schedule(300, self.step_disable_prep_infobar)
+            self._schedule(300, self.step_perf_setup)
             return False
         self._settings_window = window
 
@@ -3668,7 +4212,7 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # Put the theme back so later steps see the state they expect.
         xedown_settings.get_settings().set(xedown_settings.PREVIEW_THEME, "repository")
         self._settings_window = None
-        self._schedule(400, self.step_disable_prep_infobar)
+        self._schedule(400, self.step_perf_setup)
         return False
 
     # --- disable the plugin for real, via the same gsettings key users use -
@@ -3808,6 +4352,398 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         if dest is not None:
             dest.close()
         self._schedule(500, self.step_done)
+        return False
+
+    # --- performance: does a render stall the main loop? ------------------
+
+    def _start_latency_watch(self):
+        """Record the gap between successive 20 ms ticks.
+
+        A synchronous render blocks the loop, so the tick that should have
+        fired during it fires late instead, and the gap is roughly the
+        render's duration. This is the only way to observe a freeze from
+        inside the process it freezes.
+        """
+        self._ticks = []
+        self._last_tick = time.monotonic()
+
+        def tick():
+            now = time.monotonic()
+            self._ticks.append(now - self._last_tick)
+            self._last_tick = now
+            return True
+
+        self._tick_source = GLib.timeout_add(20, tick)
+
+    def _stop_latency_watch(self):
+        if getattr(self, "_tick_source", None):
+            GLib.source_remove(self._tick_source)
+            self._tick_source = 0
+        return max(self._ticks) if self._ticks else 0.0
+
+    def step_perf_setup(self):
+        """Open a document above DEFER_INITIAL_MIN_CHARS in Preview mode."""
+        path = os.path.join(self._tmpdir, "large.md")
+        # Derived from the guard's own threshold, not a bare literal: if
+        # `perflimits.DEFER_INITIAL_MIN_CHARS` is retuned later, this
+        # fixture moves with it instead of silently falling below it and
+        # turning `perf-large-opens-in-source` into a false FAIL with only
+        # "mode=..." to explain why.
+        chars = int(xedown_perflimits.DEFER_INITIAL_MIN_CHARS * 1.5)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(_large_markdown(chars))
+        self._perf_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(path), None, 0, False, True
+        )
+        self._perf_view = self._perf_tab.get_view()
+        self._start_latency_watch()
+        self._schedule(3000, self.step_perf_deferred_check)
+        return False
+
+    def step_perf_deferred_check(self):
+        """Nothing should have rendered, so nothing should have stalled."""
+        self._perf_open_worst = self._stop_latency_watch()
+        controller = self._controller_for(self._perf_tab.get_view())
+        record("perf-large-controller-built", controller is not None)
+        mode = controller.state.mode if controller is not None else None
+        record("perf-large-opens-in-source", mode is Mode.SOURCE, f"mode={mode}")
+        # The chip is the feature's only visible artifact: without it the
+        # reader is looking at a plain Markdown tab with no way to tell that
+        # a preview was offered at all, and every other assertion in this
+        # scenario would still pass. Both halves are checked -- the label,
+        # because it is what says *why* the tab opened this way, and the
+        # button, because `step_perf_build` below is about to click it.
+        bar = controller.modebar if controller is not None else None
+        label = bar._large_label.get_text() if bar is not None else ""
+        record(
+            "perf-large-chip-offers-the-preview",
+            bar is not None
+            and bar._large_label.get_visible()
+            and bar._large_button.get_visible()
+            and label.startswith("Large document ("),
+            f"label={label!r} "
+            f"label visible={bar is not None and bar._large_label.get_visible()!r} "
+            f"button visible={bar is not None and bar._large_button.get_visible()!r}",
+        )
+        # The guard's whole purpose: an unrequested render never happened,
+        # so the loop was never blocked. 250 ms is generous -- a real
+        # render at this size measures around 700 ms (step_perf_build_check
+        # below is the positive control that proves the watcher can tell
+        # the two apart, rather than this bound simply never being tripped).
+        record(
+            "perf-large-open-does-not-stall-the-loop",
+            self._perf_open_worst < 0.25,
+            f"worst tick gap {self._perf_open_worst * 1000:.0f}ms",
+        )
+        self._schedule(500, self.step_perf_build)
+        return False
+
+    def step_perf_build(self):
+        """Take the offer, through the chip's own button.
+
+        A real click on the real button, not `controller.set_mode` --
+        `Gtk.Button.clicked()` emits "clicked" exactly as a pointer click
+        would, so this is the only exercise anywhere of the chip's
+        `build-preview-requested` signal and of
+        `_on_build_preview_requested` behind it. Calling `set_mode`
+        directly would step over both and assert nothing about the one
+        control this feature adds. Same route `step_remote_permit` takes
+        to the remote-images chip, for the same reason.
+
+        The render this triggers is the scenario's positive control:
+        unlike the quiet open and typing windows, this one is *supposed*
+        to stall, and `step_perf_build_check` confirms the watcher actually
+        saw it -- an absolute threshold nothing ever trips is not evidence
+        the instrument works, only that it has never been tested.
+        """
+        controller = self._controller_for(self._perf_tab.get_view())
+        self._start_latency_watch()
+        controller.modebar._large_button.clicked()
+        # Generous headroom, not a tuned figure: this covers both the
+        # ~700-900 ms synchronous Python render (markdown -> sanitize ->
+        # renderer, all on this thread, per perflimits.py) and WebKit's own
+        # out-of-process DOM parse/layout/paint of a page this large, which
+        # this probe cannot observe directly and which is not xedown's own
+        # cost to bound. `step_perf_build_check` only starts the next watch
+        # after this wait, so a short budget here would leak WebKit's tail
+        # into that window and fail it for a reason that has nothing to do
+        # with typing.
+        self._schedule(8000, self.step_perf_build_check)
+        return False
+
+    def step_perf_build_check(self):
+        controller = self._controller_for(self._perf_tab.get_view())
+        build_worst = self._stop_latency_watch()
+        # Relative, not absolute: the open window above already includes
+        # xed's own cost of loading a large document into a syntax-
+        # highlighted GtkSourceBuffer, which this watcher cannot separate
+        # from xedown's own cost -- an absolute bound here could fail on a
+        # slow machine for a reason that has nothing to do with xedown.
+        # Comparing against this run's own open-window measurement instead
+        # is self-calibrating (both are subject to the same machine speed)
+        # and doubles as proof the watcher can detect a real stall at all,
+        # which the two "does-not-stall" bounds elsewhere in this scenario
+        # cannot demonstrate on their own.
+        #
+        # A flat "+250ms" margin used to sit here, sized against a stale
+        # estimate that a 393k-character render blocks 600-900ms. It does
+        # not: the performance harness's own corrected cost model puts
+        # prose at roughly 458ms per million characters, which makes
+        # ~246ms the CORRECT figure at this fixture's size, not a shortfall
+        # -- and a flat "open + 250ms" margin failed on exactly that
+        # correct number. A live run measured open worst 34ms, build worst
+        # 246ms: a genuine 7.2x signal that a fixed-ms margin cannot track
+        # once the baseline it was tuned against moves.
+        #
+        # A `open_worst * 3` ratio then replaced that flat margin and failed
+        # for the mirror-image reason. The two sides do not scale together,
+        # so multiplying one of them multiplies noise, not signal:
+        #
+        #   open worst   build worst   open*3   verdict
+        #        34ms         246ms     102ms   pass  (the run above)
+        #       133ms         316ms     400ms   FAIL
+        #       111ms         244ms     334ms   FAIL
+        #
+        # build_worst is the healthy, stable number in that table -- 244ms
+        # to 316ms, against the ~175ms this fixture's 393k characters of
+        # prose are predicted to cost by the interpolated prose row of
+        # docs/performance.md (109ms at 253k, 227ms at 507k). What moved is
+        # open_worst, which is not a baseline for this at all: it is the
+        # worst gap while *xed* loads 384 KB into a syntax-highlighted
+        # GtkSourceBuffer, a one-off cost in a subsystem xedown defers out
+        # of, and it lands anywhere from 34ms to 133ms depending on what
+        # else the machine is doing. Tripling that raises the bar past a
+        # correct signal, which is the same failure the flat margin had.
+        #
+        # So: ratio 1.0, kept explicit rather than dropped, because the
+        # directional claim is the one worth making -- the window with the
+        # deliberate render in it must be worse than the quiet window
+        # beside it, on this machine, in this run. That part is genuinely
+        # self-calibrating and cannot be inflated by noise without the same
+        # noise inflating build_worst too.
+        #
+        # BUILD_STALL_FLOOR_S then guards the case the comparison alone
+        # cannot: a machine quiet enough that open_worst is near zero,
+        # where a millisecond of stall would satisfy a directional check.
+        # It sits *below* the predicted render cost on purpose. A floor set
+        # at the prediction would fail on hardware faster than the machine
+        # this was written on -- and "the render got cheaper" is not the
+        # regression this control exists to catch. What it catches is
+        # build_worst collapsing to the quiet windows' scale, which is what
+        # a deferred build silently no longer running on the main loop, or
+        # a watcher that has gone blind, would both look like.
+        BUILD_STALL_RATIO = 1.0
+        BUILD_STALL_FLOOR_S = 0.12
+        margin = max(self._perf_open_worst * BUILD_STALL_RATIO, BUILD_STALL_FLOOR_S)
+        record(
+            "perf-large-build-stalls-the-loop",
+            build_worst > margin,
+            f"open worst {self._perf_open_worst * 1000:.0f}ms, "
+            f"build worst {build_worst * 1000:.0f}ms, "
+            f"margin {margin * 1000:.0f}ms",
+        )
+        record(
+            "perf-large-preview-built-on-request",
+            self._preview_visible_for(controller),
+        )
+        # The offer is retired once taken, and both halves of the chip go:
+        # `set_mode` clears `_preview_deferred` and `_deferred_size_label`
+        # together, and the `_apply_size_guard` it then runs hides them.
+        # Free to check here -- no extra wait, and it is the other end of
+        # `perf-large-chip-offers-the-preview` above.
+        record(
+            "perf-large-chip-retired-after-build",
+            not controller.modebar._large_button.get_visible()
+            and not controller.modebar._large_label.get_visible(),
+        )
+        # Live refresh must be off for this tab regardless of the setting.
+        record(
+            "perf-large-live-refresh-suppressed",
+            not controller._live_refresh_allowed(),
+            "the size guard did not override auto-refresh",
+        )
+        self._start_latency_watch()
+        # An *insert*, deliberately, not `set_text`. Rewriting the buffer
+        # wholesale stalls the main loop all by itself, which is the very
+        # thing the tick gap below measures -- the assertion would then
+        # fail for a reason that has nothing to do with rendering. This
+        # types the way a reader types.
+        document = self._perf_tab.get_document()
+        document.insert(document.get_end_iter(), "\n\nmore\n", -1)
+        self._schedule(2000, self.step_perf_typing_check)
+        return False
+
+    def step_perf_typing_check(self):
+        worst = self._stop_latency_watch()
+        record(
+            "perf-large-typing-does-not-stall-the-loop",
+            worst < 0.25,
+            f"worst tick gap {worst * 1000:.0f}ms",
+        )
+        controller = self._controller_for(self._perf_tab.get_view())
+        record("perf-large-preview-marked-stale", controller.state.preview_stale)
+        # The insert above left the buffer modified and never saved; xed
+        # would otherwise raise its own "save changes?" dialog on close,
+        # which nothing in this probe can dismiss (`_guard` only turns an
+        # *exception* into a FAIL -- a modal dialog blocks the loop, it
+        # does not raise) and which would hang the harness to its own
+        # `SEQUENCE_TIMEOUT_SECONDS`, leaving the dialog stranded on the
+        # user's desktop. Same remedy `_reconcile_without_saving` uses
+        # above: mark the buffer clean by hand rather than asking xed to
+        # save or discard content this probe put there on purpose.
+        self._perf_tab.get_document().set_modified(False)
+        self.window.close_tab(self._perf_tab)
+        self._schedule(800, self.step_perf_torn_down)
+        return False
+
+    def step_perf_torn_down(self):
+        view = getattr(self, "_perf_view", None)
+        record(
+            "perf-large-tab-released",
+            view is None or not hasattr(view, "_xedown_controller"),
+        )
+        self._schedule(500, self.step_identity_setup)
+        return False
+
+    # --- document identity: rename, save-as, close, reopen ----------------
+    #
+    # `_remembered_path`, the file watch and the modestore key can each go
+    # stale independently of one another when the file underneath an open
+    # document changes identity. A rename on disk (this section) and a Save
+    # As (the next step) are deliberately different hazards: a rename is
+    # what the file watcher sees with nothing telling xed about it, while
+    # Save As is xed itself moving the document's own notion of its path.
+    #
+    # `leakhooks.checkpoint()` is taken before the tab this sequence tears
+    # down is even created, and passed as `since=` to the one audit below --
+    # this probe is one long-lived process that has already opened many
+    # other, entirely legitimate tabs by the time this sequence runs, and an
+    # unscoped audit would report every one of them.
+
+    def step_identity_setup(self):
+        self._id_dir = tempfile.mkdtemp(dir=self._tmpdir, prefix="identity-")
+        self._id_path = os.path.join(self._id_dir, "before.md")
+        with open(self._id_path, "w", encoding="utf-8") as handle:
+            handle.write("# Identity\n\nOriginal body.\n")
+        self._id_checkpoint = leakhooks.checkpoint()
+        self._id_tab = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._id_path), None, 0, False, True
+        )
+        self._id_view = self._id_tab.get_view()
+        self._schedule(2500, self.step_identity_edit)
+        return False
+
+    def step_identity_edit(self):
+        controller = self._controller_for(self._id_view)
+        record("identity-controller-built", controller is not None)
+        record("identity-preview-visible", self._preview_visible_for(controller))
+        document = self._id_tab.get_document()
+        document.set_text("# Identity\n\nEdited body.\n")
+        self._schedule(1200, self.step_identity_save)
+        return False
+
+    def step_identity_save(self):
+        Xed.commands_save_document(self.window, self._id_tab.get_document())
+        self._schedule(1500, self.step_identity_rename)
+        return False
+
+    def step_identity_rename(self):
+        """Rename on disk underneath the open document.
+
+        xed keeps pointing at the old path, which no longer exists. What
+        must not happen is a crash, an error page, or a stale watch that
+        fires on a file that is gone.
+        """
+        self._id_renamed = os.path.join(self._id_dir, "after.md")
+        os.rename(self._id_path, self._id_renamed)
+        self._schedule(2500, self.step_identity_rename_check)
+        return False
+
+    def step_identity_rename_check(self):
+        controller = self._controller_for(self._id_view)
+        record("identity-survives-rename", controller is not None)
+        record(
+            "identity-no-error-page-after-rename",
+            controller is not None and controller._page_is_document,
+        )
+        self._schedule(500, self.step_identity_save_as)
+        return False
+
+    def step_identity_save_as(self):
+        """Save As to the renamed path, which is what a reader would do."""
+        document = self._id_tab.get_document()
+        document.set_location(Gio.File.new_for_path(self._id_renamed))
+        Xed.commands_save_document(self.window, document)
+        self._schedule(2000, self.step_identity_save_as_check)
+        return False
+
+    def step_identity_save_as_check(self):
+        controller = self._controller_for(self._id_view)
+        record(
+            "identity-remembered-path-followed-save-as",
+            controller is not None and controller._remembered_path == self._id_renamed,
+            f"controller remembers {controller and controller._remembered_path}",
+        )
+        record(
+            "identity-preview-still-live-after-save-as",
+            self._preview_visible_for(controller),
+        )
+        self._schedule(500, self.step_identity_close)
+        return False
+
+    def step_identity_close(self):
+        self.window.close_tab(self._id_tab)
+        self._schedule(1200, self.step_identity_reopen)
+        return False
+
+    def step_identity_reopen(self):
+        record(
+            "identity-controller-released-on-close",
+            not hasattr(self._id_view, "_xedown_controller"),
+        )
+        findings = leakhooks.audit(since=self._id_checkpoint)
+        record(
+            "identity-no-leaks-after-close",
+            not findings,
+            leakhooks.format_findings(findings),
+        )
+        # A second, independent checkpoint for a second, independent
+        # teardown. `_id_tab2` is a controller built fresh against the
+        # RENAMED path -- its own `_start_watch`, its own modestore lookup
+        # keyed on `after.md` rather than `before.md` -- which is a
+        # different code path from `_id_tab`'s teardown just audited above,
+        # and nothing else in this workstream reopens a renamed file and
+        # closes it again. Taken here, before `_id_tab2` exists, for the
+        # same reason as the first checkpoint above: one taken after the
+        # tab it means to audit already exists could only ever pass.
+        self._id_checkpoint2 = leakhooks.checkpoint()
+        self._id_tab2 = self.window.create_tab_from_location(
+            Gio.File.new_for_path(self._id_renamed), None, 0, False, True
+        )
+        self._id_view2 = self._id_tab2.get_view()
+        self._schedule(2500, self.step_identity_reopen_check)
+        return False
+
+    def step_identity_reopen_check(self):
+        controller = self._controller_for(self._id_view2)
+        record("identity-reopens-cleanly", controller is not None)
+        record("identity-reopened-preview-live", self._preview_visible_for(controller))
+        self.window.close_tab(self._id_tab2)
+        self._schedule(1200, self.step_identity_reopen_teardown_check)
+        return False
+
+    def step_identity_reopen_teardown_check(self):
+        record(
+            "identity-reopened-controller-released-on-close",
+            not hasattr(self._id_view2, "_xedown_controller"),
+        )
+        findings = leakhooks.audit(since=self._id_checkpoint2)
+        record(
+            "identity-reopened-no-leaks-after-close",
+            not findings,
+            leakhooks.format_findings(findings),
+        )
+        self._schedule(800, self.step_disable_prep_infobar)
         return False
 
     def step_done(self):

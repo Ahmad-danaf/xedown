@@ -37,8 +37,6 @@ class ModeStore:
         self._entries = []  # [(path, Mode)], newest first
         self._load()
 
-    # --- reading -----------------------------------------------------------
-
     def get(self, path):
         """The mode remembered for `path`, or None when there is none."""
         if not path:
@@ -90,8 +88,6 @@ class ModeStore:
             seen.add(path)
             entries.append((path, mode))
         return entries
-
-    # --- writing -----------------------------------------------------------
 
     def remember(self, path, mode):
         """Record `mode` for `path` as the newest entry."""

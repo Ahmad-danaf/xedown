@@ -19,6 +19,7 @@ MARKDOWN_EXTENSIONS = (
     "markdown.extensions.toc",
     "markdown.extensions.sane_lists",
     "markdown.extensions.attr_list",
+    "markdown.extensions.md_in_html",
 )
 
 

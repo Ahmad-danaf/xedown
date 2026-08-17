@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a focused improvement to xedown
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is difficult today, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful outcome rather than an implementation only.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Security, privacy, compatibility, or UI tradeoffs
+      description: Note any network access, untrusted-content, settings, or platform implications.
+

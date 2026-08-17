@@ -2,7 +2,7 @@ import os
 import re
 
 import pytest
-from xedown import errors, renderer, stylesheets, themes, vendoring
+from xedown import errors, images, renderer, stylesheets, themes, vendoring
 
 
 @pytest.fixture
@@ -38,6 +38,34 @@ def test_fragment_renders_task_lists():
     html = renderer.render_fragment("- [ ] todo\n- [x] done\n")
     assert "<input" in html
     assert "checked" in html
+
+
+def test_table_column_alignment_survives_as_align_attribute():
+    html = renderer.render_fragment("| a | b |\n|:-:|--:|\n| 1 | 2 |\n")
+    assert '<th align="center">a</th>' in html
+    assert '<th align="right">b</th>' in html
+    assert '<td align="center">1</td>' in html
+    assert '<td align="right">2</td>' in html
+
+
+def test_table_explicit_left_alignment_survives_as_align_attribute():
+    # A left-aligned column is meaningful (not merely redundant) in a
+    # right-to-left document, so an explicit `:---` must still produce
+    # `align="left"` rather than being treated as "no alignment".
+    html = renderer.render_fragment("| a |\n|:---|\n| 1 |\n")
+    assert '<th align="left">a</th>' in html
+    assert '<td align="left">1</td>' in html
+
+
+def test_table_without_alignment_row_has_no_align_attribute():
+    html = renderer.render_fragment("| a | b |\n|---|---|\n| 1 | 2 |\n")
+    assert "align=" not in html
+
+
+def test_table_alignment_never_emits_style_attribute():
+    html = renderer.render_fragment("| a | b |\n|:-:|--:|\n| 1 | 2 |\n")
+    assert "style=" not in html
+    assert "text-align" not in html
 
 
 def test_relative_image_is_resolved_to_an_absolute_file_uri(base):
@@ -89,7 +117,13 @@ def test_resolvable_local_image_still_renders_as_an_img(base):
 
 
 def test_data_image_still_renders_as_an_img():
-    html = renderer.render_fragment("![pic](data:image/png;base64,iVBORw0KGgo=)")
+    # A real 1x1 PNG, not just the bare signature: the decode-size check now
+    # reads the IHDR, and a signature with no header is corrupt, not tiny.
+    tiny_png = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA"
+        "C0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+    html = renderer.render_fragment(f"![pic](data:image/png;base64,{tiny_png})")
     assert "<img" in html
     assert "data:image/png" in html
     assert "xedown-image-error" not in html
@@ -372,6 +406,67 @@ def test_an_internal_render_failure_is_recognisable_as_an_error_page(monkeypatch
     assert errors.is_error_page(page)
 
 
+REMOTE_IMAGE = "![x](https://example.com/a.png)"
+
+
+def test_a_successful_render_marks_the_stats_rendered():
+    stats = images.RenderStats()
+    page = renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    assert not errors.is_error_page(page)
+    assert stats.rendered is True
+    assert stats.blocked_remote == 1
+
+
+def test_a_failed_render_leaves_the_stats_unrendered(monkeypatch):
+    # The counts are recorded while the body is built, and the body is built
+    # before the steps that can still fail -- so a failed render hands back
+    # an error page with a real count already on it. `rendered` is what the
+    # controller reads to know that count describes nothing on screen; a
+    # chip offering to load one remote image, over a page with no images in
+    # it, is what this prevents.
+    def explode(_name):
+        raise vendoring.VendorError("bundled resource missing")
+
+    monkeypatch.setattr(vendoring, "read_resource", explode)
+    stats = images.RenderStats()
+    page = renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    assert errors.is_error_page(page)
+    assert stats.blocked_remote == 1  # counted before the failure
+    assert stats.rendered is False
+
+
+def test_a_render_that_raises_before_the_body_leaves_the_stats_unrendered(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(renderer, "render_fragment", explode)
+    stats = images.RenderStats()
+    assert errors.is_error_page(
+        renderer.render_document(REMOTE_IMAGE, nonce="n", stats=stats)
+    )
+    assert stats.rendered is False
+
+
+def test_a_fragment_render_marks_the_stats_rendered():
+    # The other entry point, used by the in-place body swap: a fragment that
+    # returns is the document, and its caller needs the same answer.
+    stats = images.RenderStats()
+    renderer.render_fragment(REMOTE_IMAGE, stats=stats)
+    assert stats.rendered is True
+    assert stats.blocked_remote == 1
+
+
+def test_a_fragment_render_that_raises_leaves_the_stats_unrendered(monkeypatch):
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(renderer, "sanitize", explode)
+    stats = images.RenderStats()
+    with pytest.raises(RuntimeError):
+        renderer.render_fragment(REMOTE_IMAGE, stats=stats)
+    assert stats.rendered is False
+
+
 def test_malformed_link_does_not_crash_the_render(base):
     # `urllib.parse.urlparse` raises ValueError on an unbalanced IPv6-literal
     # bracket. render_fragment is a public interface called directly on
@@ -460,20 +555,20 @@ def test_an_unusable_display_value_never_reaches_the_page():
     # out of the config block, so a value that was coerced for the body and
     # not for the config would leave the two disagreeing.
     html = renderer.render_document("![A](pics/gone.png)", image_display="nonsense")
-    assert '"imageDisplay": "placeholder"' in html
+    assert '"imageFallback": "placeholder"' in html
     assert "nonsense" not in html
 
 
 def test_the_page_carries_its_config():
     html = renderer.render_document("# x", code_copy_buttons=False, image_display="alt")
     assert '"codeCopy": false' in html
-    assert '"imageDisplay": "alt"' in html
+    assert '"imageFallback": "alt"' in html
 
 
 def test_the_config_defaults_reproduce_v01_behaviour():
     html = renderer.render_document("# x")
     assert '"codeCopy": true' in html
-    assert '"imageDisplay": "placeholder"' in html
+    assert '"imageFallback": "placeholder"' in html
 
 
 ARABIC_DOC = "# عنوان\n\nهذه فقرة باللغة العربية تُقرأ من اليمين إلى اليسار.\n"
@@ -594,3 +689,220 @@ def test_angle_brackets_and_newlines_cannot_escape_the_language_attribute():
     html_out = renderer.render_document("# Title\n", lang="en><script>\nx")
     assert "<script>" not in html_out.split("<body")[0]
     assert "lang=" in html_out
+
+
+def test_a_blocked_render_does_not_name_the_scheme_in_its_csp():
+    page = renderer.render_document("![x](https://e.com/a.png)")
+    assert "xedown-image:" not in page
+    assert "img-src file: data:;" in page
+
+
+def test_a_permitted_render_names_the_scheme_in_its_csp():
+    page = renderer.render_document("![x](https://e.com/a.png)", fetch_remote=True)
+    assert "img-src file: data: xedown-image:;" in page
+
+
+def test_no_render_ever_grants_the_page_https():
+    for permitted in (False, True):
+        page = renderer.render_document(
+            "![x](https://e.com/a.png)", fetch_remote=permitted
+        )
+        assert "img-src" in page
+        img_src = page.split("img-src", 1)[1].split(";", 1)[0]
+        assert "https:" not in img_src
+        assert "http:" not in img_src
+
+
+def test_a_permitted_render_emits_the_scheme_url():
+    body = renderer.render_fragment("![x](https://e.com/a.png)", fetch_remote=True)
+    assert "xedown-image:https%3A%2F%2Fe.com%2Fa.png" in body
+
+
+def test_stats_report_what_the_render_did():
+    stats = images.RenderStats()
+    renderer.render_document(
+        "![a](https://e.com/a.png)\n\n![b](http://e.com/b.png)", stats=stats
+    )
+    assert stats.blocked_remote == 1
+    assert stats.insecure == 1
+
+
+def test_stats_are_optional():
+    assert renderer.render_document("![a](https://e.com/a.png)")
+
+
+def test_the_config_block_renames_the_fallback_key():
+    # Task 13 renamed preview.js's own "imageDisplay" spelling to match, so
+    # this can now assert across the whole rendered page rather than being
+    # scoped to the window.xedownConfig blob -- which is what it should have
+    # said all along.
+    page = renderer.render_document("hello")
+    after = page.split("window.xedownConfig = ", 1)[1]
+    config_block = after.split("</script>", 1)[0]
+    assert "imageFallback" in config_block
+    assert "imageDisplay" not in page
+
+
+def test_an_oversized_inline_image_produces_a_page_not_an_exception():
+    # A refused image must never break the preview: render_document promises
+    # never to raise, and a placeholder is what the reader gets.
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", 20000, 20000, 8, 0, 0, 0, 0)
+    )
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    page = renderer.render_document(f"![x]({uri})")
+    assert "xedown-image-error" in page
+    assert "20000" in page
+    assert "Cannot render this document" not in page
+
+
+def test_a_damaged_inline_image_produces_a_page_not_an_exception():
+    # A PNG signature with no IHDR is corrupt, not oversized -- render_document
+    # must still degrade to a placeholder rather than raise or claim a size.
+    import base64
+
+    signature_only = base64.b64encode(b"\x89PNG\r\n\x1a\n").decode("ascii")
+    uri = f"data:image/png;base64,{signature_only}"
+    page = renderer.render_document(f"![x]({uri})")
+    assert "xedown-image-error" in page
+    assert "Cannot render this document" not in page
+    assert "0×0" not in page
+
+
+# --- md_in_html: markdown="1" opts a single element into Markdown parsing ---
+#
+# Task 17 (F4 follow-up). `markdown.extensions.md_in_html` is loaded in
+# `vendoring.MARKDOWN_EXTENSIONS`, but it requires a per-element opt-in
+# (`attrs.get('markdown', '0')` in `vendor/markdown/extensions/md_in_html.py`)
+# -- there is no unconditional mode. GitHub parses block HTML unconditionally;
+# xedown does not, and this extension does not change that. F4's general case
+# (465 literal code spans / 177 literal links across the audit corpus) is a
+# documented known limitation, not something this fixes. What this pins is
+# the narrower, real thing the extension *does* do -- and proves the
+# sanitizer still holds now that an opted-in element's content is parsed
+# into real markup instead of staying literal text.
+
+
+def test_markdown_inside_an_opted_in_div_is_parsed():
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n**bold** and [a link](https://example.com)\n\n</div>\n'
+    )
+    assert "<strong>bold</strong>" in html
+    assert '<a href="https://example.com">a link</a>' in html
+
+
+def test_markdown_inside_a_plain_div_is_not_parsed():
+    # Deliberate known-limitation pin, not a bug. Without markdown="1",
+    # md_in_html leaves the div's content as literal raw HTML, so the
+    # Markdown syntax inside it is untouched source text -- this is F4's
+    # general case (GitHub parses unconditionally, xedown does not), parked
+    # by the controller ruling for task 17. If this assertion ever starts
+    # failing because the content got parsed, that is the general case
+    # being fixed on purpose -- update this comment, don't just delete the
+    # test to make it pass.
+    html = renderer.render_fragment(
+        "<div>\n\n**bold** and [a link](https://example.com)\n\n</div>\n"
+    )
+    assert "<strong>" not in html
+    assert "**bold**" in html
+    assert "<a href=" not in html
+    assert "[a link](https://example.com)" in html
+
+
+def test_the_markdown_attribute_itself_never_reaches_the_page():
+    # markdown="1" is the opt-in signal md_in_html consumes before the
+    # sanitizer ever sees the element. It is not in
+    # sanitizer.ALLOWED_ATTRIBUTES and must not leak through even on the
+    # element it opted in.
+    html = renderer.render_fragment('<div markdown="1">\n\ntext\n\n</div>\n')
+    assert "markdown=" not in html
+
+
+def test_a_javascript_link_inside_an_opted_in_div_is_still_refused():
+    # The sharpest case this extension introduces: before md_in_html this
+    # bracket-paren text was inert literal source. Now it is parsed into a
+    # real <a href>, and the href scheme allowlist must still refuse it.
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n[x](javascript:alert(1))\n\n</div>\n'
+    )
+    assert "javascript:" not in html
+    assert "href=" not in html
+
+
+def test_a_script_tag_inside_an_opted_in_div_is_discarded():
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n<script>alert(1)</script>\n\n</div>\n'
+    )
+    assert "<script" not in html
+    assert "alert" not in html
+
+
+def test_an_svg_onload_inside_an_opted_in_summary_is_discarded():
+    html = renderer.render_fragment(
+        '<details markdown="1">\n'
+        '<summary markdown="1"><svg onload=alert(1)></svg>hi</summary>\n\n'
+        "<script>alert(1)</script>\n\n"
+        "</details>\n"
+    )
+    assert "<details>" in html
+    assert "<summary>hi</summary>" in html
+    assert "onload" not in html
+    assert "<svg" not in html
+    assert "<script" not in html
+    assert "alert" not in html
+
+
+def test_raw_html_nested_inside_parsed_markdown_inside_raw_html_stays_raw():
+    # The inner <div> carries no markdown="1" of its own, so it is not
+    # opted in even though it sits inside an opted-in ancestor -- its
+    # content stays literal raw HTML, same rule as
+    # test_markdown_inside_a_plain_div_is_not_parsed. Markdown syntax
+    # outside the inner div but inside the outer one is still parsed.
+    html = renderer.render_fragment(
+        '<div markdown="1">\n\n'
+        "<div>\n\nliteral **not parsed** here\n\n</div>\n\n"
+        "**parsed** outside the inner raw div\n\n"
+        "</div>\n"
+    )
+    assert "**not parsed**" in html
+    assert "<strong>parsed</strong>" in html
+
+
+def test_a_data_image_inside_an_opted_in_div_still_uses_the_decode_limit_path():
+    # Same oversized-PNG shape as
+    # test_an_oversized_inline_image_produces_a_page_not_an_exception, just
+    # wrapped in a markdown="1" element -- proving the image pipeline (and
+    # its shared imagelimits decode cap) does not depend on how the <img>
+    # reached the sanitizer.
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag, payload):
+        return (
+            struct.pack(">I", len(payload))
+            + tag
+            + payload
+            + struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        )
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(
+        b"IHDR", struct.pack(">IIBBBBB", 20000, 20000, 8, 0, 0, 0, 0)
+    )
+    uri = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    page = renderer.render_document(f'<div markdown="1">\n\n![x]({uri})\n\n</div>\n')
+    assert "xedown-image-error" in page
+    assert "20000" in page
+    assert "Cannot render this document" not in page

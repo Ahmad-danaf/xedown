@@ -56,7 +56,7 @@ cp node_modules/highlight.js/styles/github.min.css "$RESOURCES/highlight-light.c
 cp node_modules/highlight.js/styles/github-dark.min.css "$RESOURCES/highlight-dark.css"
 
 echo "==> Verifying the bundle registers exactly the pinned languages"
-EXPECTED="$(echo $LANGUAGES | tr ' ' '\n' | sort | tr '\n' ' ')"
+EXPECTED="$(echo "$LANGUAGES" | tr ' ' '\n' | sort | tr '\n' ' ')"
 ACTUAL="$(node -e "
 const fs = require('fs');
 const g = {};

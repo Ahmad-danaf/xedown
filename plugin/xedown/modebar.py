@@ -25,6 +25,14 @@ _STYLE = b"""
   font-size: .8em;
   padding: 0 .3em;
 }
+.xedown-modebar .xedown-remote-notice {
+  color: alpha(currentColor, 0.6);
+  padding: 0 .5em;
+}
+.xedown-modebar .xedown-large-notice {
+  color: alpha(currentColor, 0.6);
+  padding: 0 .5em;
+}
 """
 
 _provider_installed = False
@@ -36,10 +44,9 @@ def _ensure_provider():
     if _provider_installed:
         return
 
-    # Attempt to get a screen to install the provider on.
     screen = Gdk.Screen.get_default()
     if screen is None:
-        # No display; CSS styling will not apply, but widget construction continues.
+        # No display: styling will not apply, but construction continues.
         _provider_installed = True
         return
 
@@ -59,6 +66,8 @@ class ModeBar(Gtk.Box):
     __gsignals__: ClassVar = {
         "mode-selected": (GObject.SignalFlags.RUN_FIRST, None, (str,)),
         "refresh-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "load-images-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
+        "build-preview-requested": (GObject.SignalFlags.RUN_FIRST, None, ()),
     }
 
     def __init__(self):
@@ -89,11 +98,9 @@ class ModeBar(Gtk.Box):
 
         self.pack_start(segments, False, False, 0)
 
-        # Packed from the trailing edge inward, so the button sits at the end
-        # of the bar and the dot immediately before it. Both are
-        # set_no_show_all so a show_all() on the tab cannot reveal either --
-        # the same mitigation the controller applies to the source frame and
-        # the WebView, for the same reason.
+        # Packed from the trailing edge inward, so each later pack_end lands
+        # further in. `set_no_show_all` so a show_all() on the tab cannot
+        # reveal either, as the controller does for the frame and WebView.
         self._refresh_button = Gtk.Button()
         self._refresh_button.add(self._make_content("Refresh", "view-refresh-symbolic"))
         self._refresh_button.set_no_show_all(True)
@@ -105,14 +112,53 @@ class ModeBar(Gtk.Box):
         self._refresh_button.connect("clicked", self._on_refresh_clicked)
         self.pack_end(self._refresh_button, False, False, 0)
 
+        # Immediately after the refresh button, and before the chip below, so
+        # it stays adjacent to the button it describes: `set_stale` rewrites
+        # that button's tooltip in the same call.
         self._stale_dot = Gtk.Label(label="●")
         self._stale_dot.get_style_context().add_class("xedown-stale-dot")
         self._stale_dot.set_no_show_all(True)
-        # Without a name this reads as "black circle" -- a description of a
-        # shape rather than of what it means. It appears and disappears, so
-        # the name is what makes its appearing mean something.
+        # Without a name a screen reader reads this as "black circle", a
+        # shape rather than a meaning.
         self._name(self._stale_dot, a11y.NAMES["stale"])
         self.pack_end(self._stale_dot, False, False, 0)
+
+        # Inward of the dot, reading "<count> remote images [Load]" ahead of
+        # the refresh/stale pair. A quiet chip rather than a warning bar,
+        # because blocking is the safe default and a document with one badge
+        # image should not raise an alarm every time it opens.
+        self._remote_button = Gtk.Button(label="Load")
+        self._remote_button.set_no_show_all(True)
+        self._name(self._remote_button, a11y.NAMES["load_images"])
+        self._remote_button.connect(
+            "clicked", lambda _b: self.emit("load-images-requested")
+        )
+        self.pack_end(self._remote_button, False, False, 0)
+
+        self._remote_label = Gtk.Label()
+        self._remote_label.set_no_show_all(True)
+        self._remote_label.get_style_context().add_class("xedown-remote-notice")
+        self._name(self._remote_label, a11y.NAMES["remote_images_notice"])
+        self.pack_end(self._remote_label, False, False, 0)
+
+        # Packed inward of the remote-images chip, so a document that is
+        # both large and has blocked images reads outward as
+        # "<size> [Preview] <count> remote images [Load]". Same shape as
+        # that chip deliberately -- a quiet label plus an action, not a
+        # warning bar. A large document is an ordinary thing to open.
+        self._large_button = Gtk.Button(label="Preview")
+        self._large_button.set_no_show_all(True)
+        self._name(self._large_button, a11y.NAMES["build_preview"])
+        self._large_button.connect(
+            "clicked", lambda _b: self.emit("build-preview-requested")
+        )
+        self.pack_end(self._large_button, False, False, 0)
+
+        self._large_label = Gtk.Label()
+        self._large_label.set_no_show_all(True)
+        self._large_label.get_style_context().add_class("xedown-large-notice")
+        self._name(self._large_label, a11y.NAMES["large_document_notice"])
+        self.pack_end(self._large_label, False, False, 0)
 
         self.set_mode(Mode.PREVIEW)
 
@@ -153,34 +199,22 @@ class ModeBar(Gtk.Box):
     def has_focus_inside(self):
         """True when keyboard focus is on one of this bar's own mode buttons.
 
-        Checked by the controller before a mode switch takes effect: if the
-        user tabbed to a mode button and activated it, Orca already
-        announces the toggle's own state change ("Preview toggle button
-        pressed."), and an `announce()` on top of that would make a focused
-        user hear the mode twice. Deliberately narrower than "any focusable
-        control in this bar": the refresh button is a plain `Gtk.Button`
-        with no toggle state of its own, so a mode switch with *it* focused
-        (auto-refresh off, correcting a stale preview via Ctrl+Shift+M with
-        focus still on Refresh) gets no state-change speech from Orca either
-        -- including it here would suppress the one announcement that does
-        exist, leaving that switch completely silent, exactly the defect
-        this mechanism exists to remove. The stale dot is not a candidate at
-        all; it is a `Gtk.Label`, never focusable.
+        Checked before a mode switch takes effect: if the user tabbed to a
+        mode button and activated it, Orca already announces the toggle's own
+        state change, and announcing again would say the mode twice.
 
-        Named `_inside`, not `has_focus`, on purpose: `Gtk.Widget.has_focus()`
-        (called below, per button) means something narrower than the plain
-        name suggests -- true only when the *toplevel window* currently
-        holds real X11 input focus, not merely when a widget is the window's
-        own focus widget. `tests/integration/xedown_probe/__init__.py`
-        calls a check built on that "flaky by construction" for exactly this
-        reason and prefers `is_focus()` for its own assertions, because a
-        probe step can run with the window unfocused. That risk doesn't
-        apply here: a mode switch only ever happens in reaction to a
-        keystroke that just landed on this window, so real input focus is
-        guaranteed at the moment `set_mode` reads this. But a name that
-        could be mistaken for the stricter, well-known GTK method would be
-        an easy trap for the next caller regardless of whether today's use
-        is safe.
+        Deliberately narrower than "any focusable control in this bar". The
+        refresh button is a plain `Gtk.Button` with no toggle state, so a
+        switch made with *it* focused gets no state-change speech from Orca
+        -- including it here would leave that switch completely silent, which
+        is the defect this mechanism exists to remove.
+
+        Named `_inside`, not `has_focus`, because `Gtk.Widget.has_focus()`
+        (used below) is true only when the toplevel window holds real input
+        focus, not merely when a widget is the window's focus widget. That is
+        safe here, since a mode switch always follows a keystroke on this
+        window, but the stricter GTK method's name would be a trap for the
+        next caller.
         """
         return any(
             button.has_focus()
@@ -234,6 +268,56 @@ class ModeBar(Gtk.Box):
             if showing
             else "Refresh the preview (Ctrl+Shift+R)"
         )
+
+    def set_remote_images(self, count):
+        """Offer to load `count` blocked remote images, or hide the offer.
+
+        The count goes into the accessible name as well as the visible label:
+        the chip appearing is what makes it mean anything, and a screen reader
+        gets no other signal that it did.
+        """
+        showing = bool(count)
+        if showing:
+            words = "1 remote image" if count == 1 else f"{count} remote images"
+            self._remote_label.set_text(words)
+            accessible = self._remote_label.get_accessible()
+            if accessible is not None:
+                accessible.set_name(f"{a11y.NAMES['remote_images_notice']}: {words}")
+            self._remote_button.set_tooltip_text(
+                "Load these images. The websites they come from will see your "
+                "IP address."
+            )
+        self._remote_label.set_visible(showing)
+        self._remote_button.set_visible(showing)
+
+    def set_large_document(self, size_label):
+        """Offer to build a deferred preview, or hide the offer.
+
+        `size_label` is already-formatted text from
+        `perflimits.describe_bytes`; the bar holds no policy about what
+        counts as large, exactly as it holds none about which images were
+        blocked. Falsy hides the chip.
+
+        The size goes into the accessible name as well as the visible
+        label, for the same reason the remote-images chip's count does:
+        the chip appearing is what makes it mean anything, and a screen
+        reader gets no other signal that it did.
+        """
+        showing = bool(size_label)
+        if showing:
+            words = f"Large document ({size_label})"
+            self._large_label.set_text(words)
+            accessible = self._large_label.get_accessible()
+            if accessible is not None:
+                accessible.set_name(
+                    f"{a11y.NAMES['large_document_notice']}: {size_label}"
+                )
+            self._large_button.set_tooltip_text(
+                "Build the preview. A document this large takes a moment to "
+                "render, and the editor will not respond while it does."
+            )
+        self._large_label.set_visible(showing)
+        self._large_button.set_visible(showing)
 
     def _on_refresh_clicked(self, _button):
         self.emit("refresh-requested")

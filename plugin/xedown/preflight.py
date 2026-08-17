@@ -1,0 +1,332 @@
+"""What this machine can and cannot run, decided away from the shell.
+
+Pure, and on purpose: `install.sh` gathers facts about the machine, and this
+module decides what they mean. The split is the same one the rest of the
+codebase uses -- anything that imports `gi` is unreachable by the unit tests,
+because GTK/Xed/WebKit typelibs do not exist in CI -- and it is what lets the
+supported matrix be table-tested on all three Pythons instead of being
+trusted.
+
+It is run as a file, never imported as `xedown.preflight` by the installer:
+importing the package executes `__init__.py`, whose `gi` guard prints a note
+to stderr, which is correct behaviour and noise in the middle of an install.
+That is why there are no relative imports here.
+
+The installer ranges and exact live-release versions below are published in
+`docs/compatibility.md`, which is the copy a reader actually meets.
+`tests/unit/test_compatibility.py` pins both halves to these values: the
+`LIVE_*` constants and the required GI API versions to the supported table,
+and `MIN_PYTHON`, `TESTED_PYTHON`, `TESTED_XED` and `TESTED_DISTRO_MAJOR` to
+the sections describing what the installer refuses and warns about. The two
+are deliberately different claims -- a range the installer tolerates is not a
+version anyone ran -- and the document keeps them in separate sections for
+that reason.
+"""
+
+import re
+import sys
+from typing import NamedTuple
+
+MIN_PYTHON = (3, 10)
+TESTED_PYTHON = ((3, 10), (3, 11), (3, 12))
+TESTED_XED = (3, 8)
+REQUIRED_WEBKIT_GI = "4.1"
+REQUIRED_GTK_GI = "3.0"
+TESTED_DISTRO_ID = "linuxmint"
+TESTED_DISTRO_MAJOR = 22
+TESTED_SESSION_TYPE = "x11"
+
+# Exact environment used for live v1.0 desktop verification. These are kept
+# separate from the broader installer-warning ranges above: a preflight may
+# reasonably allow a nearby version without turning it into a support claim.
+LIVE_DISTRO_VERSION = "22.3"
+LIVE_XED_VERSION = "3.8.9"
+LIVE_PYTHON_VERSION = "3.12.3"
+LIVE_GTK_VERSION = "3.24.41"
+LIVE_WEBKIT_VERSION = "2.52.3"
+
+HARD = "hard"
+SOFT = "soft"
+
+
+class Finding(NamedTuple):
+    """One thing worth saying about this machine before installing.
+
+    `remedy` is the empty string when there is nothing to install -- an
+    unsupported Python is not fixed by apt, and inventing a command for it
+    would be worse than saying nothing.
+    """
+
+    severity: str
+    code: str
+    message: str
+    remedy: str = ""
+
+
+# `[0-9]`, never `\d`: `\d` is Unicode-aware and matches Arabic-Indic
+# digits, which `int()` then converts without complaint, inventing a version
+# nobody reported. CLAUDE.md records the same trap in the sanitizer.
+
+_XED_VERSION = re.compile(r"Version\s+([0-9]+)\.([0-9]+)(?:\.([0-9]+))?")
+_DOTTED = re.compile(r"^\s*([0-9]+)\.([0-9]+)(?:\.([0-9]+))?")
+_LEADING_INT = re.compile(r"^\s*([0-9]+)")
+
+
+def _triple(match):
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+
+
+def parse_xed_version(text):
+    """`(major, minor, patch)` from `xed --version`, or None.
+
+    The real output carries a prose prefix and, on Mint, a distro suffix:
+    `xed - Version 3.8.9+zena`. Anchoring on the word `Version` rather than
+    on "the first run of digits" keeps a future prefix from being read as
+    the version.
+    """
+    if not isinstance(text, str):
+        return None
+    return _triple(_XED_VERSION.search(text))
+
+
+def parse_python_version(text):
+    """`(major, minor, patch)` from a dotted version string, or None."""
+    if not isinstance(text, str):
+        return None
+    return _triple(_DOTTED.match(text))
+
+
+def parse_distro_major(text):
+    """The leading integer of an os-release VERSION_ID, or None.
+
+    `22.3` and `22` both mean Mint 22; only the series is claimed.
+    """
+    if not isinstance(text, str):
+        return None
+    match = _LEADING_INT.match(text)
+    return int(match.group(1)) if match else None
+
+
+# Three states per fact, and the difference is the whole point:
+#
+#   True  -- present.
+#   False -- determined absent. Only this can be fatal.
+#   None  -- could not be determined. Never fatal, at most a warning.
+#
+# A probe that failed is not evidence of absence.
+
+
+def _python(facts):
+    version = parse_python_version(facts.get("python_version"))
+    if version is None:
+        return [
+            Finding(
+                SOFT,
+                "python-unknown",
+                "could not determine the Python version",
+            )
+        ]
+    if version < MIN_PYTHON:
+        return [
+            Finding(
+                HARD,
+                "python-too-old",
+                f"Python {_dotted(version)} is too old; "
+                f"xedown needs {_dotted(MIN_PYTHON)} or newer",
+            )
+        ]
+    if version[:2] > TESTED_PYTHON[-1]:
+        return [
+            Finding(
+                SOFT,
+                "python-untested",
+                f"Python {_dotted(version)} is newer than any version "
+                f"xedown is tested on ({_dotted(TESTED_PYTHON[-1])})",
+            )
+        ]
+    return []
+
+
+def _dependency(present, code, label, package):
+    if present is False:
+        return [
+            Finding(
+                HARD,
+                code,
+                f"{label} is missing",
+                f"install it with: sudo apt install {package}",
+            )
+        ]
+    if present is None:
+        return [
+            Finding(
+                SOFT,
+                code.replace("-missing", "-unknown"),
+                f"could not determine whether {label} is present",
+            )
+        ]
+    return []
+
+
+def _typelibs(facts):
+    findings = _dependency(
+        facts.get("has_gi"), "gi-missing", "python3-gi", "python3-gi"
+    )
+    if facts.get("has_gi") is not True:
+        # Both probes below need `gi` to run, so their result carries no
+        # information here. One cause, one message.
+        return findings
+    findings += _dependency(
+        facts.get("gtk3_typelib"),
+        "gtk3-missing",
+        f"the GTK {REQUIRED_GTK_GI} typelib",
+        "gir1.2-gtk-3.0",
+    )
+    findings += _dependency(
+        facts.get("webkit41_typelib"),
+        "webkit41-missing",
+        f"the WebKit2 {REQUIRED_WEBKIT_GI} typelib",
+        "gir1.2-webkit2-4.1",
+    )
+    return findings
+
+
+def _xed(facts):
+    if facts.get("has_xed") is False:
+        return [
+            Finding(
+                HARD,
+                "xed-missing",
+                "xed was not found on PATH",
+                "install it with: sudo apt install xed",
+            )
+        ]
+    if facts.get("has_xed") is None:
+        return [
+            Finding(SOFT, "xed-unknown", "could not determine whether xed is installed")
+        ]
+    version = parse_xed_version(facts.get("xed_version"))
+    if version is None:
+        return [
+            Finding(
+                SOFT,
+                "xed-version-unknown",
+                "xed is installed but its version could not be read",
+            )
+        ]
+    if version[:2] != TESTED_XED:
+        return [
+            Finding(
+                SOFT,
+                "xed-untested",
+                f"xed {_dotted(version)} is outside the tested "
+                f"{TESTED_XED[0]}.{TESTED_XED[1]} series",
+            )
+        ]
+    return []
+
+
+def _distro(facts):
+    distro_id = facts.get("distro_id")
+    major = parse_distro_major(facts.get("distro_version_id"))
+    if distro_id is None or major is None:
+        return [Finding(SOFT, "distro-unknown", "could not determine the distribution")]
+    if distro_id.strip().lower() != TESTED_DISTRO_ID or major != TESTED_DISTRO_MAJOR:
+        return [
+            Finding(
+                SOFT,
+                "distro-untested",
+                f"{distro_id} {facts.get('distro_version_id')} is outside "
+                f"the tested Linux Mint {TESTED_DISTRO_MAJOR}.x",
+            )
+        ]
+    return []
+
+
+def _session(facts):
+    session = facts.get("session_type")
+    # An absent XDG_SESSION_TYPE is ordinary -- over ssh, in a container --
+    # and says nothing about what xedown will meet when it runs. Only a
+    # session that positively reports Wayland is worth a warning.
+    if isinstance(session, str) and session.strip().lower() == "wayland":
+        return [
+            Finding(
+                SOFT,
+                "wayland-untested",
+                "this is a Wayland session; xedown is only tested on "
+                f"{TESTED_SESSION_TYPE.upper()}",
+            )
+        ]
+    return []
+
+
+def _dotted(version):
+    return ".".join(str(part) for part in version)
+
+
+def evaluate(facts):
+    """Everything worth saying about `facts`, worst first is not required.
+
+    An empty list means this machine is exactly what the matrix claims.
+    """
+    findings = []
+    for check in (_typelibs, _python, _xed, _distro, _session):
+        findings.extend(check(facts))
+    return findings
+
+
+# `install.sh` probes the machine and calls this with `key=value` arguments.
+# The exit code is the whole protocol: 0 clear, 1 warned, 2 refused.
+
+_BOOLEAN_FACTS = ("has_gi", "gtk3_typelib", "webkit41_typelib", "has_xed")
+_TEXT_FACTS = (
+    "python_version",
+    "xed_version",
+    "distro_id",
+    "distro_version_id",
+    "session_type",
+)
+
+
+def parse_facts(argv):
+    """`key=value` arguments as a facts dict.
+
+    An empty value is `None` -- "could not be determined" -- which is a
+    different thing from `0`, and the difference decides whether an install
+    is refused. An unknown key is ignored rather than fatal: this module
+    ships inside the plugin and the caller is a separate script, so a stale
+    caller must not crash the check it is running.
+    """
+    facts = {}
+    for argument in argv:
+        key, separator, value = argument.partition("=")
+        if not separator:
+            continue
+        if key in _BOOLEAN_FACTS:
+            facts[key] = None if value == "" else value.strip() not in ("0", "")
+        elif key in _TEXT_FACTS:
+            facts[key] = value or None
+    return facts
+
+
+def format_finding(finding):
+    label = "ERROR" if finding.severity == HARD else "warning"
+    line = f"{label}: {finding.message}"
+    if finding.remedy:
+        line += f"\n       {finding.remedy}"
+    return line
+
+
+def main(argv):
+    findings = evaluate(parse_facts(argv))
+    for finding in findings:
+        print(format_finding(finding))
+    if any(finding.severity == HARD for finding in findings):
+        return 2
+    return 1 if findings else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

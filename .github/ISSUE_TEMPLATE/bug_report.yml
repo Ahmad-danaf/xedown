@@ -1,0 +1,59 @@
+name: Bug report
+description: Report reproducible xedown behavior that is not a security issue
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Email ahmad.danf@gmail.com as described in SECURITY.md.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Describe the actual and expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and sample document
+      description: Include minimal steps and safe Markdown that reproduces the problem.
+    validations:
+      required: true
+  - type: input
+    id: mint
+    attributes:
+      label: Distribution and version
+      placeholder: Linux Mint 22.3
+    validations:
+      required: true
+  - type: input
+    id: xed
+    attributes:
+      label: xed version
+      placeholder: 3.8.9
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Python, WebKitGTK, and display server
+      placeholder: Python 3.12.3, WebKitGTK 2.52.3 / API 4.1, X11
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove private file paths or document content before posting.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked docs/troubleshooting.md and docs/known-issues.md.
+          required: true
+        - label: This report does not disclose a security vulnerability.
+          required: true
+

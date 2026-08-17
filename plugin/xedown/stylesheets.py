@@ -97,11 +97,10 @@ def load_user_stylesheet(value, config_dir=None):
             detail=exc.strerror or str(exc),
         )
 
-    # Checked before opening, and not with a size check. A FIFO blocks read()
-    # until something writes to the other end -- which hangs the GTK main
-    # thread, not merely the preview -- and /dev/zero reports st_size == 0 and
-    # then reads without end. Both lie about their size; neither is a regular
-    # file. This also disposes of directories and sockets.
+    # Checked before opening, and not by size: a FIFO blocks read() until
+    # something writes, hanging the GTK main thread, and /dev/zero reports
+    # st_size == 0 then reads forever. Both lie about their size; neither is
+    # a regular file. This also disposes of directories and sockets.
     if not stat.S_ISREG(info.st_mode):
         return UserStylesheet(path=display, problem=errors.STYLESHEET_NOT_A_FILE)
 
@@ -121,18 +120,14 @@ def load_user_stylesheet(value, config_dir=None):
     if len(raw) > MAX_STYLESHEET_BYTES:
         return UserStylesheet(path=display, problem=errors.STYLESHEET_TOO_LARGE)
 
-    # Decoding is its own guarded step because it fails differently: a
-    # UnicodeDecodeError is a ValueError, not an OSError, and would escape the
-    # handler above entirely. That exact escape broke settings.py twice; see
-    # the comment in its `_load`.
+    # Its own guarded step because a UnicodeDecodeError is a ValueError, not
+    # an OSError, and would escape the handler above. That exact escape broke
+    # settings.py twice; see the comment in its `_load`.
     try:
-        # utf-8-sig, not utf-8: a leading byte-order mark decodes as U+FEFF,
-        # which is not whitespace to the CSS tokenizer and would sit in the
-        # assembled sheet right after the theme layer, invalidating the
-        # user's first rule with no message at all (xedown deliberately does
-        # not validate CSS). utf-8-sig strips a leading BOM if present and is
-        # otherwise identical to utf-8 -- this is about that silent papercut,
-        # not about encoding detection.
+        # utf-8-sig, not utf-8: a BOM decodes as U+FEFF, which the CSS
+        # tokenizer does not treat as whitespace, so it would silently
+        # invalidate the user's first rule (xedown does not validate CSS).
+        # Otherwise identical to utf-8; not encoding detection.
         css = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
         return UserStylesheet(path=display, problem=errors.STYLESHEET_NOT_UTF8)
@@ -141,11 +136,9 @@ def load_user_stylesheet(value, config_dir=None):
         return UserStylesheet(path=display, problem=errors.STYLESHEET_EMPTY)
 
     # This CSS is interpolated raw between <style> and </style>, so the one
-    # sequence that can escape the element is refused outright. Rewriting it
-    # was considered: no single substitution is correct inside a comment,
-    # inside a string and in ordinary CSS at once, and refusing is provably
-    # safe where rewriting is only probably safe. Case-insensitive, because
-    # the HTML tokenizer is.
+    # sequence that can escape the element is refused rather than rewritten:
+    # no single substitution is correct inside a comment, inside a string and
+    # in ordinary CSS at once. Case-insensitive, as the HTML tokenizer is.
     if "</style" in css.lower():
         return UserStylesheet(path=display, problem=errors.STYLESHEET_UNSAFE)
 
