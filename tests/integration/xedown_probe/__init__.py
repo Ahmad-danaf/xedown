@@ -4495,23 +4495,45 @@ class XedownProbe(GObject.Object, Xed.WindowActivatable):
         # 246ms: a genuine 7.2x signal that a fixed-ms margin cannot track
         # once the baseline it was tuned against moves.
         #
-        # A ratio is what "self-calibrating" was supposed to mean:
-        # BUILD_STALL_RATIO requires the build's worst gap to be a multiple
-        # of the open's, not larger by some fixed number of milliseconds
-        # that stops meaning anything once either side of the comparison
-        # changes scale. BUILD_STALL_FLOOR_S guards the case a ratio alone
-        # cannot: a machine fast enough that open_worst is close to zero,
-        # where even a few milliseconds of real stall would clear a
-        # ratio-only bound with room to spare. Against the observed run,
-        # the margin is max(34ms * 3, 100ms) = 102ms; 246ms clears it with
-        # 2.4x to spare, and a machine several times faster or slower than
-        # this one still leaves comparable headroom on both sides. If the
-        # deliberate build stopped stalling the loop -- e.g. build_worst
-        # dropped to something in line with open_worst, rather than a
-        # multiple of it -- this assertion fails, which is the whole point
-        # of a positive control.
-        BUILD_STALL_RATIO = 3.0
-        BUILD_STALL_FLOOR_S = 0.1
+        # A `open_worst * 3` ratio then replaced that flat margin and failed
+        # for the mirror-image reason. The two sides do not scale together,
+        # so multiplying one of them multiplies noise, not signal:
+        #
+        #   open worst   build worst   open*3   verdict
+        #        34ms         246ms     102ms   pass  (the run above)
+        #       133ms         316ms     400ms   FAIL
+        #       111ms         244ms     334ms   FAIL
+        #
+        # build_worst is the healthy, stable number in that table -- 244ms
+        # to 316ms, against the ~175ms this fixture's 393k characters of
+        # prose are predicted to cost by the interpolated prose row of
+        # docs/performance.md (109ms at 253k, 227ms at 507k). What moved is
+        # open_worst, which is not a baseline for this at all: it is the
+        # worst gap while *xed* loads 384 KB into a syntax-highlighted
+        # GtkSourceBuffer, a one-off cost in a subsystem xedown defers out
+        # of, and it lands anywhere from 34ms to 133ms depending on what
+        # else the machine is doing. Tripling that raises the bar past a
+        # correct signal, which is the same failure the flat margin had.
+        #
+        # So: ratio 1.0, kept explicit rather than dropped, because the
+        # directional claim is the one worth making -- the window with the
+        # deliberate render in it must be worse than the quiet window
+        # beside it, on this machine, in this run. That part is genuinely
+        # self-calibrating and cannot be inflated by noise without the same
+        # noise inflating build_worst too.
+        #
+        # BUILD_STALL_FLOOR_S then guards the case the comparison alone
+        # cannot: a machine quiet enough that open_worst is near zero,
+        # where a millisecond of stall would satisfy a directional check.
+        # It sits *below* the predicted render cost on purpose. A floor set
+        # at the prediction would fail on hardware faster than the machine
+        # this was written on -- and "the render got cheaper" is not the
+        # regression this control exists to catch. What it catches is
+        # build_worst collapsing to the quiet windows' scale, which is what
+        # a deferred build silently no longer running on the main loop, or
+        # a watcher that has gone blind, would both look like.
+        BUILD_STALL_RATIO = 1.0
+        BUILD_STALL_FLOOR_S = 0.12
         margin = max(self._perf_open_worst * BUILD_STALL_RATIO, BUILD_STALL_FLOOR_S)
         record(
             "perf-large-build-stalls-the-loop",
