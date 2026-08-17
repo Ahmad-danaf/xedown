@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
@@ -31,3 +34,36 @@ jobs:
 
       - name: Test
         run: python3 -m pytest
+
+  shell:
+    # install.sh and uninstall.sh are the first code a reader runs, and the
+    # only code here that writes to their plugins directory. They were
+    # unlinted until v1.0.
+    #
+    # --severity=warning on purpose: at `info` the only findings are SC2012,
+    # SC2016 and SC1091 on lines that are correct as written, and a lint no
+    # one can get to zero is a lint everyone learns to ignore.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Lint shell scripts
+        run: shellcheck --severity=warning install.sh uninstall.sh scripts/*.sh
+
+  install-flows:
+    # The only harness that needs no desktop session: it builds a throwaway
+    # HOME, redirects XDG_DATA_HOME and XDG_CONFIG_HOME into it, and stubs
+    # xed, gsettings and pgrep on PATH. See the header of the script.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run install and uninstall flows
+        run: scripts/run-install-tests.sh

@@ -31,6 +31,10 @@ trap cleanup EXIT
 
 # --- the sandbox ---------------------------------------------------------
 
+# The machine every scenario pretends to be running on: the supported
+# baseline from plugin/xedown/preflight.py, so a clean run reports nothing.
+BASELINE_FACTS="python_version=3.12.3 has_gi=1 gtk3_typelib=1 webkit41_typelib=1 distro_id=linuxmint distro_version_id=22.3 session_type=x11"
+
 new_sandbox() {
   # Belt-and-braces on top of the WORKSPACE guard above: this is where the
   # dangerous `rm -rf` actually lives, and an empty WORKSPACE or CURRENT
@@ -59,10 +63,16 @@ new_sandbox() {
   export GSETTINGS_STORE="$SANDBOX/gsettings-active-plugins"
   printf "['docinfo', 'time']\n" > "$GSETTINGS_STORE"
   # A fully supported baseline, not `unset`. Probing these from the host
-  # would make every result depend on whether the machine running the tests
-  # happens to have python3-gi -- and a sandbox whose outcome depends on the
-  # host is not a sandbox. A scenario overriding one fact restates them all.
-  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=1"
+  # would make every result depend on the machine running the tests -- on
+  # python3-gi being installed, and on the runner being Mint 22 rather than
+  # the Ubuntu a CI runner actually is -- and a sandbox whose outcome
+  # depends on the host is not a sandbox. Every fact preflight reads is
+  # pinned here except has_xed and xed_version, which come from the stub
+  # `xed` on PATH and are therefore already sandboxed.
+  #
+  # A scenario changes one fact by appending to the baseline; the override
+  # loop in install.sh applies pairs in order, so the last one wins.
+  export XEDOWN_PREFLIGHT_FACTS="$BASELINE_FACTS"
 
   cat > "$SANDBOX/bin/xed" <<'STUB'
 #!/usr/bin/env bash
@@ -226,7 +236,7 @@ scenario_hard_failure_refuses() {
   # missing python3-gi suppresses both typelib probes by design, so a
   # scenario that only set webkit41_typelib=0 would report nothing at all on
   # a machine without gi.
-  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=0"
+  export XEDOWN_PREFLIGHT_FACTS="$BASELINE_FACTS webkit41_typelib=0"
   run_install --no-enable
   assert_status 2
   assert_output_contains "gir1.2-webkit2-4.1"
@@ -238,7 +248,7 @@ scenario_hard_failure_refuses() {
 }
 
 scenario_force_overrides_a_hard_failure() {
-  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=0"
+  export XEDOWN_PREFLIGHT_FACTS="$BASELINE_FACTS webkit41_typelib=0"
   run_install --no-enable --force
   assert_status 0
   assert_installed
@@ -248,7 +258,7 @@ scenario_force_overrides_a_hard_failure() {
 
 scenario_soft_findings_warn_and_install() {
   export STUB_XED_VERSION="xed - Version 3.9.0"
-  export XEDOWN_PREFLIGHT_FACTS="has_gi=1 gtk3_typelib=1 webkit41_typelib=1 distro_id=fedora distro_version_id=41 session_type=wayland"
+  export XEDOWN_PREFLIGHT_FACTS="$BASELINE_FACTS distro_id=fedora distro_version_id=41 session_type=wayland"
   run_install --no-enable
   assert_status 0
   assert_installed

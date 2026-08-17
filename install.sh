@@ -194,6 +194,10 @@ Your previous install is still sitting in $aside -- move it back by hand:
 FACT_NAMES=(python_version has_gi gtk3_typelib webkit41_typelib
             has_xed xed_version distro_id distro_version_id session_type)
 
+# Every `fact_*` below is read by `run_preflight` through indirect expansion
+# (`${!var-}`) off FACT_NAMES, which shellcheck cannot follow -- hence the
+# blanket disable rather than nine separate ones.
+# shellcheck disable=SC2034
 probe_facts() {
   fact_python_version="$(python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || true)"
 
