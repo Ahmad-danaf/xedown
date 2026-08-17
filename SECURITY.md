@@ -15,7 +15,15 @@ one, and what the plugin does with hostile content today.
 untrusted documents, so a working bypass is useful to somebody else the
 moment it is public and before there is a release to upgrade to.
 
-Email **ahmad.danf@gmail.com** with `xedown security` in the subject.
+Use GitHub's private vulnerability reporting: the **Security** tab of this
+repository → **Report a vulnerability**. That gives you a private thread with
+the maintainer, attachments, and somewhere for a fix to be prepared before any
+of it is public.
+
+If you have no GitHub account and would rather not open one, open an issue
+saying only that you have a security report and want a private contact route —
+no payload, no versions, no description of the bug — and you will be given
+one.
 
 Useful to include, roughly in order of how much time each saves:
 

@@ -102,8 +102,8 @@ redirects, applies download and decode limits, and does not give the preview
 page general network access.
 
 Read [Remote images and privacy](docs/remote-images.md) before enabling them
-globally. The complete boundary, accepted residuals, and private reporting
-address are in [SECURITY.md](SECURITY.md).
+globally. The complete boundary, accepted residuals, and how to report a
+vulnerability privately are in [SECURITY.md](SECURITY.md).
 
 ![A remote image blocked by default, with its address named and a per-tab Load button](docs/assets/remote-images-blocked.png)
 
