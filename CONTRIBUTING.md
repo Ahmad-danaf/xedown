@@ -4,8 +4,8 @@ Thank you for helping make xedown safer, clearer, and more reliable. Bug
 reports, compatibility results, documentation improvements, tests, and code
 changes are welcome.
 
-Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues
-privately using [SECURITY.md](SECURITY.md), not a public issue.
+Report security issues privately using [SECURITY.md](SECURITY.md), not a public
+issue.
 
 ## Before opening an issue
 
