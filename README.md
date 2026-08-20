@@ -1,10 +1,15 @@
-# xedown
+# xedown — Markdown preview for xed on Linux Mint
 
-**A Markdown preview for xed that keeps Preview and Markdown in the same tab.**
+**xedown is a Markdown preview plugin for the xed text editor on Linux Mint.**
 
-Open a Markdown file to read it as a polished document. Switch back to its
-source with the **Preview | Markdown** bar, edit normally in xed, then return to
-the rendered view without opening another application or risking your text.
+It keeps Preview and Markdown in the same tab, so you can read a polished
+document, switch to its source, edit normally in xed, and return to the
+rendered view without opening a browser or another application.
+
+The preview includes responsive themes, syntax highlighting, search, custom
+CSS, right-to-left layout, external-change watching, and privacy controls for
+remote images. Markdown is treated as untrusted content and rendered through
+an HTML allowlist under a strict content security policy.
 
 ![xedown switching from Preview to Markdown, adding “Ready to publish”, and returning to the updated preview](docs/assets/xedown-demo.gif)
 
@@ -140,6 +145,42 @@ The mode and refresh actions also appear in xed's *View* menu.
 See [Known issues](docs/known-issues.md),
 [Markdown compatibility](docs/markdown-compatibility.md), and
 [Troubleshooting](docs/troubleshooting.md) for details and workarounds.
+
+## Frequently asked questions
+
+### Is there a Markdown preview plugin for xed?
+
+Yes. xedown adds an in-tab Markdown preview to xed, the default text editor in
+Linux Mint. Use the **Preview | Markdown** bar or keyboard shortcuts to move
+between the rendered document and its editable Markdown source.
+
+### Can I preview Markdown in xed without opening a browser?
+
+Yes. xedown renders the preview inside the same xed tab. Web links still open
+in your default browser when you choose them, while links to Markdown files can
+open directly in xed.
+
+### Does xedown work on every Linux distribution?
+
+The officially tested platform is Linux Mint 22.3 with xed 3.8.9, GTK 3.24,
+Python 3.12, WebKitGTK 2.52 through the WebKit2 4.1 API, and X11. Nearby Linux
+systems may work when they provide the required APIs, but they are not claimed
+as supported without live test evidence. See [Compatibility](docs/compatibility.md).
+
+### Is it safe to preview an untrusted Markdown file?
+
+xedown sanitizes rendered HTML with an allowlist and applies a strict content
+security policy. Remote images are blocked by default, and enabled downloads
+are restricted to HTTPS public destinations with redirect, size, and decode
+limits. The complete security boundary and residual risks are documented in
+[Security](SECURITY.md) and [Remote images and privacy](docs/remote-images.md).
+
+### How is xedown different from a separate Markdown preview application?
+
+xedown keeps reading and editing in one xed tab, remembers separate scroll
+positions for both modes, and follows changes made by other tools. It is aimed
+at people who already use xed and want a focused preview without moving their
+document into a browser or a second editor.
 
 ## Documentation
 
