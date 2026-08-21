@@ -22,19 +22,21 @@ packages but does not install them for you.
 
 ## Install a release
 
-Download these three assets from the v1.0 release and put them in the same
-directory:
-
-- `xedown-1.0.0.tar.gz`
-- `install.sh`
-- `uninstall.sh`
-
-Then run:
+On Linux Mint, open a terminal and run:
 
 ```bash
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/xedown-1.0.0.tar.gz
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/install.sh
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/uninstall.sh
 chmod +x install.sh uninstall.sh
 ./install.sh --from xedown-1.0.0.tar.gz
 ```
+
+This fetches the three assets from the
+[v1.0.0 release](https://github.com/Ahmad-danaf/xedown/releases/tag/v1.0.0)
+into the current directory. To download them by hand instead, get
+`xedown-1.0.0.tar.gz`, `install.sh`, and `uninstall.sh` from that page and put
+them in the same directory before running the two commands above.
 
 The installer validates the archive and this machine before replacing an
 existing xedown installation. An upgrade replaces the old plugin rather than

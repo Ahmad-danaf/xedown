@@ -31,13 +31,19 @@ an HTML allowlist under a strict content security policy.
 
 ## Install
 
-Download `xedown-1.0.0.tar.gz`, `install.sh`, and `uninstall.sh` from the v1.0
-release, then run:
+On Linux Mint, open a terminal and run:
 
 ```bash
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/xedown-1.0.0.tar.gz
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/install.sh
+curl -LO https://github.com/Ahmad-danaf/xedown/releases/download/v1.0.0/uninstall.sh
 chmod +x install.sh uninstall.sh
 ./install.sh --from xedown-1.0.0.tar.gz
 ```
+
+This downloads the three files from the
+[v1.0.0 release](https://github.com/Ahmad-danaf/xedown/releases/tag/v1.0.0)
+into the current directory and installs xedown.
 
 The installer checks the runtime before replacing an existing installation
 and keeps your preferences during upgrades. Markdown and syntax highlighting
