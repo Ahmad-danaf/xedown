@@ -31,6 +31,36 @@ SUBSTITUTIONS = {
         (".xedown-document", "max-width"),
         "calc(var(--xedown-content-width) * var(--xedown-measure-scale))",
     ),
+    # v0.1's stack ends in the bare `monospace` generic. On a machine whose
+    # fontconfig resolves that generic to a CJK monospace (Noto Sans Mono
+    # CJK SC on Mint with the CJK fonts installed), the theme's own faces
+    # are all absent and every code block draws box-drawing characters at
+    # that font's full-width advance -- a hand-drawn table's borders render
+    # twice as wide as its columns. The composite family declared in
+    # preview.css keeps Latin, box-drawing and arrows one cell wide and
+    # pulls hanzi from the CJK face at exactly two cells; the generic still
+    # ends the stack for machines without either font.
+    ("code", "font-family"): (
+        ("code", "font-family"),
+        (
+            '"xedown-code-mono", ui-monospace, SFMono-Regular, "SF Mono", '
+            "Menlo, Consolas, monospace"
+        ),
+    ),
+    ("pre", "font-family"): (
+        ("pre", "font-family"),
+        (
+            '"xedown-code-mono", ui-monospace, SFMono-Regular, "SF Mono", '
+            "Menlo, Consolas, monospace"
+        ),
+    ),
+    ("kbd", "font-family"): (
+        ("kbd", "font-family"),
+        (
+            '"xedown-code-mono", ui-monospace, SFMono-Regular, "SF Mono", '
+            "Menlo, Consolas, monospace"
+        ),
+    ),
     # v0.1 asked the browser to tint a native checkbox. v0.2 draws the
     # control instead, so the same token now fills the box directly. Same
     # accent, same theme, applied by us.
@@ -214,6 +244,11 @@ DELIBERATE_DECLARATIONS = {
     ("a", "unicode-bidi"): (
         "brief 7: a link's text is its own bidi run, so a URL used as link "
         "text stops dragging the sentence's neutrals around"
+    ),
+    ("pre code", "tab-size"): (
+        "tabs are now preserved in fenced code (the sentry preprocessor in "
+        "mdext.py), and their stop width is stated rather than left to the "
+        "browser default; 8 is that default and xed's default tab width"
     ),
     # v0.1's `code, pre, kbd { font-family }` group already declares `kbd`,
     # so it cannot go in ADDITIONS -- brief 9 styles the key cap itself

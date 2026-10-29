@@ -54,6 +54,45 @@ def test_ordinary_list_items_are_untouched(convert):
     assert "plain item" in html
 
 
+def test_tabs_inside_fenced_code_are_preserved_verbatim(convert):
+    # CommonMark keeps a fenced block's content exactly, but the vendored
+    # pipeline runs `normalize_whitespace` (expandtabs onto four-column
+    # stops) before the fence pass stashes the block -- so code aligned in
+    # the editor against eight-column tabs shifted in the preview. The
+    # sentry preprocessor puts fenced tabs beyond expandtabs' reach; see
+    # _TAB_SENTRY in mdext.py for why this is a sentry rather than the
+    # fence pass simply running earlier.
+    html = convert("```text\n│\tSMB_CON\t(0x00)\n```\n")
+    assert "│\tSMB_CON\t(0x00)" in html
+
+
+def test_tabs_outside_fenced_code_still_expand_to_tab_stops(convert):
+    # Prose is not code: the block parser reads space indentation, so
+    # `normalize_whitespace`'s expandtabs still governs everything the
+    # fence pass has not stashed.
+    html = convert("a\tb\n")
+    assert html == "<p>a   b</p>"
+
+
+def test_the_tab_sentry_cannot_masquerade_as_a_protected_tab(convert):
+    # The sentry is rewritten to a real tab before anything is protected,
+    # so a document containing the raw character cannot smuggle a
+    # protection marker past the fence pass: in prose it lands on the
+    # same expandtabs path a typed tab does, and in code it renders as
+    # the tab it stands for.
+    html = convert("a\x1fb\n\n```text\nx\x1fy\n```\n")
+    assert "\x1f" not in html
+    assert "<p>a   b</p>" in html
+    assert "x\ty" in html
+
+
+def test_a_fence_without_tabs_is_untouched_by_the_sentry_pass(convert):
+    # The sentry pass rewrites nothing outside fenced tabs: a document
+    # without them renders exactly as it did before it existed.
+    html = convert("```text\nplain block\n```\n")
+    assert html == ('<pre><code class="language-text">plain block\n</code></pre>')
+
+
 def test_bracket_text_that_is_not_a_task_is_left_alone(convert):
     html = convert("- [link](http://example.com) trailing")
     assert "<input" not in html

@@ -121,7 +121,7 @@ blockquote {
 hr { height: 1px; margin: 2em 0; border: 0; background: var(--xedown-border); }
 
 code, pre, kbd {
-  font-family: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
+  font-family: "xedown-code-mono", ui-monospace, "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
 }
 
 code {

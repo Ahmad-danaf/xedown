@@ -112,7 +112,7 @@ hr {
 }
 
 code, pre, kbd {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: "xedown-code-mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* Distinct without shouting. */

@@ -2,7 +2,9 @@
 interrupt a paragraph, and a handful of CommonMark-conformance overrides
 (heading hashes need a following space; ordered-list markers may end in
 `)` as well as `.`; fenced code accepts an indented fence and a real info
-string instead of only a bare word; list content is re-indented from
+string instead of only a bare word, and is stashed before tabs are
+expanded so code keeps the tabs it was written with; list content is
+re-indented from
 CommonMark's continuation column onto the fixed four-space nesting the
 vendored list processors insist on).
 
@@ -352,6 +354,23 @@ def normalize_list_indentation(lines, tab_length=4):
     return out
 
 
+# Stands in for a tab inside fenced code between `TabSentryPreprocessor`
+# (31) and `FencedCodePreprocessor` (25). CommonMark keeps a fenced block's
+# tabs as content, but the vendored pipeline runs `normalize_whitespace`
+# (30) -- whose `expandtabs(tab_length)` rewrites every tab onto four-column
+# stops -- before the fence pass stashes the block, and the stash is what
+# protects code from exactly that. Rewriting the tab to a character
+# `expandtabs` cannot see, inside a preprocessor that runs above
+# `normalize_whitespace`, keeps the original column positions without
+# reordering the vendored preprocessors: `NormalizeWhitespace` also strips
+# the STX/ETX markers off every `htmlStash` placeholder, so a fence pass
+# moved above it would have its placeholders gutted before the
+# postprocessors could restore them. U+001F is the same untypeable
+# control-junk class the vendored strip already polices; `TabSentryPreprocessor`
+# collapses any already in the document into real tabs before protecting
+# anything, so one can never masquerade as a protected tab.
+_TAB_SENTRY = "\x1f"
+
 # GFM takes only the first token of an info string as the language name. The
 # vendored `FENCED_BLOCK_RE` narrows that to a single *bare* word, so a comma,
 # space or brace anywhere in the info string fails the whole opening-fence
@@ -640,7 +659,10 @@ def make_extensions(markdown_module):
         Registered under the same name and priority as the vendored
         `FencedBlockPreprocessor` ("fenced_code_block", 25), so
         `Registry.register` swaps it in place rather than adding a second
-        preprocessor. This is a fresh `Preprocessor`, not a subclass of the
+        preprocessor. Tabs arrive here as the `_TAB_SENTRY` character rather
+        than as tabs: `TabSentryPreprocessor` (31) put them beyond
+        `normalize_whitespace`'s reach, and this pass turns them back before
+        the code reaches `code_escape`. This is a fresh `Preprocessor`, not a subclass of the
         vendored one: introspecting the assembled `Markdown()` pipeline
         (`md.preprocessors` and `md.registeredExtensions`) shows nothing
         narrows or wraps `FencedBlockPreprocessor` the way `sane_lists`
@@ -679,7 +701,8 @@ def make_extensions(markdown_module):
                 else:
                     id_value = None
                     lang = fence_lang(m.group("info"))
-                code = _dedent_fence_body(m.group("code"), len(m.group("indent")))
+                code = m.group("code").replace(_TAB_SENTRY, "\t")
+                code = _dedent_fence_body(code, len(m.group("indent")))
                 code = code_escape(code)
                 id_attr = f' id="{escape_attrib_html(id_value)}"' if id_value else ""
                 class_attr = (
@@ -699,6 +722,51 @@ def make_extensions(markdown_module):
             # Same name and priority as the vendored `fenced_code_block`.
             md.preprocessors.register(
                 FencedCodePreprocessor(md), "fenced_code_block", 25
+            )
+
+    class TabSentryPreprocessor(Preprocessor):
+        """Rewrite tabs inside fenced code to `_TAB_SENTRY`, above
+        `normalize_whitespace`, so `expandtabs` cannot reach them;
+        `FencedCodePreprocessor` turns them back. See `_TAB_SENTRY` for why
+        this is a sentry rather than the fence pass simply running earlier.
+
+        Priority 31 puts this above `normalize_whitespace` (30) and below
+        nothing: it must see the document's raw tabs before anything else
+        rewrites them, and its own output differs from the input only inside
+        regions the fence regex already claims, so no later pass sees a
+        construct it would not have seen anyway. It runs before the fence
+        pass on purpose: the sentry is in place by the time
+        `normalize_whitespace` runs, and out again by the time the code is
+        stashed.
+        """
+
+        def run(self, lines):
+            text = "\n".join(lines)
+            # Any sentry already in the document collapses to a real tab
+            # first, so one cannot masquerade as a protected tab; inside a
+            # fence it is re-protected with the rest, outside it is handled
+            # as the prose tab it now is.
+            text = text.replace(_TAB_SENTRY, "\t")
+
+            def protect(match):
+                code = match.group("code")
+                if "\t" not in code:
+                    return match.group(0)
+                start = match.start("code") - match.start()
+                end = match.end("code") - match.start()
+                return (
+                    match.group(0)[:start]
+                    + code.replace("\t", _TAB_SENTRY)
+                    + match.group(0)[end:]
+                )
+
+            text = _FENCED_BLOCK_RE.sub(protect, text)
+            return text.split("\n")
+
+    class TabSentryExtension(Extension):
+        def extendMarkdown(self, md):
+            md.preprocessors.register(
+                TabSentryPreprocessor(md), "xedown_tab_sentry", 31
             )
 
     class ListIndentationPreprocessor(Preprocessor):
@@ -795,6 +863,7 @@ def make_extensions(markdown_module):
         HashHeaderOverrideExtension(),
         ParenOListExtension(),
         FencedCodeOverrideExtension(),
+        TabSentryExtension(),
         ListIndentationExtension(),
         ListInterruptExtension(),
         FastTocExtension(),

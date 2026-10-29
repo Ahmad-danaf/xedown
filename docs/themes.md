@@ -61,6 +61,26 @@ so they stay — recorded here rather than left for someone to discover.
 Border and separator colours are not held to a minimum. They carry no
 information, and 0.1.0's 1px rules sit well below any text threshold.
 
+## Code blocks and mixed-script alignment
+
+Every theme's `code, pre, kbd` stack leads with a composed font family,
+`xedown-code-mono`, declared in the base stylesheet. It draws Latin,
+box-drawing and arrow characters from DejaVu Sans Mono at one cell each, and
+hanzi, kana, hangul, CJK punctuation and fullwidth forms from Noto Sans Mono
+CJK SC, scaled so one such glyph is exactly two cells. That single grid is
+what keeps hand-drawn ASCII tables and diagrams aligned when they mix
+scripts; no single installed font provides it.
+
+On a machine without either font, or with a WebKitGTK older than 2.40 (which
+cannot apply `size-adjust`), the stack falls through to the theme's own faces
+and code renders as it did before this family existed. Installing a font
+designed for terminal use across both scripts (for example Sarasa Mono)
+changes nothing here by itself; the composite is deliberately ahead of the
+theme's other faces.
+
+A custom stylesheet that sets `font-family` on `code` or `pre` replaces the
+whole stack, the composite included, and with it the alignment guarantee.
+
 ## What a theme cannot do
 
 - **Reach the network.** No theme loads a font, image, stylesheet or script

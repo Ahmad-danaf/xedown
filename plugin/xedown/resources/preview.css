@@ -233,7 +233,10 @@ li.task-list-item > input[type="checkbox"]:checked::after {
 }
 
 pre { overflow-x: auto; }          /* the block scrolls, never the page */
-pre code { padding: 0; background: none; white-space: pre; }
+/* tab-size 8 is the browser default and xed's default tab width; stated
+   because tabs are now preserved in fenced code (see _TAB_SENTRY in
+   mdext.py) and the stop width is what the reader sees. */
+pre code { padding: 0; background: none; white-space: pre; tab-size: 8; }
 
 /* The vendored highlight theme, emitted before this sheet, sets its own
    padding and background on the same selector this rule targets, at the
@@ -246,6 +249,44 @@ pre code { padding: 0; background: none; white-space: pre; }
 pre code.hljs {
   padding: 0;
   background: none;
+}
+
+/* A code font that keeps mixed CJK/ASCII art on one grid. Hand-drawn tables
+   and diagrams need every CJK glyph at exactly two Latin cells; no single
+   font on a stock Linux box gives that, and the themes' stacks land on the
+   two broken mixtures: with DejaVu Sans Mono first (minimal, focused,
+   document) a hanzi falls through to Noto Sans CJK at 1000/1000 em — 1.66
+   of DejaVu's 1233/2048-em cells, so a line drifts a third of a cell per
+   character — and with only the `monospace` generic (repository, the
+   default: every named face in its stack is macOS/Windows) fontconfig
+   serves Noto Sans Mono CJK SC, whose box-drawing and arrows are
+   FULL-width, so the table's borders render twice as wide as its columns.
+
+   This family composes the two fonts into one grid. The themes own the
+   `code, pre` family and prepend this name to their stacks; the faces
+   live here because @font-face is not a selector/property pair, so this
+   sheet and a theme's still never declare the same property for one
+   element. The CJK face is declared first and carries a unicode-range:
+   hanzi, kana, hangul, CJK punctuation and fullwidth forms come from
+   Noto Sans Mono CJK SC, size-adjusted so its 1000/1000-em advance is
+   exactly two DejaVu cells (1233/2048 ÷ 500/1000 = 1.2041015625). Box-drawing
+   (U+2500-257F) and arrows are deliberately NOT in that range: Noto Sans
+   Mono CJK draws them full-width, DejaVu draws them one cell, and the
+   catch-all face below supplies them.
+
+   A machine without either font, or a WebKit older than 2.40 (size-adjust,
+   CSS Fonts 4), falls through to the theme's own faces — the rendering
+   this family existed to fix, and no worse. */
+@font-face {
+  font-family: "xedown-code-mono";
+  src: local("Noto Sans Mono CJK SC");
+  size-adjust: 120.41015625%;
+  unicode-range: U+3000-303F, U+3040-30FF, U+3130-318F, U+3400-4DBF,
+    U+4E00-9FFF, U+AC00-D7A3, U+F900-FAFF, U+FF00-FFEF, U+20000-2A6DF;
+}
+@font-face {
+  font-family: "xedown-code-mono";
+  src: local("DejaVu Sans Mono");
 }
 
 /* The copy button lives beside <pre>, not inside it, and out of flow: the

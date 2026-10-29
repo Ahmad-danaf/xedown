@@ -238,12 +238,75 @@ def test_our_stylesheets_never_suppress_the_focus_outline(name):
 @pytest.mark.parametrize("name", OUR_STYLESHEETS)
 def test_every_font_stack_ends_in_a_generic_family(name):
     # Themes may only use fonts already on the machine, so every stack needs
-    # a family the system is guaranteed to resolve.
+    # a family the system is guaranteed to resolve. @font-face is exempt:
+    # its `font-family` names the face being defined rather than a stack
+    # in use, and a definition ending in a generic would name nothing.
     generics = ("serif", "sans-serif", "monospace", "cursive", "fantasy")
     css = vendoring.read_resource(name)
+    css = re.sub(r"@font-face\s*\{[^{}]*\}", "", css)
     for stack in re.findall(r"font-family\s*:([^;}]*)", css):
         last = stack.split(",")[-1].strip().strip("\"'")
         assert last in generics, f"{name}: {stack.strip()!r} ends in {last!r}"
+
+
+def test_every_theme_puts_the_cjk_code_composite_first_in_its_code_stack():
+    # "xedown-code-mono" (declared in preview.css) is the only family on a
+    # stock Linux box whose Latin, box-drawing, arrows AND hanzi sit on one
+    # grid: hanzi at exactly two Latin cells. It has to come first: behind
+    # the theme's own faces, code with both scripts mixes fonts whose
+    # advances disagree (1.66 cells per hanzi), and every hand-drawn table
+    # falls apart. See the @font-face comment in preview.css.
+    for theme in themes.THEMES:
+        css = vendoring.read_resource(theme.stylesheet)
+        rules, _ = declarations(css)
+        stack = rules["pre"]["font-family"]
+        assert stack.startswith('"xedown-code-mono"'), f"{theme.stylesheet}: {stack!r}"
+
+
+def _composite_faces():
+    css = vendoring.read_resource("preview.css")
+    return re.findall(r"@font-face\s*\{[^{}]*\}", css)
+
+
+def test_the_code_composite_declares_exactly_two_faces():
+    faces = _composite_faces()
+    assert len(faces) == 2
+    assert any("Noto Sans Mono CJK SC" in face for face in faces)
+    assert any("DejaVu Sans Mono" in face for face in faces)
+
+
+def test_the_cjk_face_of_the_composite_scales_to_exactly_two_cells():
+    # DejaVu Sans Mono's cell is 1233/2048 em and Noto Sans Mono CJK's
+    # Latin advance is 500/1000 em, so scaling the CJK face by
+    # 1233/2048 / 500/1000 = 120.41015625% makes a hanzi advance exactly
+    # two DejaVu cells -- the whole claim of the composite. The number is
+    # pinned because nothing on a machine without the fonts can measure it.
+    cjk_face = next(f for f in _composite_faces() if "Noto Sans Mono CJK SC" in f)
+    assert "size-adjust: 120.41015625%" in cjk_face
+
+
+def test_the_cjk_face_of_the_composite_covers_hanzi_but_not_box_drawing():
+    # Noto Sans Mono CJK draws box-drawing and arrows full-width, so those
+    # codepoints must stay out of its unicode-range and keep DejaVu's
+    # one-cell advance; one stray range and every table border renders
+    # twice as wide as the columns it frames.
+    cjk_face = next(f for f in _composite_faces() if "Noto Sans Mono CJK SC" in f)
+    ranges = [
+        (int(low, 16), int(high, 16))
+        for low, high in re.findall(r"U\+([0-9A-Fa-f]+)-([0-9A-Fa-f]+)", cjk_face)
+    ]
+
+    def covered(codepoint):
+        return any(low <= codepoint <= high for low, high in ranges)
+
+    assert covered(0x4E2D)  # 中, CJK Unified Ideographs
+    assert covered(0x3001)  # 、, CJK punctuation
+    assert covered(0xFF08)  # （, fullwidth forms
+    assert covered(0x30FC)  # ー, katakana prolonged sound mark
+    assert not covered(0x2500)  # ─, box drawing
+    assert not covered(0x2502)  # │
+    assert not covered(0x253C)  # ┼
+    assert not covered(0x2190)  # ←, arrows
 
 
 @pytest.mark.parametrize("name", OUR_STYLESHEETS)

@@ -4,6 +4,26 @@ All notable user-facing changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Tabs inside fenced code blocks are preserved verbatim instead of being
+  expanded onto four-column tab stops, so code aligned against the editor's
+  tab width keeps its columns in the preview. The copy button copies the
+  tabs the author wrote, not spaces the renderer substituted for them.
+- Code blocks mixing CJK text with ASCII sit on one grid. The themes' code
+  stacks now lead with a composed face (`xedown-code-mono`, declared in
+  preview.css) that draws hanzi, kana, hangul, CJK punctuation and
+  fullwidth forms at exactly two Latin cells and keeps box-drawing
+  characters and arrows one cell wide. Previously the Latin face's fallback
+  drew hanzi at 1.66 cells, and where a theme's stack resolved to the bare
+  `monospace` generic on a machine whose fontconfig answers it with a CJK
+  monospace, box-drawing characters rendered full-width and a hand-drawn
+  table's borders came out twice as wide as its columns. Machines without
+  DejaVu Sans Mono or Noto Sans Mono CJK SC, or a WebKitGTK older than
+  2.40 (no `size-adjust`), keep the previous rendering.
+
 ## [1.0.0] - 2026-08-17
 
 The first stable public release, and the first public release since 0.2.0.
